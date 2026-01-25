@@ -1,13 +1,10 @@
-/**
- * Application Configuration
- * 应用程序配置常量
- */
+import packageInfo from '../../../../package.json'
 
 // Official Links - 官方链接配置
 export const APP_CONFIG = {
     // Application Info
     name: 'Murasaki Translator',
-    version: '1.0.1',
+    version: packageInfo.version,
 
     // Official Links
     officialRepo: 'https://github.com/soundstarrain/Murasaki-Translator',

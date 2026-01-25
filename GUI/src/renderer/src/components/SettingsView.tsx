@@ -5,6 +5,8 @@ import { Button, Switch } from "./ui/core"
 import { AlertModal } from "./ui/AlertModal"
 import { translations, Language } from "../lib/i18n"
 import { APP_CONFIG } from "../lib/config"
+import { cn } from "../lib/utils"
+
 
 export function SettingsView({ lang }: { lang: Language }) {
     const t = translations[lang]
@@ -150,7 +152,7 @@ export function SettingsView({ lang }: { lang: Language }) {
             // App info
             app: {
                 name: 'Murasaki Translator',
-                version: 'v1.0-beta',
+                version: `v${APP_CONFIG.version}`,
                 build: 'electron'
             },
 
@@ -349,61 +351,67 @@ export function SettingsView({ lang }: { lang: Language }) {
                     </h3>
                     <Card>
                         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                            <CardTitle className="text-base">版本自检</CardTitle>
-                            <span className="text-xs text-muted-foreground font-mono">v{APP_CONFIG.version}</span>
+                            <CardTitle className="text-base">版本状态</CardTitle>
+                            <span className="px-2 py-0.5 rounded-md bg-secondary text-secondary-foreground text-[10px] font-mono border">
+                                v{APP_CONFIG.version}
+                            </span>
                         </CardHeader>
                         <CardContent className="space-y-4">
-                            <div className="flex items-center justify-between">
+                            <div className="flex items-center justify-between group p-3 rounded-lg border border-transparent hover:border-border hover:bg-zinc-50/50 dark:hover:bg-zinc-900/30 transition-all">
                                 <div className="space-y-1">
-                                    <p className="text-sm font-medium">
-                                        {updateStatus === 'idle' && "检查最新的 Release"}
-                                        {updateStatus === 'checking' && "正在连接 GitHub..."}
-                                        {updateStatus === 'found' && (
-                                            <span className="text-green-600 dark:text-green-400 font-bold">
-                                                发现新版本: v{updateInfo?.latestVersion}
-                                            </span>
-                                        )}
-                                        {updateStatus === 'none' && "已是最新版本"}
-                                        {updateStatus === 'error' && <span className="text-red-500">连接失败: {updateInfo?.error}</span>}
-                                    </p>
+                                    <div className="flex items-center gap-2">
+                                        <div className={cn(
+                                            "w-2 h-2 rounded-full",
+                                            updateStatus === 'checking' ? "bg-blue-500 animate-pulse" :
+                                                updateStatus === 'found' ? "bg-green-500" :
+                                                    updateStatus === 'none' ? "bg-green-500" :
+                                                        updateStatus === 'idle' ? "bg-zinc-300 dark:bg-zinc-700" : "bg-red-500"
+                                        )} />
+                                        <p className="text-sm font-medium">
+                                            {updateStatus === 'idle' && "点击按钮检查更新"}
+                                            {updateStatus === 'checking' && "正在检查更新..."}
+                                            {updateStatus === 'found' && (
+                                                <span className="text-primary font-bold">
+                                                    发现新版本: v{updateInfo?.latestVersion}
+                                                </span>
+                                            )}
+                                            {updateStatus === 'none' && "已是最新版本"}
+                                            {updateStatus === 'error' && <span className="text-red-500">连接失败</span>}
+                                        </p>
+                                    </div>
                                     <p className="text-xs text-muted-foreground">
-                                        定期检查更新以获取最新的功能和模型优化
+                                        {updateStatus === 'error' ? updateInfo?.error : "获取最新功能、模型优化及安全补丁"}
                                     </p>
                                 </div>
                                 <Button
                                     variant="outline"
                                     size="sm"
-                                    onClick={checkUpdates}
+                                    onClick={() => checkUpdates()}
                                     disabled={updateStatus === 'checking'}
-                                    className="gap-2"
+                                    className="gap-2 h-8"
                                 >
-                                    <RefreshCw className={`w-3.5 h-3.5 ${updateStatus === 'checking' ? 'animate-spin' : ''}`} />
-                                    {updateStatus === 'found' ? "重新检查" : "检查更新"}
+                                    <RefreshCw className={cn("w-3.5 h-3.5", updateStatus === 'checking' && "animate-spin")} />
+                                    {updateStatus === 'found' ? "重新检查" : "立即检查"}
                                 </Button>
                             </div>
 
                             {updateStatus === 'found' && updateInfo && (
-                                <div className="p-3 rounded-lg bg-secondary/50 border space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                                <div className="p-3 rounded-lg bg-primary/5 border border-primary/10 space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
                                     <div className="space-y-1">
-                                        <div className="flex items-center justify-between">
-                                            <span className="text-xs font-bold uppercase text-muted-foreground">更新日志</span>
-                                            <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded">New</span>
-                                        </div>
-                                        <div className="text-xs text-foreground/80 max-h-32 overflow-y-auto font-sans whitespace-pre-wrap leading-relaxed">
+                                        <span className="text-[10px] font-bold uppercase text-primary/70">新版本特性</span>
+                                        <div className="text-xs text-foreground/80 max-h-32 overflow-y-auto font-sans whitespace-pre-wrap leading-relaxed italic border-l-2 border-primary/20 pl-2">
                                             {updateInfo.releaseNotes || "无更新说明"}
                                         </div>
                                     </div>
 
-                                    <div className="flex gap-2">
-                                        <Button
-                                            size="sm"
-                                            className="flex-1 gap-2"
-                                            onClick={() => window.api?.openExternal(updateInfo.url)}
-                                        >
-                                            <Globe className="w-3.5 h-3.5" />
-                                            前往 GitHub 下载官方安装包
-                                        </Button>
-                                    </div>
+                                    <Button
+                                        size="sm"
+                                        className="w-full gap-2 shadow-sm"
+                                        onClick={() => window.api?.openExternal(updateInfo.url)}
+                                    >
+                                        <Globe className="w-3.5 h-3.5" />
+                                        前往 GitHub 下载官方安装包
+                                    </Button>
                                 </div>
                             )}
                         </CardContent>

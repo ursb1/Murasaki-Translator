@@ -15,6 +15,7 @@ import {
 import { cn } from "../lib/utils"
 import { translations, Language } from "../lib/i18n"
 import { View } from "../App"
+import { APP_CONFIG } from "../lib/config"
 
 interface SidebarProps {
     lang: Language
@@ -149,7 +150,7 @@ export function Sidebar({ lang, setLang, view, setView }: SidebarProps) {
                     <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold text-[10px] shrink-0">
                         v1
                     </div>
-                    <span className="text-[10px] text-muted-foreground whitespace-nowrap">Murasaki v1.0.0</span>
+                    <span className="text-[10px] text-muted-foreground whitespace-nowrap">Murasaki v{APP_CONFIG.version}</span>
                 </div>
             </div>
         </div>
