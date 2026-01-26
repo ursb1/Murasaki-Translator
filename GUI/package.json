@@ -9,7 +9,7 @@
     "lint": "eslint . --ext .js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "build:win": "electron-builder --win --x64",
+    "build:win": "npm run build && electron-builder --win --x64",
     "preview": "electron-vite preview",
     "start": "electron-vite preview"
   },
