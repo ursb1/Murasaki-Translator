@@ -7,8 +7,12 @@ class HardwareMonitor:
         self.pynvml = None
         
         try:
-            import pynvml
-            self.pynvml = pynvml
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=FutureWarning)
+                import pynvml
+                self.pynvml = pynvml
+            
             self.pynvml.nvmlInit()
             self.handle = self.pynvml.nvmlDeviceGetHandleByIndex(gpu_index)
             self.name = self.pynvml.nvmlDeviceGetName(self.handle)

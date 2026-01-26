@@ -7,7 +7,6 @@ import { identifyModel } from "../lib/modelConfig"
 import { addRecord, updateRecord, TranslationRecord, TriggerEvent } from "./HistoryView"
 
 import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer } from 'recharts'
-import { ThinkingStream } from "./ThinkingStream"
 import { HardwareMonitorBar, MonitorData } from "./HardwareMonitorBar"
 import { AlertModal } from "./ui/AlertModal"
 import { useAlertModal } from "../hooks/useAlertModal"
@@ -125,6 +124,7 @@ export function Dashboard({ lang, active }: DashboardProps) {
     // Progress & Preview
     const [progress, setProgress] = useState({ current: 0, total: 0, percent: 0, elapsed: 0, remaining: 0, speedLines: 0, speedChars: 0, speedEval: 0, speedGen: 0, retries: 0 })
     const [displayElapsed, setDisplayElapsed] = useState(0) // 本地平滑计时（基于后端数据）
+    const [displayRemaining, setDisplayRemaining] = useState(0) // 本地平滑倒计时
     const [chartData, setChartData] = useState<any[]>([])
     // New Block-Based Preview State
     const [previewBlocks, setPreviewBlocks] = useState<Record<number, { src: string, output: string }>>({})
@@ -448,13 +448,16 @@ export function Dashboard({ lang, active }: DashboardProps) {
     // 本地平滑计时器 - 基于后端 elapsed 数据插值更新
     const lastBackendElapsedRef = useRef<number>(0)
     const lastBackendUpdateRef = useRef<number>(0)
+    const hasReceivedProgressRef = useRef(false)
 
     useEffect(() => {
         if (!isRunning) {
-            // 翻译停止时重置
-            setDisplayElapsed(0)
+            // 翻译停止时不重置显示时间，保留最终结果
+            // 但倒计时应清零，因为任务已结束
             lastBackendElapsedRef.current = 0
             lastBackendUpdateRef.current = 0
+            hasReceivedProgressRef.current = false
+            setDisplayRemaining(0)
             return
         }
 
@@ -465,9 +468,19 @@ export function Dashboard({ lang, active }: DashboardProps) {
                 const localDelta = (Date.now() - lastBackendUpdateRef.current) / 1000
                 const interpolatedElapsed = lastBackendElapsedRef.current + localDelta
                 setDisplayElapsed(Math.floor(interpolatedElapsed))
-            } else if (progress.elapsed > 0) {
-                // 首次收到后端数据前使用后端值
+
+                // 倒计时插值 (Smoothing Remaining Time)
+                if (progress.remaining > 0) {
+                    const smoothRemaining = Math.max(0, progress.remaining - localDelta)
+                    setDisplayRemaining(Math.round(smoothRemaining))
+                } else {
+                    setDisplayRemaining(0)
+                }
+
+            } else if (progress.elapsed > 0 && hasReceivedProgressRef.current) {
+                // 首次收到后端数据前使用后端值 (仅当已收到新数据时)
                 setDisplayElapsed(Math.floor(progress.elapsed))
+                setDisplayRemaining(Math.floor(progress.remaining))
             }
         }, 100)
 
@@ -475,10 +488,12 @@ export function Dashboard({ lang, active }: DashboardProps) {
     }, [isRunning, progress.elapsed])
 
     // 更新后端时间参考点（每次收到 JSON_PROGRESS 时）
+    // 更新后端时间参考点（每次收到 JSON_PROGRESS 时）
     useEffect(() => {
         if (progress.elapsed > 0) {
             lastBackendElapsedRef.current = progress.elapsed
             lastBackendUpdateRef.current = Date.now()
+            hasReceivedProgressRef.current = true
         }
     }, [progress.elapsed])
 
@@ -497,16 +512,23 @@ export function Dashboard({ lang, active }: DashboardProps) {
 
     const startTranslation = (inputPath: string, forceResume?: boolean, glossaryOverride?: string) => {
         setIsRunning(true)
+        setDisplayElapsed(0)
+        setDisplayRemaining(0)
+        // 重置 Ref 防止旧数据干扰
+        lastBackendElapsedRef.current = 0
+        lastBackendUpdateRef.current = 0
+        hasReceivedProgressRef.current = false
+
         setChartData([])
         setProgress({ current: 0, total: 0, percent: 0, elapsed: 0, remaining: 0, speedLines: 0, speedChars: 0, speedEval: 0, speedGen: 0, retries: 0 })
         setPreviewBlocks({})
         localStorage.removeItem("last_preview_blocks") // Clear persisted preview
         setThinkingContent("")
 
-        // 根据 ctx 自动计算 chunk-size：公式 (ctx - 1000) / 3.5 * 1.3 (Qwen Token Density)
+        // 根据 ctx 自动计算 chunk-size：公式 (ctx - 500) / 3.5 * 1.3 (Qwen Token Density)
         const ctxValue = parseInt(localStorage.getItem("config_ctx") || "4096")
-        // Reserve 1000 for System/Glossary, Divide by 3.5 (Input+Output+CoT), Multiply by 1.3 (Chars/Token)
-        const calculatedChunkSize = Math.max(200, Math.min(2500, Math.floor(((ctxValue - 1000) / 3.5) * 1.3)))
+        // 根据 ctx 自动计算 chunk-size：公式 (ctx - 500) / 3.5 * 1.3 (Qwen Token Density)
+        const calculatedChunkSize = Math.max(200, Math.min(3072, Math.floor(((ctxValue - 500) / 3.5) * 1.3)))
 
         // Get Model Path
         const modelPath = localStorage.getItem("config_model")
@@ -573,7 +595,20 @@ export function Dashboard({ lang, active }: DashboardProps) {
             retryPromptFeedback: localStorage.getItem("config_retry_prompt_feedback") !== "false",
 
             // Daemon Mode
-            daemonMode: localStorage.getItem("config_daemon_mode") === "true"
+            daemonMode: localStorage.getItem("config_daemon_mode") === "true",
+
+            // Concurrency
+            concurrency: parseInt(localStorage.getItem("config_concurrency") || "1"),
+            flashAttn: localStorage.getItem("config_flash_attn") === "true",
+            kvCacheType: localStorage.getItem("config_kv_cache_type") || "f16",
+            useLargeBatch: localStorage.getItem("config_use_large_batch") === "true",
+            physicalBatchSize: parseInt(localStorage.getItem("config_physical_batch_size") || "1024"),
+            seed: localStorage.getItem("config_seed") ? parseInt(localStorage.getItem("config_seed")!) : undefined,
+
+            // Chunk Balancing
+            balanceEnable: localStorage.getItem("config_balance_enable") !== "false",
+            balanceThreshold: parseFloat(localStorage.getItem("config_balance_threshold") || "0.6"),
+            balanceCount: parseInt(localStorage.getItem("config_balance_count") || "3")
         }
 
         // Create history record
@@ -596,14 +631,15 @@ export function Dashboard({ lang, active }: DashboardProps) {
                 temperature: config.temperature,
                 lineCheck: config.lineCheck,
                 repPenaltyBase: config.repPenaltyBase,
-                maxRetries: config.maxRetries
+                maxRetries: config.maxRetries,
+                concurrency: config.concurrency
             },
             triggers: [],
             logs: []
         }
         addRecord(newRecord)
 
-        console.log("[DEBUG] Translation Config:", JSON.stringify(config, null, 2))
+        console.log("[DEBUG] Translation Config:", JSON.stringify({ ...config, highFidelity: undefined }, null, 2))
         window.api?.startTranslation(inputPath, modelPath, config)
     }
 
@@ -993,7 +1029,6 @@ export function Dashboard({ lang, active }: DashboardProps) {
                                             >
                                                 <GripVertical className="w-3.5 h-3.5" />
                                             </div>
-
                                             {i === currentQueueIndex && isRunning ? (
                                                 <div className="w-4 h-4 border-2 border-purple-500 border-t-transparent rounded-full animate-spin shrink-0" />
                                             ) : completedFiles.has(file) || (currentQueueIndex > 0 && i < currentQueueIndex) ? (
@@ -1122,7 +1157,7 @@ export function Dashboard({ lang, active }: DashboardProps) {
                                     </div>
                                     <div className="flex items-baseline justify-between">
                                         <span className="text-sm text-muted-foreground/70">{t.dashboard.remaining}</span>
-                                        <span className="text-base font-bold text-muted-foreground font-mono">{formatTime(progress.remaining)}</span>
+                                        <span className="text-base font-bold text-muted-foreground font-mono">{formatTime(displayRemaining)}</span>
                                     </div>
                                 </div>
                             </div>
@@ -1180,7 +1215,10 @@ export function Dashboard({ lang, active }: DashboardProps) {
                                     </div>
                                     <div className="flex items-baseline justify-between">
                                         <span className="text-sm text-muted-foreground/70">{t.dashboard.evaluate}</span>
-                                        <span className="text-base font-bold text-muted-foreground font-mono">{progress.speedEval || 0}<span className="text-xs text-muted-foreground/70 ml-0.5">t/s</span></span>
+                                        <span className="text-base font-bold text-muted-foreground font-mono">
+                                            {((progress.speedGen || 0) + (progress.speedEval || 0)).toFixed(1)}
+                                            <span className="text-xs text-muted-foreground/70 ml-0.5">t/s</span>
+                                        </span>
                                     </div>
                                 </div>
                             </div>
@@ -1234,8 +1272,6 @@ export function Dashboard({ lang, active }: DashboardProps) {
                         </div>
                     </div>
 
-                    {/* Thinking Stream */}
-                    <ThinkingStream content={thinkingContent} isStreaming={isRunning} />
 
                     {/* Preview Area (Line-Aligned Mode) */}
                     <div className="flex-1 bg-card rounded-2xl border border-border overflow-hidden flex flex-col shadow-sm min-h-[300px]">

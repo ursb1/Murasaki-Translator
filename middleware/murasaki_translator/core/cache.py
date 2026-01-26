@@ -99,7 +99,7 @@ class TranslationCache:
         self.blocks.append(block)
         return block
     
-    def save(self, model_name: str = '', glossary_path: str = '') -> bool:
+    def save(self, model_name: str = '', glossary_path: str = '', concurrency: int = 1) -> bool:
         """保存缓存到文件"""
         try:
             # 计算统计信息
@@ -114,6 +114,7 @@ class TranslationCache:
                 'modelName': model_name,
                 'glossaryPath': glossary_path,
                 'stats': {
+                    'concurrency': concurrency, # Persist concurrency count
                     'blockCount': len(self.blocks),
                     'srcLines': total_src_lines,
                     'dstLines': total_dst_lines,

@@ -36,6 +36,7 @@ GUI/out/
 GUI/dist/
 GUI/.vite/
 GUI/*.log
+
 # GUI/package-lock.json (Keep this tracked for consistency)
 
 python_env/
@@ -59,3 +60,5 @@ middleware/glossaries/
 GUI/middleware/glossaries/
 
 diff
+middleware/temp_rules_post.json
+middleware/temp_rules_pre.json

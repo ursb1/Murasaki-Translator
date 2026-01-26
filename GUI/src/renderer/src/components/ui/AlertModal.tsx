@@ -6,7 +6,7 @@ interface AlertModalProps {
     open: boolean
     onOpenChange: (open: boolean) => void
     title: string
-    description: string
+    description: string | React.ReactNode
     variant?: 'default' | 'destructive' | 'info' | 'success'
     onConfirm?: () => void
     confirmText?: string
@@ -48,9 +48,13 @@ export function AlertModal({
                             <h3 className="font-semibold text-lg leading-none tracking-tight">
                                 {title}
                             </h3>
-                            <p className="text-sm text-muted-foreground whitespace-pre-wrap">
-                                {description}
-                            </p>
+                            <div className="text-sm text-muted-foreground">
+                                {typeof description === 'string' ? (
+                                    <p className="whitespace-pre-wrap">{description}</p>
+                                ) : (
+                                    description
+                                )}
+                            </div>
                         </div>
                         <button
                             onClick={() => onOpenChange(false)}

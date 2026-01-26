@@ -1,4 +1,3 @@
-import { app } from 'electron'
 import { spawn, ChildProcess } from 'child_process'
 import { join } from 'path'
 import fs from 'fs'
@@ -113,10 +112,22 @@ export class ServerManager {
 
         // Build Args
         // llama-server args: -m <model> --port <port> -c <ctx> -ngl <layers>
+        // Context Size Calculation (Total pool for all slots)
+        const concurrency = config.concurrency || 1
+        const perSlotCtx = config.ctxSize || 4096
+        let totalCtx = perSlotCtx * concurrency
+
+        // Hardcap (Match middleware safety limit)
+        const MAX_POOL_CTX = 32768
+        if (totalCtx > MAX_POOL_CTX) {
+            console.warn(`[Server] Requested context ${totalCtx} exceeds pool limit ${MAX_POOL_CTX}. Capping.`)
+            totalCtx = MAX_POOL_CTX
+        }
+
         const args = [
             '-m', effectiveModelPath,
             '--port', this.port.toString(),
-            '-c', config.ctxSize || '4096',
+            '-c', totalCtx.toString(),
             '--host', '127.0.0.1' // Bind to localhost
         ]
 
@@ -128,14 +139,41 @@ export class ServerManager {
             args.push('-ngl', '999') // Default max offload
         }
 
-        // Parallel slots
-        // Default to 1 for stability unless requested?
-        // Let's default to 1 for now to mimic current behavior. User can handle concurrency via queue?
-        // Actually llama-server supports --parallel N.
-        // If we want parallel processing, we should set this.
-        // Let's set it to 4 to allow future expansion (handling multiple requests).
-        args.push('--parallel', '4')
-        args.push('-np', '4') // number of parallel sequences
+        const parallelCount = (config.concurrency || 1).toString()
+        args.push('--parallel', parallelCount)
+        args.push('-np', parallelCount) // number of parallel sequences
+
+        // Seed
+        if (config.seed !== undefined && config.seed !== null && config.seed !== "") {
+            args.push('-s', config.seed.toString())
+        }
+
+        // High Fidelity Mode (Granular Control)
+        if (config.highFidelity || config.flashAttn) args.push('-fa')
+
+        // KV Cache Selection
+        if (config.kvCacheType || config.highFidelity) {
+            // Priority: explicit kvCacheType > highFidelity smart fallback
+            let kvType = config.kvCacheType
+            if (!kvType && config.highFidelity) {
+                kvType = config.concurrency > 1 ? 'q8_0' : 'f16'
+            }
+            if (kvType) {
+                args.push('--cache-type-k', kvType)
+                args.push('--cache-type-v', kvType)
+            }
+        }
+
+        // Batch Sync Logic
+        if (config.useLargeBatch || config.highFidelity) {
+            const requestedBatch = config.physicalBatchSize || (config.concurrency === 1 ? 2048 : 1024)
+            const safeBatch = Math.min(requestedBatch, parseInt(config.ctxSize))
+            args.push('-b', safeBatch.toString())
+            args.push('-ub', safeBatch.toString())
+        }
+
+
+        console.log('[ServerManager] Args:', args)
 
         // Environment
         const env = { ...process.env }

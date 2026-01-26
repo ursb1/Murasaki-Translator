@@ -122,7 +122,7 @@ class RuleProcessor:
 
         current_text = text
         
-        for rule in self.rules:
+        for i, rule in enumerate(self.rules):
             if not rule.get('active', True):
                 continue
 
@@ -131,6 +131,9 @@ class RuleProcessor:
             replacement = rule.get('replacement', '')
             
             try:
+                # Debug logging for rules
+                # print(f"[RuleProcessor] Applying rule {i}: {r_type} - {pattern}")
+                
                 if r_type == 'replace':
                     # Simple string replace
                     if pattern:
@@ -145,9 +148,11 @@ class RuleProcessor:
                         
                 elif r_type == 'format':
                     current_text = self._apply_format(pattern, current_text)
+                
+                # print(f"[RuleProcessor]   Result len: {len(current_text)}")
                             
             except Exception as e:
-                print(f"[RuleProcessor] Error processing rule {rule.get('type', 'unknown')}: {e}")
+                print(f"[RuleProcessor] Error processing rule {r_type}: {e}")
                 # Continue to next rule instead of crashing
                 continue
                 
@@ -204,12 +209,14 @@ class RuleProcessor:
             
         elif format_name == 'ensure_single_newline':
             # Force single newline between paragraphs (compact)
-            lines = [line.strip() for line in text.splitlines() if line.strip()]
+            # Preserve leading indentation (use rstrip instead of strip)
+            lines = [line.rstrip() for line in text.splitlines() if line.strip()]
             return "\n".join(lines)
             
         elif format_name == 'ensure_double_newline':
             # Force double newline between paragraphs (light novel style)
-            lines = [line.strip() for line in text.splitlines() if line.strip()]
+            # Preserve leading indentation (use rstrip instead of strip)
+            lines = [line.rstrip() for line in text.splitlines() if line.strip()]
             return "\n\n".join(lines)
         
         # Unknown format, return unchanged

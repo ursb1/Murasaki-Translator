@@ -3,7 +3,7 @@ import { useState, useCallback } from 'react'
 export interface AlertConfig {
     open: boolean
     title: string
-    description: string
+    description: string | React.ReactNode
     variant?: 'default' | 'destructive' | 'info' | 'success'
     onConfirm?: () => void
     confirmText?: string
@@ -20,7 +20,7 @@ export function useAlertModal() {
 
     const showAlert = useCallback((config: {
         title: string,
-        description: string,
+        description: string | React.ReactNode,
         variant?: 'default' | 'success' | 'info' | 'destructive',
         confirmText?: string
     }) => {
@@ -33,7 +33,7 @@ export function useAlertModal() {
 
     const showConfirm = useCallback((config: {
         title: string,
-        description: string,
+        description: string | React.ReactNode,
         onConfirm: () => void,
         variant?: 'destructive' | 'default',
         confirmText?: string,

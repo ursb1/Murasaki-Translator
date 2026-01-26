@@ -69,6 +69,7 @@ export interface TranslationRecord {
         lineCheck: boolean
         repPenaltyBase: number
         maxRetries: number
+        concurrency?: number
     }
     /** Trigger events recorded during translation */
     triggers: TriggerEvent[]
@@ -211,6 +212,7 @@ export function HistoryView({ lang }: { lang: Language }) {
             `${e.lineCheck} ${record.config.lineCheck ? (lang === 'en' ? 'ON' : '开启') : (lang === 'en' ? 'OFF' : '关闭')}`,
             `${e.repPenalty} ${record.config.repPenaltyBase}`,
             `${e.maxRetries} ${record.config.maxRetries}`,
+            `Concurrency: ${record.config.concurrency || 1}`,
             ``
         ]
 
@@ -360,7 +362,7 @@ export function HistoryView({ lang }: { lang: Language }) {
                                     <CardContent className="pt-0 border-t">
                                         <div className="space-y-4 pt-4">
                                             {/* Stats */}
-                                            <div className="grid grid-cols-6 gap-3 text-sm">
+                                            <div className="grid grid-cols-7 gap-3 text-sm">
                                                 <div>
                                                     <p className="text-muted-foreground text-xs">{t.historyView.stats.blocks}</p>
                                                     <p className="font-medium">{record.completedBlocks}/{record.totalBlocks}</p>
@@ -380,6 +382,10 @@ export function HistoryView({ lang }: { lang: Language }) {
                                                 <div>
                                                     <p className="text-muted-foreground text-xs">{t.historyView.stats.speed}</p>
                                                     <p className="font-medium">{record.avgSpeed ? `${record.avgSpeed} ${t.dashboard.charPerSec}` : '-'}</p>
+                                                </div>
+                                                <div>
+                                                    <p className="text-muted-foreground text-xs">并发</p>
+                                                    <p className="font-medium">{record.config.concurrency || 1}</p>
                                                 </div>
                                                 <div>
                                                     <p className="text-muted-foreground text-xs">{t.historyView.stats.temperature}</p>

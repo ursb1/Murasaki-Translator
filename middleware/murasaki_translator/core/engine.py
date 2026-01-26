@@ -7,6 +7,7 @@ import logging
 import subprocess
 import requests
 import atexit
+import threading
 from typing import List, Dict, Optional, Callable
 
 logger = logging.getLogger(__name__)
@@ -18,17 +19,35 @@ class InferenceEngine:
     Handles server startup, health checks, chat completions with retry logic.
     """
 
-    def __init__(self, server_path: str, model_path: str, host: str = "127.0.0.1", port: int = 8080, n_gpu_layers: int = -1, n_ctx: int = 8192, no_spawn: bool = False):
+    def __init__(self, server_path: str, model_path: str, host: str = "127.0.0.1", port: int = 8080, 
+                 n_gpu_layers: int = -1, n_ctx: int = 8192, n_parallel: int = 1, no_spawn: bool = False,
+                 # Granular High-Fidelity Options
+                 flash_attn: bool = False,
+                 kv_cache_type: str = "q8_0",
+                 use_large_batch: bool = False,
+                 batch_size: Optional[int] = None,
+                 seed: Optional[int] = None):
         self.server_path = server_path
         self.model_path = model_path
         self.host = host
         self.port = port
         self.n_gpu_layers = n_gpu_layers
         self.n_ctx = n_ctx
+        self.n_parallel = n_parallel
         self.no_spawn = no_spawn
-        self.base_url = f"http://{host}:{port}"
-        self.process = None
+        
+        # Store Granular Options
+        self.flash_attn = flash_attn
+        self.kv_cache_type = kv_cache_type
+        self.use_large_batch = use_large_batch
+        self.batch_size = batch_size
+        self.seed = seed
+        
+        self._usage_lock = threading.Lock()
         self.last_usage = None
+        self.base_url = f"http://{host}:{port}"
+        self.session = requests.Session()
+        self.process = None
 
 
     def start_server(self):
@@ -50,12 +69,43 @@ class InferenceEngine:
             "-ngl", str(self.n_gpu_layers),
             "-c", str(self.n_ctx),
             "--ctx-size", str(self.n_ctx),
-            "--parallel", "1", 
-            "-fa", "on" # 必须显式开启
+            "--parallel", str(self.n_parallel),
+            "--reasoning-format", "deepseek-legacy"
         ]
         
-        logger.info(f"Starting server: {' '.join(cmd)}")
-        logger.info(f"Starting server: {' '.join(cmd)}")
+        # --- Granular High-Fidelity CLI Construction ---
+        
+        # 1. Flash Attention (Required for stability in high concurrency)
+        if self.flash_attn:
+            cmd.extend(["-fa", "on"])
+            
+        # 2. KV Cache Selection (Default Q8_0)
+        if self.kv_cache_type:
+            cmd.extend(["--cache-type-k", self.kv_cache_type, "--cache-type-v", self.kv_cache_type])
+            
+        # 3. Large Batch Size (Forced Physical Sync - Safe min(1024, ctx))
+        if self.batch_size:
+            final_batch = min(self.batch_size, self.n_ctx)
+            cmd.extend(["-b", str(final_batch), "-ub", str(final_batch)])
+        elif self.use_large_batch:
+            safe_batch = min(1024, self.n_ctx)
+            cmd.extend(["-b", str(safe_batch), "-ub", str(safe_batch)])
+            
+        # 5. Seed Locking
+        if self.seed is not None:
+            cmd.extend(["-s", str(self.seed)])
+            
+        # Logging active features
+        features = []
+        if self.flash_attn: features.append("FlashAttn")
+        if self.kv_cache_type != "q8_0": features.append(f"KV:{self.kv_cache_type}")
+        if self.batch_size: features.append(f"Batch:{self.batch_size}")
+        elif self.use_large_batch: features.append("BigBatch(1024)")
+        if self.seed is not None: features.append(f"Seed={self.seed}")
+        
+        if features:
+            logger.info(f"High-Fidelity Features Enabled: {', '.join(features)}")
+        
         # 将输出重定向到 server.log，保持 GUI 日志清洁
         self.server_log = open("server.log", "w", encoding='utf-8')
         self.process = subprocess.Popen(cmd, stdout=self.server_log, stderr=self.server_log) 
@@ -69,7 +119,7 @@ class InferenceEngine:
         while time.time() - start < timeout:
             try:
                 # 使用标准健康检查接口
-                resp = requests.get(f"{self.base_url}/v1/models", timeout=1)
+                resp = self.session.get(f"{self.base_url}/v1/models", timeout=5)
                 if resp.status_code == 200:
                     logger.info("Server is ready!")
                     return
@@ -78,18 +128,63 @@ class InferenceEngine:
             time.sleep(1)
             
         self.stop_server()
-        raise TimeoutError("Server failed to start within timeout")
+        
+        # Try to extract a useful error from the log
+        error_hint = "Server failed to start within timeout"
+        try:
+            if os.path.exists("server.log"):
+                with open("server.log", "r", encoding='utf-8', errors='ignore') as f:
+                    lines = f.readlines()[-20:]
+                    log_tail = "".join(lines)
+                    if "error" in log_tail.lower() or "fail" in log_tail.lower():
+                        if "flash_attn" in log_tail or "-fa" in log_tail:
+                            error_hint = "Flash Attention is NOT supported by this model/hardware."
+                        elif "CUDA error" in log_tail:
+                            error_hint = "CUDA Error: Likely Out of Memory (VRAM)."
+                        elif "unsupported" in log_tail:
+                            error_hint = f"Unsupported parameter or architecture found in logs."
+        except: pass
+        
+        raise TimeoutError(f"{error_hint} (Check server.log for details)")
 
     def stop_server(self):
         if self.no_spawn:
             return
 
-        if self.process and hasattr(self.process, 'terminate'):
-            logger.info("Stopping server...")
-            self.process.terminate()
-            self.process.wait()
+        if self.process:
+            pid = self.process.pid
+            logger.info(f"Stopping server (PID: {pid})...")
+            try:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                     logger.warning("Server terminate timeout, forcing kill...")
+                     self.process.kill()
+                     self.process.wait()
+            except Exception as e:
+                logger.error(f"Error stopping server: {e}")
+            
+            # Windows specific: ensure llama-server is 100% killed
+            if os.name == 'nt':
+                try:
+                    # Hide the CMD window for taskkill
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = 0 # SW_HIDE
+                    
+                    subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], 
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 startupinfo=startupinfo)
+                except: pass
+                
             self.process = None
             
+        if hasattr(self, 'session') and self.session:
+             try:
+                 self.session.close()
+             except: pass
+
         if hasattr(self, 'server_log') and self.server_log:
             try:
                 self.server_log.close()
@@ -104,7 +199,9 @@ class InferenceEngine:
         2. If Repetition Loop detected, Retry with higher penalty up to rep_max.
         """
         
-        self.last_usage = None
+        # Local state for this request (Thread-Safe)
+        local_last_usage = None
+        local_token_count = 0
         
         # 动态生成尝试策略
         attempts = [rep_base]
@@ -149,17 +246,15 @@ class InferenceEngine:
             
             try:
                 if penalty > 1.0:
-                    import sys
-                    print(f"\n[Repetition Guard] ⚠️ Retrying with RepetitionPenalty={penalty}...")
-                    # Suppress JSON_RETRY for internal engine retries to avoid inflating the UI retry count
-                    # sys.stdout.write(f"\nJSON_RETRY:{json.dumps({'block': block_id, 'attempt': idx, 'type': 'repetition', 'penalty': penalty})}\n")
-                    sys.stdout.flush()
+                    prefix = f"[Block {block_id}] " if block_id is not None else ""
+                    logger.info(f"{prefix}Detected loop. Retrying with RepetitionPenalty={penalty}...")
                 
-                response = requests.post(
+                req_start_time = time.time()
+                response = self.session.post(
                     f"{self.base_url}/v1/chat/completions",
                     json=payload,
                     stream=stream,
-                    timeout=600
+                    timeout=(10, 600) # (Connect timeout, Read timeout)
                 )
                 response.raise_for_status()
                 
@@ -168,9 +263,6 @@ class InferenceEngine:
                 loop_detected = False
                 
                 if stream:
-                    # Only print separator for the first success stream to avoid clutter, 
-                    # but here we print it to show start.
-                    # print(f"\n{'='*10} Streaming Response (RP={penalty}) {'='*10}")
                     
                     for line in response.iter_lines():
                         if not line: continue
@@ -182,7 +274,7 @@ class InferenceEngine:
                             chunk = json.loads(data)
                             
                             if 'usage' in chunk:
-                                self.last_usage = chunk['usage']
+                                local_last_usage = chunk['usage']
                             
                             if 'choices' not in chunk or len(chunk['choices']) == 0:
                                 continue
@@ -193,31 +285,34 @@ class InferenceEngine:
                             content = delta.get('content', '')
                             
                             if reasoning:
-                                # print(reasoning, end="", flush=True) 
                                 full_reasoning += reasoning
                                 # Count reasoning tokens (fallback)
-                                if self.last_usage is None:
-                                    if not hasattr(self, '_token_count'):
-                                        self._token_count = 0
-                                    self._token_count += 1
+                                if local_last_usage is None:
+                                    local_token_count += 1
                                 
                             if content:
-                                # print(content, end="", flush=True) 
                                 full_text += content
                                 if stream_callback:
                                     stream_callback(content)
                                 # Count completion tokens (fallback)
-                                if self.last_usage is None:
-                                    if not hasattr(self, '_token_count'):
-                                        self._token_count = 0
-                                    self._token_count += 1
+                                if local_last_usage is None:
+                                    local_token_count += 1
                                 
                                 # Repetition Guard
                                 if len(full_text) > 20:
                                     last_char = full_text[-1]
+                                    # Whitelist for stylistic repetition (Light Novel style)
+                                    # Allow: Ellipsis, Dash, Tilde, Exclamation, Spaces, 'Ah', 'Ugh', etc.
+                                    SAFE_LOOP_CHARS = {'…', '—', '─', '~', '～', '！', '!', '？', '?', '.', '。', ' ', '\n', '　', '啊', 'ー', '”', '’'}
+                                    
+                                    # Dynamic threshold
+                                    loop_threshold = 20
+                                    if last_char in SAFE_LOOP_CHARS:
+                                        loop_threshold = 80  # Allow much longer stylistic loops
+                                    
                                     # 1. Single Char Loop (e.g. ".......")
-                                    if len(full_text) >= 20 and full_text[-20:] == last_char * 20:
-                                        print(f"\n[Repetition Guard] 🛑 Detected char loop on '{last_char}'. Aborting.")
+                                    if len(full_text) >= loop_threshold and full_text[-loop_threshold:] == last_char * loop_threshold:
+                                        logger.warning(f"Detected char loop on '{last_char}' (Limit={loop_threshold}). Aborting.")
                                         loop_detected = True
                                     
                                     # 2. Phrase Loop (e.g. "output... output...")
@@ -231,7 +326,7 @@ class InferenceEngine:
                                             
                                             # Check if the last 'length' chars are same as previous 'length'
                                             if full_text[-length:] == full_text[-2*length:-length]:
-                                                print(f"\n[Repetition Guard] 🛑 Detected phrase loop (len={length}). Aborting.")
+                                                logger.warning(f"Detected phrase loop (len={length}). Aborting.")
                                                 loop_detected = True
                                                 break
                                     
@@ -240,22 +335,33 @@ class InferenceEngine:
                                         break
                                         
                         except: pass
-                    print("\n")
                     
                     # Fallback Usage Construction
-                    if self.last_usage is None and hasattr(self, '_token_count'):
-                        # Estimate prompt tokens (rough chars/3.5)
+                    if local_last_usage is None:
+                        # Estimate prompt tokens
                         prompt_est = 0
+                        is_fallback = True
                         if 'messages' in payload:
-                            # Rough estimation from messages
+                            # Improved estimation for CJK: Chars * 1.3
                             txt_len = sum(len(m['content']) for m in payload['messages'])
-                            prompt_est = int(txt_len / 3.0) 
+                            prompt_est = int(txt_len * 1.3) 
                         
-                        self.last_usage = {
+                        local_last_usage = {
                             "prompt_tokens": prompt_est,
-                            "completion_tokens": self._token_count,
-                            "total_tokens": prompt_est + self._token_count
+                            "completion_tokens": local_token_count,
+                            "total_tokens": prompt_est + local_token_count,
+                            "fallback": True
                         }
+                        if is_final:
+                             logger.warning(f"Usage statistics missing from server. Using fallback estimation (Chars*1.3).")
+                    
+                    # Add duration for TPS calculation
+                    req_duration = time.time() - req_start_time
+                    local_last_usage["duration"] = max(0.001, req_duration)
+                    
+                    # Update global last_usage (Thread-Safe update for monitoring)
+                    with self._usage_lock:
+                        self.last_usage = local_last_usage
                     
                     # Decide what to do
 
@@ -265,29 +371,34 @@ class InferenceEngine:
                             continue 
                         else:
                             # Final attempt failed too. Return what we have.
-                            print(f"[Repetition Guard] ❌ Final attempt also looped. Returning truncated text.")
+                            logger.error(f"Final attempt also looped. Returning truncated text.")
                     
                     # Success or Final Fail -> Return Result
+                    final_text = full_text
                     if full_reasoning:
-                        return f"<think>{full_reasoning}</think>\n{full_text}"
-                    else:
-                        return full_text
+                        final_text = f"<think>{full_reasoning}</think>\n{full_text}"
+                    
+                    return final_text, local_last_usage
+
                 else:
                     # Non-stream not supported for loop detection currently
                     resp_json = response.json()
+                    usage = None
                     if 'usage' in resp_json:
-                        self.last_usage = resp_json['usage']
+                        with self._usage_lock:
+                            self.last_usage = resp_json['usage']
+                        usage = resp_json['usage']
                     
                     msg = resp_json['choices'][0]['message']
-                    return msg.get('content', '')
+                    return msg.get('content', ''), usage
                     
             except Exception as e:
                 logger.error(f"Inference Error: {e}")
-                print(f"\n[Engine Error] ⚠️ API call failed: {e}")
+                logger.warning(f"API call failed: {e}")
                 if is_final:
-                    print(f"[Engine Error] ❌ Final attempt failed. Returning empty.")
-                    return ""
+                    logger.error(f"Final attempt failed. Returning empty.")
+                    return "", None
                 # If network error, maybe don't retry with higher penalty? 
                 # But here we stick to the plan.
         
-        return ""
+        return "", None

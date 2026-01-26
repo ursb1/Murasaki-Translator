@@ -204,7 +204,7 @@ class QualityChecker:
         
         # DEBUG: Print if glossary is empty (once)
         if not hasattr(self, '_debug_logged'):
-            print(f"[QualityChecker] Glossaries: {len(self.glossary)}")
+
             self._debug_logged = True
 
         for entry in self.glossary:

@@ -19,6 +19,9 @@ class ResponseParser:
         self.think_pattern = re.compile(r'<think>.*?</think>', re.DOTALL)
         # 兼容 [1] xxx, [01] xxx, 1. xxx 等多种格式
         self.line_pattern_strict = re.compile(r'^\[(\d+)\]\s*(.*)')
+        # Support unclosed tags (for streaming or cut-off outputs)
+        self.think_pattern_open = re.compile(r'<think>(.*?)(?:</think>|$)', re.DOTALL)
+        self.think_pattern_closed = re.compile(r'<think>.*?</think>', re.DOTALL)
         
     def parse(self, raw_output: str, expected_count: int = 0) -> Tuple[List[str], str]:
         """
@@ -55,11 +58,21 @@ class ResponseParser:
         
         # 2. 提取 <think> 标签内容 (如果还没提取到)
         if not cot_content:
-            think_match = self.think_pattern.search(clean_text)
+            # First try to find closed tags
+            think_match = self.think_pattern_closed.search(clean_text)
+            if not think_match:
+                 # Fallback to open tags
+                 think_match = self.think_pattern_open.search(clean_text)
+            
             cot_content = think_match.group(0) if think_match else ""
         
         # 3. 移除 <think> 标签得到正文
-        clean_text = self.think_pattern.sub('', clean_text).strip()
+        # Use simple replacement first for safety
+        clean_text_no_think = self.think_pattern_closed.sub('', clean_text).strip()
+        if clean_text_no_think == clean_text:
+             # Try removing open tag match if closed didn't match
+             clean_text_no_think = self.think_pattern_open.sub('', clean_text).strip()
+        clean_text = clean_text_no_think
         # 3.1 移除可能的残留标签 (如模型幻觉产生的孤立 </think>)
         clean_text = clean_text.replace('<think>', '').replace('</think>', '')
         
@@ -73,8 +86,8 @@ class ResponseParser:
         
         # 4. 按换行切分
         lines = clean_text.split('\n')
-        # 过滤掉可能的尾部空白行
-        lines = [l.strip() for l in lines]
+        # 过滤掉可能的尾部空白行 - 仅移除右侧空格以保留首行缩进
+        lines = [l.rstrip() for l in lines]
         while lines and not lines[-1]:
             lines.pop()
             

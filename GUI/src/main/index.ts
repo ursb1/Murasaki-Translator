@@ -974,6 +974,32 @@ ipcMain.on('start-translation', (event, { inputFile, modelPath, config }) => {
         if (config.ctxSize) args.push('--ctx', config.ctxSize)
         if (config.chunkSize) args.push('--chunk-size', config.chunkSize)
 
+        // Concurrency
+        if (config.concurrency) {
+            args.push('--concurrency', config.concurrency.toString())
+        }
+
+        // Chunk Balancing
+        if (config.balanceEnable) {
+            args.push('--balance-enable')
+        }
+        if (config.balanceThreshold !== undefined) {
+            args.push('--balance-threshold', config.balanceThreshold.toString())
+        }
+        if (config.balanceCount) {
+            args.push('--balance-count', config.balanceCount.toString())
+        }
+
+        // Fidelity & Performance Control (Granular)
+        if (config.flashAttn) args.push('--flash-attn')
+        if (config.kvCacheType) args.push('--kv-cache-type', config.kvCacheType)
+        if (config.useLargeBatch) args.push('--use-large-batch')
+        if (config.physicalBatchSize) args.push('--batch-size', config.physicalBatchSize.toString())
+
+        if (config.seed !== undefined && config.seed !== null && config.seed !== "") {
+            args.push('--seed', config.seed.toString())
+        }
+
         // Custom Output Directory
         if (config.outputDir && fs.existsSync(config.outputDir)) {
             const ext = inputFile.split('.').pop()
@@ -1106,9 +1132,9 @@ ipcMain.on('start-translation', (event, { inputFile, modelPath, config }) => {
     }
 
     console.log('Spawning:', pythonCmd, args.join(' '), 'in', middlewareDir)
-    event.reply('log-update', `System: Spawning backend... CWD=${middlewareDir}`)
-    event.reply('log-update', `System: Config - CTX: ${config?.ctxSize || '8192'}, Chunk: ${config?.chunkSize || '1000'}, Device: ${config?.deviceMode || 'auto'}`)
-    event.reply('log-update', `System: Traditional=${config?.traditional}, RulesPre=${config?.rulesPre?.length || 0}, RulesPost=${config?.rulesPost?.length || 0}`)
+    event.reply('log-update', `System: CMD: ${pythonCmd} ${args.join(' ')}`)
+    event.reply('log-update', `System: CWD: ${middlewareDir}`)
+    event.reply('log-update', `System: Config - CTX: ${config?.ctxSize || '8192'}, Concurrency: ${config?.concurrency || '1'}, KV: ${config?.kvCacheType || 'f16'}`)
 
     const env = { ...process.env }
 
@@ -1157,7 +1183,12 @@ ipcMain.on('start-translation', (event, { inputFile, modelPath, config }) => {
                 }
 
                 console.error('STDERR:', str)
-                event.reply('log-update', `ERR: ${str}`)
+                // If it's still informational (e.g. from llama-server or python logging that wasn't redirected)
+                if (str.includes('INFO') || str.includes('WARN')) {
+                    event.reply('log-update', `System: ${str}`)
+                } else {
+                    event.reply('log-update', `ERR: ${str}`)
+                }
             })
         }
 

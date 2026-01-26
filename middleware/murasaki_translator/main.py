@@ -7,9 +7,10 @@ import time
 import json
 import re
 import subprocess
+import threading
 from contextlib import nullcontext
 from typing import List, Dict, Optional
-from concurrent.futures import ThreadPoolExecutor, Future
+from concurrent.futures import ThreadPoolExecutor, Future, as_completed
 
 from pathlib import Path
 
@@ -19,6 +20,21 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Force UTF-8 for stdout/stderr (Windows console fix)
 sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
+
+# Global Lock for thread-safe printing to stdout
+stdout_lock = threading.Lock()
+
+def safe_print_json(prefix, data):
+    """Thread-safe JSON printing to stdout."""
+    with stdout_lock:
+        sys.stdout.write(f"\n{prefix}:{json.dumps(data, ensure_ascii=False)}\n")
+        sys.stdout.flush()
+
+def safe_print(msg):
+    """Thread-safe generic printing."""
+    with stdout_lock:
+        print(msg)
+
 
 from murasaki_translator.core.chunker import Chunker
 from murasaki_translator.core.prompt import PromptBuilder
@@ -111,7 +127,6 @@ def load_existing_output(output_path: str) -> tuple:
         print(f"[Warning] Failed to load existing output: {e}")
         return 0, [], False
 
-
 def get_missed_terms(source_text: str, translated_text: str, glossary: Dict[str, str]) -> List[tuple]:
     """
     获取原文中出现但译文中未正确翻译的术语列表。
@@ -138,7 +153,7 @@ def build_retry_feedback(missed_terms: List[tuple], coverage: float) -> str:
     if len(missed_terms) > 5:
         terms_str += f" 等 {len(missed_terms)} 项"
     
-    feedback = f"\n\n【系统提示】上一轮翻译术语覆盖率仅为 {coverage:.0f}%。以下术语未正确应用：{terms_str}。请在本次翻译中严格使用术语表中的标准译法，不要擅自简化或省略。"
+    feedback = f"\n\n【系统提示】上一轮翻译中以下术语未正确应用：{terms_str}。请在本次翻译中严格使用术语表中的标准译法，不要擅自简化或省略。"
     
     return feedback
 
@@ -231,7 +246,12 @@ def translate_single_block(args):
         temperature=args.temperature,
         rep_base=getattr(args, 'rep_penalty_base', 1.0),
         rep_max=getattr(args, 'rep_penalty_max', 1.5),
-        no_spawn=getattr(args, 'no_server_spawn', False)
+        no_spawn=getattr(args, 'no_server_spawn', False),
+        flash_attn=getattr(args, 'flash_attn', False),
+        kv_cache_type=getattr(args, 'kv_cache_type', "q8_0"),
+        use_large_batch=getattr(args, 'use_large_batch', False),
+        batch_size=getattr(args, 'batch_size', None),
+        seed=getattr(args, 'seed', None)
     )
     
     # Load Glossary
@@ -241,12 +261,14 @@ def translate_single_block(args):
     rules_pre = load_rules(args.rules_pre) if hasattr(args, 'rules_pre') and args.rules_pre else []
     rules_post = load_rules(args.rules_post) if hasattr(args, 'rules_post') and args.rules_post else []
     
-    prompt_builder = PromptBuilder(glossary)
-    parser = ResponseParser()
-    rule_processor = RuleProcessor(rules_pre, rules_post)
+    pre_processor = RuleProcessor(rules_pre)
+    post_processor = RuleProcessor(rules_post)
     
     # Initialize Text Protector
-    protector = TextProtector() if args.text_protect else None
+    protector = None
+    if getattr(args, 'text_protect', False):
+         # Try to get patterns from app data or default
+         protector = TextProtector()
     
     try:
         engine.start_server()
@@ -257,7 +279,11 @@ def translate_single_block(args):
             raise ValueError("Input text is empty")
             
         # 2. Pre-processing & Protection
-        processed_src = rule_processor.process_pre(src_text)
+        processed_src = pre_processor.process(src_text)
+        processed_src = Normalizer.normalize(processed_src)
+        if getattr(args, 'fix_ruby', False):
+            processed_src = RubyCleaner.clean(processed_src)
+            
         if protector:
             processed_src = protector.protect(processed_src)
             
@@ -269,33 +295,40 @@ def translate_single_block(args):
         )
         
         # 4. Translate
-        raw_output = ""
-        def on_chunk(chunk):
-            nonlocal raw_output
-            raw_output += chunk
+        raw_output, block_usage = engine.chat_completion(
+            messages=messages,
+            temperature=args.temperature,
+            rep_base=getattr(args, 'rep_penalty_base', 1.0),
+            rep_max=getattr(args, 'rep_penalty_max', 1.5),
+            block_id=0
+        )
         
-        success = engine.translate_block(messages, on_chunk)
-        
-        if success and raw_output:
+        if raw_output:
             # 5. Parse & Post-process
-            cot, main_text = parser.parse(raw_output)
+            parsed_lines, cot_content = parser.parse(raw_output)
+            base_text = '\n'.join(parsed_lines)
+            
+            # Built-in Fixers
+            base_text = NumberFixer.fix(src_text, base_text)
+            if getattr(args, 'fix_punctuation', False):
+                base_text = PunctuationFixer.fix(src_text, base_text, target_is_cjk=True)
+            if getattr(args, 'fix_kana', False):
+                base_text = KanaFixer.fix(base_text)
             
             # Restore protected text
             if protector:
-                main_text = protector.restore(main_text)
+                restored_text = protector.restore(base_text)
+            else:
+                restored_text = base_text
                 
-            # Post-rules
-            dst_text = rule_processor.process_post(main_text)
-            
-            # Format lines
-            lines = [l for l in dst_text.split('\n') if l.strip()]
-            final_dst = '\n'.join(lines)
+            # Post-rules (Final Layout)
+            final_dst = post_processor.process(restored_text)
             
             result = {
                 'success': True,
                 'src': src_text,
                 'dst': final_dst,
-                'cot': cot if args.debug else ''
+                'cot': cot_content if args.debug else ''
             }
         else:
             result = {
@@ -321,13 +354,22 @@ def translate_single_block(args):
 
 
 def main():
+    import logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='[%(asctime)s] [%(levelname)s] %(message)s',
+        datefmt='%H:%M:%S',
+        stream=sys.stdout
+    )
+    logger = logging.getLogger("murasaki")
+
     # Argument Parsing
     # Default server path relative to middleware directory
     middleware_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     default_server = os.path.join(middleware_dir, "llama-b7770-bin-win-cuda-12.4-x64", "llama-server.exe")
     default_model = os.path.join(middleware_dir, "models", "ACGN-8B-Step150-Q4_K_M.gguf")
     
-    parser = argparse.ArgumentParser(description="Murasaki Translator v1.0")
+    parser = argparse.ArgumentParser(description="Murasaki Translator - High Fidelity System 2 Translation")
     parser.add_argument("--file", required=True, help="Input file path")
     parser.add_argument("--server", default=default_server)
     parser.add_argument("--model", default=default_model)
@@ -384,8 +426,31 @@ def main():
     parser.add_argument("--json-output", action="store_true", help="Output result as JSON (for single-block mode)")
     parser.add_argument("--no-server-spawn", action="store_true", help="Client mode: connect to existing server")
     
+    parser.add_argument("--concurrency", type=int, default=1, help="Parallel slots count (default 1)")
+    # High-Fidelity Granular Settings
+    parser.add_argument("--high-fidelity", action="store_true", help="Master Switch: Enable recommended High-Fidelity settings")
+    parser.add_argument("--flash-attn", action="store_true", help="Enable Flash Attention")
+    parser.add_argument("--kv-cache-type", default="q8_0", choices=["f16", "q8_0", "q5_1", "q4_0"], help="KV Cache Quantization (default: q8_0)")
+    parser.add_argument("--use-large-batch", action="store_true", help="Use large batch sizes (b=ub=1024 for safety)")
+    parser.add_argument("--batch-size", type=int, help="Manual physical batch size (overrides large-batch default)")
+    parser.add_argument("--seed", type=int, help="Lock sampling seed (e.g. 42)")
+    
+    # Chunk Balancing Strategy
+    parser.add_argument("--balance-enable", action="store_true", help="Enable chunk tail balancing")
+    parser.add_argument("--balance-threshold", type=float, default=0.6, help="Tail balance threshold (default 0.6)")
+    parser.add_argument("--balance-count", type=int, default=3, help="Tail balance range count (default 3)")
+    
     args = parser.parse_args()
     
+    # High-Fidelity Logic is now handled by the frontend.
+    # The backend simply respects the explicit arguments passed for kv_cache, batch size, etc.
+    # if args.high_fidelity: ... (Removed)
+    
+    # Concurrency Hard Limit (New requirement: max 16)
+    if args.concurrency > 16:
+        print(f"[Warning] Concurrency {args.concurrency} exceeds system limit of 16. Capping to 16.")
+        args.concurrency = 16
+
     # ========================================
     # 单块翻译模式 (用于校对界面重翻)
     # ========================================
@@ -436,23 +501,91 @@ def main():
         output_path = f"{base}{suffix}{ext}"
         cot_path = f"{base}{suffix}_cot{ext}"
 
+    # Temp Progress Path (Deterministic for Resume)
+    temp_progress_path = f"{output_path}.temp.jsonl"
+    
+    # Clean up OLD temp files in output directory (not glossary dir)
+    try:
+        out_dir = os.path.dirname(os.path.abspath(output_path))
+        for f in os.listdir(out_dir):
+            if f.endswith(".temp.jsonl") and f != os.path.basename(temp_progress_path):
+                full_p = os.path.join(out_dir, f)
+                # Clean files older than 24h
+                if time.time() - os.path.getmtime(full_p) > 86400:
+                    os.remove(full_p)
+    except Exception: pass
+
     # Load Glossary (Already loaded above)
     print(f"[Init] Loaded glossary: {len(glossary)} entries from {glossary_path or 'None'}")
 
     # Initialize Components
-    print(f"Initializing Engine (Server: {args.server})...")
+    # Important: total_ctx = per_slot_ctx * concurrency (handled by engine args if needed)
+    # But llama-server -c is total context.
+    # The UI passes "ctx" (per slot). So we must multiply here.
+    total_ctx = args.ctx * args.concurrency
+    
+    # Context Hardcap (Llama-3/RoPE limit check)
+    MAX_SYSTEM_CTX = 32768
+    if total_ctx > MAX_SYSTEM_CTX:
+        print(f"[Warning] Requested total context {total_ctx} exceeds safe limit {MAX_SYSTEM_CTX}. Capping.")
+        total_ctx = MAX_SYSTEM_CTX
+
+    # Generate Configuration Fingerprint for Resume Integrity
+    import hashlib
+    config_payload = {
+        "chunk_size": args.chunk_size,
+        "model": os.path.basename(args.model),
+        "concurrency": args.concurrency,
+        "preset": args.preset,
+        "line_format": args.line_format,
+        "ctx": args.ctx,
+        "text_protect": args.text_protect,
+        "fix_ruby": args.fix_ruby,
+        "fix_kana": args.fix_kana,
+        "fix_punctuation": args.fix_punctuation,
+        "traditional": args.traditional,
+        "glossary_path": glossary_path,
+        "rules_pre": args.rules_pre,
+        "rules_post": args.rules_post,
+        "high_fidelity": args.high_fidelity,
+        "flash_attn": args.flash_attn,
+        "kv_cache_type": args.kv_cache_type,
+        "use_large_batch": args.use_large_batch,
+        "seed": args.seed,
+        "balance_enable": args.balance_enable,
+        "balance_threshold": args.balance_threshold,
+        "balance_count": args.balance_count,
+    }
+    config_hash = hashlib.sha256(json.dumps(config_payload, sort_keys=True).encode()).hexdigest()[:16]
+    
+    # Concurrency Warning (Flops/Bandwidth Bottleneck)
+    # Concurrency Warning (Flops/Bandwidth Bottleneck)
+    if args.concurrency >= 4:
+        print(f"\n[Warning] Concurrency set to {args.concurrency} (>=4). High concurrency may decrease processing speed instead of increasing it.")
+        print(f"[Tip] Real speed depends on GPU compute (FLOPs), bandwidth, and parallel processing quantity. If speed drops, try reducing concurrency.\n")
+
+    print(f"Initializing Engine (Server: {args.server}, Parallel: {args.concurrency}, HighFidelity: {args.high_fidelity})...")
     engine = InferenceEngine(
         server_path=args.server, 
         model_path=args.model, 
         n_gpu_layers=args.gpu_layers,
-        n_ctx=args.ctx,
-        no_spawn=args.no_server_spawn
+        n_ctx=total_ctx, 
+        n_parallel=args.concurrency,
+        no_spawn=args.no_server_spawn,
+        flash_attn=args.flash_attn,
+        kv_cache_type=args.kv_cache_type,
+        use_large_batch=args.use_large_batch,
+        batch_size=args.batch_size,
+        seed=args.seed
     )
     
     chunker = Chunker(
         target_chars=args.chunk_size, 
-        max_chars=args.chunk_size * 2,
-        mode=args.mode
+        max_chars=args.chunk_size * 2, # Soft limit doubled for buffer
+        mode=args.mode,
+        enable_balance=args.balance_enable,
+        balance_threshold=args.balance_threshold,
+        balance_range=args.balance_count
     )
     
     prompt_builder = PromptBuilder(glossary)
@@ -525,31 +658,29 @@ def main():
                 print(f"[DEBUG] Block {bi+1}: {len(blk.prompt_text)} chars")
         
         # Streaming Processing
+        start_time = time.time() # Ensure initialized early
         total_chars = 0
         total_cot_chars = 0
-        total_main_chars = 0
+        total_out_chars = 0  
         total_time = 0
         total_tokens = 0 # Track total tokens used
+        total_gen_tokens = 0 # Track total generated tokens (for smooth speed)
+        total_gen_time = 0 # Track total generation duration (for smooth speed)
         total_lines = 0 # Track total output lines for stats
-        
-        # 累积预览数据（用于 GUI 实时预览）
-        all_src_previews = []
-        all_out_previews = []
+        last_progress_time = 0 # For rate limiting
         
         # 初始化翻译缓存（用于校对界面）
         translation_cache = TranslationCache(output_path, custom_cache_dir=args.cache_path) if args.save_cache else None
         
-        # Initialize Text Protector (with custom patterns support)
-        protect_patterns = None
+        # Load custom protection patterns once
+        custom_protector_patterns = None
         if args.protect_patterns and os.path.exists(args.protect_patterns):
              try:
                  with open(args.protect_patterns, 'r', encoding='utf-8') as f:
-                     protect_patterns = [line.strip() for line in f if line.strip()]
-                 print(f"Loaded {len(protect_patterns)} custom protection patterns.")
+                     custom_protector_patterns = [line.strip() for line in f if line.strip()]
+                 print(f"Loaded {len(custom_protector_patterns)} custom protection patterns.")
              except Exception as e:
                  print(f"[Warning] Failed to load protection patterns: {e}")
-        
-        batch_protector = TextProtector(patterns=protect_patterns, enabled=args.text_protect)
         
         gpu_name = get_gpu_name()  # Get GPU Name once
         display_name, params, quant = format_model_info(args.model)
@@ -564,15 +695,15 @@ def main():
         # 详细配置状态日志
         print("\n[Config] Feature Status:")
         print(f"  Temperature: {args.temperature}")
-        print(f"  Line Check: {'✓ Enabled' if args.line_check else '✗ Disabled'} (±{args.line_tolerance_abs}/{args.line_tolerance_pct*100:.0f}%)")
+        print(f"  Line Check: {'[V] Enabled' if args.line_check else '[X] Disabled'} (±{args.line_tolerance_abs}/{args.line_tolerance_pct*100:.0f}%)")
         print(f"  Rep Penalty Retry: Base={args.rep_penalty_base}, Max={args.rep_penalty_max}")
         print(f"  Max Retries: {args.max_retries}")
-        print(f"  Glossary Coverage: {'✓ Enabled' if args.output_hit_threshold < 100 else '✗ Disabled'} (Output>={args.output_hit_threshold}% or CoT>={args.cot_coverage_threshold}%, Retries={args.coverage_retries})")
-        print(f"  Dynamic Retry: TempBoost={args.retry_temp_boost}, RepBoost={args.retry_rep_boost}, Feedback={'✓' if args.retry_prompt_feedback else '✗'}")
-        print(f"  Text Protect: {'✓ Enabled' if args.text_protect else '✗ Disabled'}")
-        print(f"  Traditional Chinese: {'✓ Enabled' if args.traditional else '✗ Disabled'}")
-        print(f"  Resume Mode: {'✓ Enabled' if args.resume else '✗ Disabled'}")
-        print(f"  Save Cache: {'✓ Enabled' if args.save_cache else '✗ Disabled'}")
+        print(f"  Glossary Coverage: {'[V] Enabled' if args.output_hit_threshold < 100 else '[X] Disabled'} (Output>={args.output_hit_threshold}% or CoT>={args.cot_coverage_threshold}%, Retries={args.coverage_retries})")
+        print(f"  Dynamic Retry: TempBoost={args.retry_temp_boost}, RepBoost={args.retry_rep_boost}, Feedback={'[V]' if args.retry_prompt_feedback else '[X]'}")
+        print(f"  Text Protect: {'[V] Enabled' if args.text_protect else '[X] Disabled'}")
+        print(f"  Traditional Chinese: {'[V] Enabled' if args.traditional else '[X] Disabled'}")
+        print(f"  Resume Mode: {'[V] Enabled' if args.resume else '[X] Disabled'}")
+        print(f"  Save Cache: {'[V] Enabled' if args.save_cache else '[X] Disabled'}")
         if args.glossary:
             print(f"  Glossary: {os.path.basename(args.glossary)} ({len(glossary)} entries)")
         else:
@@ -587,777 +718,594 @@ def main():
         monitor = HardwareMonitor()
         if monitor.enabled:
             print(f"Hardware Monitor Active: {monitor.name}")
+            
+            # Start Monitor Thread
+            def run_monitor_loop():
+                while True:
+                    status = monitor.get_status()
+                    if status:
+                        safe_print_json("JSON_MONITOR", status)
+                    time.sleep(2.0)
+            
+            monitor_thread = threading.Thread(target=run_monitor_loop, daemon=True)
+            monitor_thread.start()
         
-        # 增量翻译检测
-        skip_blocks = 0
-        existing_content = []
+        # 定义全局起始时间 (Fix NameError) - MOVED TO TOP
+        # start_time = time.time()
+        
+        # 发送初始脉冲 JSON (Initial Progress Pulse)
+        # 这让 GUI 知道总块数，即使任务还未开始处理
+        initial_progress = {
+            "current": 0,
+            "total": len(blocks),
+            "percent": 0,
+            "total_chars": 0,
+            "total_lines": 0,
+            "source_chars": source_chars,
+            "source_lines": source_lines,
+            "speed_chars": 0,
+            "elapsed": 0
+        }
+        safe_print_json("JSON_PROGRESS", initial_progress)
+        
+        # Incremental Translation / Resume Logic
+        skip_blocks_from_output = 0 # Blocks skipped based on final output file
+        precalculated_temp = {}    # Blocks already processed and stored in temp file
+        resume_config_matched = False
+        
         if args.resume:
             existing_lines, existing_content, is_valid = load_existing_output(output_path)
             if existing_lines == -1:
                 print("[Resume] Output file already complete. Nothing to do.")
                 return
             elif is_valid and existing_lines > 0:
-                skip_blocks = calculate_skip_blocks(blocks, existing_lines)
-                if skip_blocks >= len(blocks):
+                skip_blocks_from_output = calculate_skip_blocks(blocks, existing_lines)
+                if skip_blocks_from_output >= len(blocks):
                     print(f"[Resume] All {len(blocks)} blocks already translated. Nothing to do.")
                     return
-                print(f"[Resume] Found {existing_lines} existing lines. Skipping {skip_blocks}/{len(blocks)} blocks.")
+                print(f"[Resume] Found {existing_lines} existing lines in output. Will skip first {skip_blocks_from_output}/{len(blocks)} blocks.")
             else:
                 print("[Resume] No valid existing output found. Starting fresh.")
+
+            # Load temporary progress from .temp.jsonl file.
+            # Returns: {block_idx: result_dict}
+            if os.path.exists(temp_progress_path):
+                try:
+                    with open(temp_progress_path, 'r', encoding='utf-8') as f:
+                        lines = f.readlines()
+                        if lines:
+                            # First line should be config fingerprint
+                            try:
+                                header = json.loads(lines[0])
+                                if header.get("type") == "fingerprint":
+                                    if header.get("hash") == config_hash:
+                                        resume_config_matched = True
+                                        logger.info(f"[Resume] Config fingerprint matched ({config_hash}).")
+                                    else:
+                                        logger.warning(f"[Resume] Config mismatch! (Saved: {header.get('hash')}, Current: {config_hash}). Restarting.")
+                                else:
+                                    logger.warning("[Resume] No fingerprint found in temp file. Restarting.")
+                            except:
+                                logger.warning("[Resume] Invalid fingerprint header. Restarting.")
+
+                            if resume_config_matched:
+                                for line in lines[1:]: # Skip fingerprint
+                                     data = json.loads(line)
+                                     idx = data.get('block_idx')
+                                     if idx is not None:
+                                         precalculated_temp[idx] = data
+                    if precalculated_temp and resume_config_matched:
+                         print(f"[Resume] Loaded {len(precalculated_temp)} blocks from temp progress file.")
+                except Exception as e:
+                    print(f"[Warning] Failed to load resume data from temp file: {e}")
         
         # Open output file, and optionally CoT file
         # 增量模式使用追加写入，否则覆盖写入
-        output_mode = 'a' if (args.resume and skip_blocks > 0) else 'w'
+        output_mode = 'a' if (args.resume and skip_blocks_from_output > 0) else 'w'
+        
+        # Prepare Temp Output File (Append or Create)
+        temp_file_mode = 'a' if (args.resume and len(precalculated_temp) > 0 and resume_config_matched) else 'w'
+        temp_progress_file = open(temp_progress_path, temp_file_mode, encoding='utf-8', buffering=1)
+        
+        # If starting fresh, write fingerprint
+        if temp_file_mode == 'w':
+            temp_progress_file.write(json.dumps({"type": "fingerprint", "hash": config_hash}) + "\n")
+            temp_progress_file.flush()
+        
         cot_context = open(cot_path, 'w', encoding='utf-8', buffering=1) if args.save_cot else nullcontext()
         with open(output_path, output_mode, encoding='utf-8', buffering=1) as f_out, \
              cot_context as f_cot:
 
-            # Define Async Post-Processing Function
-            def post_process_and_save(block_idx: int, block_data: object, parsed_lines: List[str], 
-                                    gen_time: float, cot_content: str, raw_output: str):
-                """
-                Execute all CPU-intensive post-processing and File I/O in a background thread.
-                """
-                try:
-                    # 1. Join parsed lines into text block
-                    final_block_text = "\n".join(parsed_lines)
-                    
-                    # 2. Apply Fixers (Line-level)
-                    fixed_lines = []
-                    src_lines = block_data.prompt_text.split('\n')
-                    dst_lines = final_block_text.split('\n')
-                    for line_idx, dst_line in enumerate(dst_lines):
-                        src_line = src_lines[line_idx] if line_idx < len(src_lines) else ""
-                        dst_line = NumberFixer.fix(src_line, dst_line)
-                        if args.fix_punctuation: dst_line = PunctuationFixer.fix(src_line, dst_line)
-                        if args.fix_kana: dst_line = KanaFixer.fix(src_line, dst_line)
-                        fixed_lines.append(dst_line)
-                    
-                    preview_block_text = '\n'.join(fixed_lines)
-                    
-                    # 3. Restore Protected Text
-                    preview_block_text = batch_protector.restore(preview_block_text)
-
-                    # 4. Post-Process Rules (Regex, etc.)
-                    processed_block_text = post_processor.process(preview_block_text)
-                    
-                    # 5. OpenCC Conversion
-                    if cc_converter:
-                        processed_block_text = cc_converter.convert(processed_block_text)
-                        preview_block_text = cc_converter.convert(preview_block_text)
-                    
-                    # Debug: Verify content
-                    if len(processed_block_text) == 0:
-                        print(f"[Async Warning] Block {block_idx+1} processed text IS EMPTY! Raw len: {len(raw_output)}")
-
-                    # 6. Quality Check (使用 preview_block_text，避免后处理规则影响行数检测)
-                    try:
-                        # 原文和译文都按实际内容行数检测（忽略空行）
-                        source_lines_for_check = [l for l in block_data.prompt_text.split('\n') if l.strip()]
-                        output_lines_for_check = [l for l in preview_block_text.split('\n') if l.strip()]
-                        quality_checker = QualityChecker(glossary=glossary)
-                        warnings = quality_checker.check_output(
-                            source_lines_for_check, 
-                            output_lines_for_check,
-                            source_lang="ja"
-                        )
-                        if warnings:
-                            # Emit Warning JSON
-                            for w in warnings[:3]:
-                                sys.stdout.write(f"\nJSON_WARNING:{json.dumps({'block': block_idx+1, 'type': w['type'], 'message': w['message']}, ensure_ascii=False)}\n")
-                                sys.stdout.flush()
-                    except Exception as e:
-                        print(f"[Async Quality Check Error] {e}")
-                        warnings = []
-                    
-                    # 7. Write to Files
-                    f_out.write(processed_block_text + "\n")
-                    if args.mode == "doc": f_out.write("\n")
-                    f_out.flush()
-                    
-                    if args.save_cot and cot_content:
-                        f_cot.write(f"[MURASAKI] ========== Block {block_idx+1} ==========\n")
-                        f_cot.write(raw_output + "\n\n")
-                        f_cot.flush()
-                    
-                    # 8. Update Cache
-                    if translation_cache:
-                        w_types = [w['type'] for w in warnings] if warnings else []
-                        translation_cache.add_block(block_idx, block_data.prompt_text, preview_block_text, w_types, cot_content)
-                        m_name = os.path.basename(args.model) if args.model else "Unknown"
-                        translation_cache.save(model_name=m_name, glossary_path=args.glossary or "")
-                    
-                    # 9. Emit Preview JSON (Preview logic logic moved here to support async)
-                    # Note: We access the global lists 'all_src_previews'/'all_out_previews'. 
-                    # With max_workers=1, this is thread-safe.
-                    try:
-                        # Block-based Preview (Async/Thread-safe)
-                        preview_data = {
-                            "block": block_idx + 1,
-                            "src": block_data.prompt_text,
-                            "output": preview_block_text
-                        }
-                        sys.stdout.write(f"\nJSON_PREVIEW_BLOCK:{json.dumps(preview_data, ensure_ascii=False)}\n")
-                        sys.stdout.flush()
-                    except Exception as e:
-                        print(f"[Async Preview Error] {e}")
-
-                    # 10. Return Stats
-                    cot_inner = ""
-                    if cot_content:
-                        inner_match = re.search(r'<think>(.*?)</think>', cot_content, re.DOTALL)
-                        cot_inner = inner_match.group(1) if inner_match else cot_content
-                    
-                    return {
-                        "chars": len(block_data.prompt_text),
-                        "lines": len([l for l in fixed_lines if l.strip()]),
-                        "main_chars": len(processed_block_text),
-                        "cot_chars": len(cot_inner)
+            # If resuming from output file, write existing content first
+            if skip_blocks_from_output > 0 and output_mode == 'a':
+                for line in existing_content:
+                    f_out.write(line + '\n')
+                # Update initial progress based on existing output
+                total_lines += len(existing_content)
+                total_out_chars += sum(len(l) for l in existing_content)
+                # We don't have source chars for these, so we'll just use the output lines/chars for progress
+                # The `current` and `percent` will be based on blocks, so this is fine.
+            
+            # ========================================
+            # Parallel Worker Function
+            # ========================================
+            def process_block_task(block_idx: int, block: object):
+                """Worker Task"""
+                logger.info(f"[Block {block_idx+1}/{len(blocks)}] Starting translation...")
+                start_block_time = time.time()
+                if not block.prompt_text or not block.prompt_text.strip():
+                     return {
+                        "success": True,
+                        "block_idx": block_idx,
+                        "src_text": "",
+                        "out_text": "",
+                        "preview_text": "",
+                        "cot": "",
+                        "raw_output": "",
+                        "warnings": [],
+                        "lines_count": 0,
+                        "chars_count": 0, # Source chars
+                        "cot_chars": 0,
+                        "usage": None
                     }
-                except Exception as e:
-                    print(f"[Async Error] {e}")
-                    import traceback; traceback.print_exc()
-                    return {"chars": 0, "lines": 0, "main_chars": 0, "cot_chars": 0}
-            
-            # Async Executor
-            executor = ThreadPoolExecutor(max_workers=1)
-            futures = []
-            
-            for i, block in enumerate(blocks):
-                # 增量翻译：跳过已完成的块
-                if i < skip_blocks:
-                    continue
-                
-                # Pause Check
-                pause_file = output_path + ".pause"
-                if os.path.exists(pause_file):
-                    print(f"\n[Paused] Waiting for resumption...")
+
+                try:
+                    # Pause Check (Worker level sleeping)
+                    pause_file = output_path + ".pause"
                     while os.path.exists(pause_file):
-                        time.sleep(1)
-                    print(f"\n[Resumed] Continuing translation...")
+                         time.sleep(1)
                     
-                print(f"Processing Block {i+1}/{len(blocks)} ({len(block.prompt_text)} chars)...", end=" ", flush=True)
-                start_t = time.time()
-                
-                # Pre-processing
-                processed_src_text = pre_processor.process(block.prompt_text)
-                # 文本正规化（全角字母数字转半角，半角假名转全角）
-                processed_src_text = Normalizer.normalize(processed_src_text)
-                # [Experimental] Ruby 注音清理
-                if args.fix_ruby:
-                    processed_src_text = RubyCleaner.clean(processed_src_text)
-                
-                # 文本保护：替换变量/标签为占位符
-                processed_src_text = batch_protector.protect(processed_src_text)
-                
-                # Build Prompt
-                messages = prompt_builder.build_messages(
-                    processed_src_text, 
-                    enable_cot=args.debug,
-                    preset=args.preset
-                )
-                
-                # Define streaming callback with real-time progress
-                accumulated_output = ""
-                stream_start_t = time.time()
-                first_token_t = 0
-                eval_speed = 0.0
-                gen_speed = 0.0
-                
-                last_progress_t = 0
-                total_chars_this_block = 0
-                
-                def on_stream_chunk(chunk):
-                    nonlocal accumulated_output, last_progress_t, total_chars_this_block
-                    nonlocal first_token_t, eval_speed, gen_speed
+                    # Pre-processing
+                    processed_src_text = pre_processor.process(block.prompt_text)
+                    processed_src_text = Normalizer.normalize(processed_src_text)
+                    if args.fix_ruby:
+                        processed_src_text = RubyCleaner.clean(processed_src_text)
                     
-                    accumulated_output += chunk
-                    total_chars_this_block += len(chunk)
+                    # Thread-Safe Text Protector (Local instantiation)
+                    # Use custom_protector_patterns captured from outer scope
+                    local_protector = None
+                    if args.text_protect:
+                         local_protector = TextProtector(patterns=custom_protector_patterns)
+                         processed_src_text = local_protector.protect(processed_src_text)
                     
-                    current_t = time.time()
-                    
-                    # 1. CoT Streaming (Pass through raw chunks to frontend for parsing)
-                    if "<think>" in chunk or "</think>" in chunk or (accumulated_output.strip().startswith("<think>") and not "</think>" in accumulated_output):
-                        try:
-                            # Send Delta for Thinking Stream
-                            sys.stdout.write(f"\nJSON_THINK_DELTA:{json.dumps(chunk, ensure_ascii=False)}\n")
-                        except: pass
-
-                    # 2. Timing Stats
-                    if first_token_t == 0:
-                        first_token_t = current_t
-                        # Prompt Eval finished (approx)
-                        eval_dur = max(0.01, first_token_t - stream_start_t)
-                        eval_speed = len(block.prompt_text) / eval_dur # Src chars / sec
-                    
-                    elapsed_this_block = current_t - stream_start_t
-                    
-                    # Throttle progress updates to every 1s for smoother display (减少冲突)
-                    if current_t - last_progress_t >= 1.0:
-                        last_progress_t = current_t
-                        
-                        # ETA Logic Refactored (Based on Source Chars Processed)
-                        # 1. Total Source Chars
-                        total_src_chars = sum(len(b.prompt_text) for b in blocks)
-                        
-                        # 2. Previous Completed Source Chars
-                        src_chars_prev = sum(len(b.prompt_text) for b in blocks[:i])
-                        
-                        # 3. Estimate Current Block Progress (0.0 - 1.0)
-                        # Assumption: Output is approx 2x Input (CoT included). This is a rough heuristic for progress bar.
-                        est_ratio = min(0.99, total_chars_this_block / (max(1, len(block.prompt_text)) * 2.5 + 50))
-                        
-                        # 4. Total Expected Source Chars Done
-                        src_chars_done_est = src_chars_prev + (len(block.prompt_text) * est_ratio)
-                        
-                        # 5. Cumulative Elapsed Time
-                        cumulative_elapsed = total_time + elapsed_this_block
-                        
-                        # 6. Calculate Speed & ETA
-                        # Use block-level average for more stable ETA
-                        eta = 0
-                        if i > 0 and cumulative_elapsed > 1.0:
-                            # Block-based: avg time per block * remaining blocks
-                            avg_time_per_block = cumulative_elapsed / (i + est_ratio)
-                            remaining_blocks = len(blocks) - i - 1 + (1 - est_ratio)
-                            eta = avg_time_per_block * remaining_blocks
-                        elif cumulative_elapsed > 2.0 and src_chars_done_est > 10:
-                            # Char-based fallback for first block
-                            avg_speed_src = src_chars_done_est / cumulative_elapsed
-                            src_remaining = total_src_chars - src_chars_done_est
-                            if avg_speed_src > 0:
-                                eta = src_remaining / avg_speed_src
-                            
-                        # Smooth Percent for UI
-                        smooth_percent = (src_chars_done_est / total_src_chars * 100) if total_src_chars > 0 else 0
-                        
-                        # Gen Speed (Output chars / Gen time) - Needed for UI Stats
-                        if first_token_t > 0:
-                            gen_dur = max(0.01, current_t - first_token_t)
-                            gen_speed = total_chars_this_block / gen_dur
-
-                        try:
-                            progress_streaming = {
-                                "current": i + 1,
-                                "total": len(blocks),
-                                "percent": round(smooth_percent, 1),
-                                "elapsed": round(cumulative_elapsed, 1),
-                                "remaining": round(eta, 0),  # Now sending actual ETA!
-                                "speed_lines": round(total_lines / cumulative_elapsed, 2) if cumulative_elapsed > 0.1 else 0,
-                                "speed_chars": round(gen_speed, 1), # Current Gen Speed
-                                "speed_eval": round(eval_speed, 1),
-                                "speed_gen": round(gen_speed, 1),
-                                "total_lines": total_lines,  # For history tracking
-                                "total_chars": total_chars,  # For history tracking
-                                "source_lines": source_lines,  # Input line count
-                                "source_chars": source_chars   # Input char count
-                            }
-                            # ETA Calc: Remaining Blocks * Avg Block Time
-                            # ... Leave ETA simple for now (0) or frontend handles it
-                            
-                            # 确保输出隔离：换行 + flush
-                            sys.stdout.write(f"\nJSON_PROGRESS:{json.dumps(progress_streaming, ensure_ascii=False)}\n")
-                            
-                            # Emit Hardware Monitor Data
-                            hw_status = monitor.get_status()
-                            if hw_status:
-                                sys.stdout.write(f"\nJSON_MONITOR:{json.dumps(hw_status)}\n")
-                            
-                            sys.stdout.flush()
-                        except Exception:
-                            pass  # 忽略任何序列化错误
-
-                # Inference with Retries
-                max_retries = args.max_retries
-                parsed_lines = []
-                cot_content = ""
-                raw_output = ""
-                last_coverage = 0.0
-                last_missed_terms = []
-                
-                # 追踪所有尝试的结果，最后选择覆盖率最高的
-                best_result = None  # (parsed_lines, cot_content, raw_output, coverage)
-                retry_reason = None  # 'empty' or 'glossary'
-                
-                for attempt in range(max_retries + 1):
-                    # 动态参数计算
-                    # 空输出重试：提高温度（增加多样性）
-                    # 术语表重试：降低温度（增加确定性，更遵循指令）
-                    if retry_reason == 'glossary':
-                        # 术语表重试：降低温度，提高惩罚
-                        current_temp = max(args.temperature - (attempt * args.retry_temp_boost), 0.3)
-                        current_rep_base = args.rep_penalty_base + (attempt * args.retry_rep_boost)
-                    else:
-                        # 空输出重试：提高温度
-                        current_temp = min(args.temperature + (attempt * args.retry_temp_boost), 1.2)
-                        current_rep_base = args.rep_penalty_base + (attempt * args.retry_rep_boost)
-                    
-                    # 构建消息（可能包含反馈注入）
-                    messages_for_attempt = messages
-                    # 仅在明确因术语问题重试时才注入反馈，避免与其他重试逻辑（如行数检查）冲突
-                    if attempt > 0 and args.retry_prompt_feedback and glossary and last_missed_terms and retry_reason == 'glossary':
-                        # 注入反馈到用户消息末尾
-                        feedback = build_retry_feedback(last_missed_terms, last_coverage)
-                        if feedback:
-                            messages_for_attempt = messages.copy()
-                            # 在最后一条 user 消息中追加反馈
-                            for j in range(len(messages_for_attempt) - 1, -1, -1):
-                                if messages_for_attempt[j].get("role") == "user":
-                                    messages_for_attempt[j] = {
-                                        "role": "user",
-                                        "content": messages_for_attempt[j]["content"] + feedback
-                                    }
-                                    break
-                            print(f"[Dynamic Retry] 📝 Injected feedback about {len(last_missed_terms)} missed terms")
-                    
-                    if attempt > 0:
-                        direction = "↓" if retry_reason == 'glossary' else "↑"
-                        print(f"[Dynamic Retry] 🔄 Attempt {attempt+1}: temp={current_temp:.2f}{direction}, rep_base={current_rep_base:.2f} (Reason: {retry_reason})")
-                    
-                    raw_output = engine.chat_completion(
-                        messages_for_attempt, 
-                        temperature=current_temp, 
-                        stream_callback=on_stream_chunk,
-                        rep_base=current_rep_base,
-                        rep_max=args.rep_penalty_max,
-                        block_id=i+1
+                    # Build Prompt
+                    messages = prompt_builder.build_messages(
+                        processed_src_text, 
+                        enable_cot=args.debug,
+                        preset=args.preset
                     )
                     
-                    # Parse immediately
-                    parsed_lines, cot_content = response_parser.parse(raw_output or "", expected_count=0)
-                    has_content = parsed_lines and any(line.strip() for line in parsed_lines)
+                    # Retry Strategy Variables
+                    max_retries = args.max_retries
+                    best_result = None # (parsed_lines, cot_content, raw_output, coverage)
+                    retry_reason = None
+                    last_missed_terms = []
+                    last_coverage = 0.0
                     
-                    # 1. Empty Output Guard
-                    if not has_content:
-                        retry_reason = 'empty'
-                        if attempt < max_retries:
-                            print(f"\n[Empty Output Guard] ⚠️ Block {i+1} returned empty/invalid. Retrying (Attempt {attempt + 2}/{max_retries + 1})...")
-                            sys.stdout.write(f"\nJSON_RETRY:{json.dumps({'block': i+1, 'attempt': attempt+1, 'type': 'empty', 'temp': current_temp})}\n")
-                            sys.stdout.flush()
-                            continue
+                    final_parsed_lines = None
+                    final_cot = ""
+                    final_raw = ""
+
+                    for attempt in range(max_retries + 1):
+                        # Dynamic Parameters Calculation
+                        if retry_reason == 'glossary':
+                            current_temp = max(args.temperature - (attempt * args.retry_temp_boost), 0.3)
+                            current_rep_base = args.rep_penalty_base + (attempt * args.retry_rep_boost)
                         else:
-                            print(f"\n[Empty Output Guard] ❌ Block {i+1} failed after {max_retries + 1} attempts.")
-                            # Fall through to fallback
-                    
-                    # If we have content, run quality checks
-                    if has_content:
-                        should_retry = False
-                        current_coverage = 100.0
+                            current_temp = min(args.temperature + (attempt * args.retry_temp_boost), 1.2)
+                            current_rep_base = args.rep_penalty_base + (attempt * args.retry_rep_boost)
+
+                        # Feedback Injection
+                        messages_for_attempt = messages
+                        if attempt > 0 and args.retry_prompt_feedback and glossary and last_missed_terms and retry_reason == 'glossary':
+                            feedback = build_retry_feedback(last_missed_terms, last_coverage)
+                            if feedback:
+                                messages_for_attempt = messages.copy()
+                                for j in range(len(messages_for_attempt) - 1, -1, -1):
+                                    if messages_for_attempt[j].get("role") == "user":
+                                        messages_for_attempt[j] = {
+                                            "role": "user",
+                                            "content": messages_for_attempt[j]["content"] + feedback
+                                        }
+                                        break
                         
-                        # 2. Glossary Coverage Check
+                        accumulated_output = ""
+                        # Stream Callback
+                        def on_stream_chunk(chunk):
+                            nonlocal accumulated_output
+                            accumulated_output += chunk
+                            if "<think>" in chunk or "</think>" in chunk or (accumulated_output.strip().startswith("<think>") and not "</think>" in accumulated_output):
+                                try:
+                                    with stdout_lock:
+                                        sys.stdout.write(f"\nJSON_THINK_DELTA:{json.dumps(chunk, ensure_ascii=False)}\n")
+                                        sys.stdout.flush()
+                                except: pass
+
+                        # Inference
+                        # engine.chat_completion returns (text, usage)
+                        full_response_text, block_usage = engine.chat_completion(
+                            messages=messages_for_attempt,
+                            temperature=current_temp,
+                            stream=True,
+                            stream_callback=on_stream_chunk,
+                            rep_base=current_rep_base,
+                            rep_max=args.rep_penalty_max,
+                            block_id=block_idx + 1
+                        )
+                        
+                        raw_output = full_response_text
+                        parsed_lines, cot_content = response_parser.parse(raw_output or "", expected_count=0)
+                        
+                        # Fix lines count to be consistent (non-empty lines)
+                        has_content = parsed_lines and any(line.strip() for line in parsed_lines)
+
+                        # 1. Empty Output Guard
+                        if not has_content:
+                            retry_reason = 'empty'
+                            if attempt < max_retries:
+                                retry_data = {
+                                    'block': block_idx + 1, 
+                                    'attempt': attempt + 1, 
+                                    'type': 'empty', 
+                                    'temp': round(current_temp, 2)
+                                }
+                                safe_print_json("JSON_RETRY", retry_data)
+                                continue
+                            else:
+                                break # Failed all retries
+                        
+                        # 2. Quality Checks
+                        should_retry = False
+                        
+                        # Glossary Coverage Check
                         if glossary and args.output_hit_threshold > 0:
                             translated_text = '\n'.join(parsed_lines)
                             passed, coverage, cot_coverage, hit, total = calculate_glossary_coverage(
                                 block.prompt_text, translated_text, glossary, cot_content,
                                 args.output_hit_threshold, args.cot_coverage_threshold
                             )
-                            current_coverage = coverage
-                            
-                            # 调试日志：始终输出详细覆盖率信息
-                            if total > 0:
-                                print(f"[Glossary] Block {i+1}: Output={coverage:.1f}% ({hit}/{total}), CoT={cot_coverage:.1f}% -> {'Pass' if passed else 'Fail'}")
-                            
-                            # 记录 missed terms 用于下一次重试反馈
                             last_coverage = coverage
                             last_missed_terms = get_missed_terms(block.prompt_text, translated_text, glossary)
                             
-                            # 保存当前结果（如果覆盖率更高）
                             if best_result is None or coverage > best_result[3]:
                                 best_result = (parsed_lines.copy(), cot_content, raw_output, coverage)
-                            
-                            if total > 0 and not passed:
-                                # 优先级控制：如果当前正在处理更高优先级的错误（如行数不匹配），则忽略术语表的非致命问题，避免耗尽重试次数
-                                if retry_reason and retry_reason != 'glossary':
-                                    print(f"\n[Glossary Check] ⚠️ Block {i+1}: Output {coverage:.1f}% / CoT {cot_coverage:.1f}%. Skipping glossary retry to focus on fixing {retry_reason}.")
-                                else:
-                                    retry_reason = 'glossary'
-                                    # Use separate counter for coverage retries logic, but bound by main loop attempts
-                                    coverage_attempts = min(attempt + 1, args.coverage_retries)
-                                    if coverage_attempts < args.coverage_retries and attempt < max_retries:
-                                        missed_str = ", ".join([f"'{t[0]}'" for t in last_missed_terms[:3]])
-                                        if len(last_missed_terms) > 3:
-                                            missed_str += f" 等{len(last_missed_terms)}项"
-                                        print(f"\n[Glossary Check] ⚠️ Block {i+1}: Output {coverage:.1f}% / CoT {cot_coverage:.1f}%. Missed: {missed_str}. Retrying (Attempt {attempt + 2}/{max_retries + 1})...")
-                                        
-                                        # Safe JSON emit with more info
-                                        retry_data = {
-                                            'block': i+1, 
-                                            'attempt': attempt+1, 
-                                            'type': 'glossary',
-                                            'coverage': coverage,
-                                            'temp': current_temp,
-                                            'missed_count': len(last_missed_terms)
-                                        }
-                                        sys.stdout.write(f"\nJSON_RETRY:{json.dumps(retry_data)}\n")
-                                        sys.stdout.flush()
-                                        should_retry = True
-                                    else:
-                                        # 重试用尽，使用覆盖率最高的版本
-                                        if best_result and best_result[3] > coverage:
-                                            print(f"\n[Glossary Check] ✅ Using best result with {best_result[3]:.1f}% coverage (current: {coverage:.1f}%)")
-                                            parsed_lines, cot_content, raw_output, _ = best_result
-                                        else:
-                                            print(f"\n[Glossary Check] ⚠️ Block {i+1}: coverage {coverage:.1f}% ({hit}/{total}) after {coverage_attempts} attempts. Proceeding with current result.")
 
-                        # 3. Line Count Check
+                            if total > 0 and not passed:
+                                retry_reason = 'glossary'
+                                coverage_attempts = min(attempt + 1, args.coverage_retries)
+                                if coverage_attempts < args.coverage_retries and attempt < max_retries:
+                                    retry_data = {
+                                        'block': block_idx + 1, 
+                                        'attempt': attempt + 1, 
+                                        'type': 'glossary',
+                                        'coverage': round(coverage, 1),
+                                        'temp': round(current_temp, 2),
+                                        'missed_count': len(last_missed_terms)
+                                    }
+                                    safe_print_json("JSON_RETRY", retry_data)
+                                    should_retry = True
+                                elif best_result and best_result[3] > coverage:
+                                    # Use best result if current one is worse and we are out of glossary retries
+                                    parsed_lines, cot_content, raw_output, _ = best_result
+                        
+                        # Line Count Check
                         if not should_retry and args.line_check:
                             src_line_count = len([l for l in block.prompt_text.splitlines() if l.strip()])
                             dst_line_count = len([l for l in parsed_lines if l.strip()])
-                            # Use logic aligned with QualityChecker: compare non-empty lines
-                            # (Though parsed_lines are already stripped/filtered above? No, parsed_lines is raw list)
-                            # Let's trust simple count here vs logic in QualityChecker. 
-                            # Re-align with QualityChecker logic:
-                            
                             diff = abs(dst_line_count - src_line_count)
                             pct_diff = diff / max(1, src_line_count)
                             
                             if diff > args.line_tolerance_abs or pct_diff > args.line_tolerance_pct:
                                 if attempt < max_retries:
                                     retry_reason = 'line_check'
-                                    print(f"\n[Line Check] ⚠️ Block {i+1}: line mismatch {src_line_count} -> {dst_line_count}. Retrying (Attempt {attempt + 2}/{max_retries + 1})...")
-                                    
                                     retry_data = {
-                                        'block': i+1, 
-                                        'attempt': attempt+1, 
+                                        'block': block_idx + 1, 
+                                        'attempt': attempt + 1, 
                                         'type': 'line_check'
                                     }
-                                    sys.stdout.write(f"\nJSON_RETRY:{json.dumps(retry_data)}\n")
-                                    sys.stdout.flush()
+                                    safe_print_json("JSON_RETRY", retry_data)
                                     should_retry = True
-                                else:
-                                    print(f"\n[Line Check] ⚠️ Block {i+1}: line mismatch {src_line_count} -> {dst_line_count}. Proceeding anyway.")
                         
                         if should_retry:
                             continue
                         
-                        # All checks passed (or ignored)
+                        # Success or acceptable quality
+                        final_parsed_lines = parsed_lines
+                        block_elapsed = time.time() - start_block_time
+                        speed_cps = len(accumulated_output) / max(0.1, block_elapsed)
+                        logger.info(f"[Block {block_idx+1}/{len(blocks)}] Finished in {block_elapsed:.1f}s (Chars: {len(accumulated_output)}, Speed: {speed_cps:.1f} chars/s)")
+                        final_cot = cot_content
+                        final_raw = raw_output
                         break
 
-                # Final Fallback
-                if not parsed_lines or not any(line.strip() for line in parsed_lines):
-                    print(f" [Fallback] Using source text for Block {i+1}")
-                    parsed_lines = ["[翻译失败]"] + block.prompt_text.split('\n')
-                
-                # 4. Async Post-Processing (Fire and Forget)
-                gen_dur = time.time() - start_t  # Calculate duration for this block
-                total_time += gen_dur
-                
-                # Accumulate tokens if available
-                if engine.last_usage:
-                    total_tokens += engine.last_usage.get('total_tokens', 0)
-                
-                total_chars += len(block.prompt_text)
-                
-                total_lines += len(parsed_lines) # Estimate for progress bar
-                
-                future = executor.submit(
-                    post_process_and_save,
-                    block_idx=i, block_data=block, parsed_lines=parsed_lines,
-                    gen_time=gen_dur, cot_content=cot_content, raw_output=raw_output
-                )
-                futures.append(future)
-                
-                # Simple Progress Update
-                try:
-                    c_speed = len(block.prompt_text) / gen_dur if gen_dur > 0 else 0
-                    eta = (len(blocks) - i - 1) * (total_time / (i + 1 - skip_blocks)) if i > skip_blocks else 0
+                    # Final Fallback if all retries failed
+                    if final_parsed_lines is None:
+                        if best_result:
+                            final_parsed_lines, final_cot, final_raw, _ = best_result
+                        else:
+                            final_parsed_lines = ["[翻译失败]"] + block.prompt_text.split('\n')
+                            final_cot = ""
+                            final_raw = ""
+
+                    # Post-Process (Fixers & Rules)
+                    # 1. Join decoded lines to block text
+                    base_text = '\n'.join(final_parsed_lines)
                     
-                    # Calculate real token speeds from usage data
-                    real_eval_speed = 0.0
-                    real_gen_speed = 0.0
-                    if engine.last_usage:
-                        prompt_tokens = engine.last_usage.get('prompt_tokens', 0)
-                        completion_tokens = engine.last_usage.get('completion_tokens', 0)
-                        if gen_dur > 0:
-                            real_eval_speed = prompt_tokens / gen_dur
-                            real_gen_speed = completion_tokens / gen_dur
+                    # 2. Apply Built-in Fixers (Block Level - more robust against line shifts)
+                    # Number Fixer: Restore circled numbers ①② etc.
+                    base_text = NumberFixer.fix(block.prompt_text, base_text)
                     
-                    progress_event = {
-                        "current": i + 1, "total": len(blocks), "percent": round(((i + 1)/len(blocks))*100, 1),
-                        "elapsed": round(total_time, 1), "remaining": round(eta, 1), "speed_chars": round(c_speed, 1),
-                        "speed_lines": round(total_lines / total_time, 2) if total_time > 0 else 0,
-                        "speed_gen": round(real_gen_speed, 1), "speed_eval": round(real_eval_speed, 1)
-                    }
-                    sys.stdout.write(f"\nJSON_PROGRESS:{json.dumps(progress_event, ensure_ascii=False)}\n")
-                    sys.stdout.flush()
-                except: pass
-                
-                print(f"Done ({gen_dur:.2f}s, {c_speed:.1f} char/s) [Async Save]")
-                
-                # Clean vars
-                del raw_output
-                del cot_content
-                
-                continue # Skip Sync Logic
-                
-                # Post-processing (on lines)
-                final_block_text = "\n".join(parsed_lines)
-                
-                # Apply Fixers (行级修复)
-                # Must run BEFORE post-processor rules that change line count/layout
-                fixed_lines = []
-                src_lines = block.prompt_text.split('\n')
-                dst_lines = final_block_text.split('\n')
-                for line_idx, dst_line in enumerate(dst_lines):
-                    src_line = src_lines[line_idx] if line_idx < len(src_lines) else ""
-                    
-                    # 稳定修复器：数字修复（圆圈数字恢复）
-                    dst_line = NumberFixer.fix(src_line, dst_line)
-                    
-                    # 实验性修复器（受命令行参数控制）
+                    # Punctuation Fixer: Normalize CJK punctuation pairs
                     if args.fix_punctuation:
-                        dst_line = PunctuationFixer.fix(src_line, dst_line)
+                        base_text = PunctuationFixer.fix(block.prompt_text, base_text, target_is_cjk=True)
+                        
+                    # Kana Fixer: Remove residual kana (orphan onomatopoeia)
                     if args.fix_kana:
-                        dst_line = KanaFixer.fix(src_line, dst_line)
+                        # Bugfix: KanaFixer.fix takes 1 arg (dst)
+                        base_text = KanaFixer.fix(base_text)
                     
-                    fixed_lines.append(dst_line)
-                
-                # Rejoin fixed lines
-                preview_block_text = '\n'.join(fixed_lines)
-                
-                # 文本保护还原：将占位符还原为原文
-                preview_block_text = batch_protector.restore(preview_block_text)
+                    # Restoration (Protection)
+                    if local_protector:
+                        # Apply restoration to the potentially fixed base_text
+                        restored_text = local_protector.restore(base_text)
+                    else:
+                        restored_text = base_text
+                    
+                    # Final Rule Processing (for Layout/Format)
+                    processed_text = post_processor.process(restored_text)
+                    
+                    # Traditional Chinese Usage
+                    if cc_converter:
+                        processed_text = cc_converter.convert(processed_text)
+                    
+                    # Ensure Consistency: Preview = Output = Cache
+                    preview_text = processed_text
+                        
+                    # Quality Check Warnings (for cache)
+                    warnings = []
+                    try:
+                        qc = QualityChecker(glossary=glossary)
+                        warnings = qc.check_output(
+                            [l for l in block.prompt_text.split('\n') if l.strip()], 
+                            [l for l in preview_text.split('\n') if l.strip()], 
+                            source_lang="ja"
+                        )
+                    except Exception as e:
+                        print(f"[Warning] Quality Check failed: {e}")
+                    
 
-                # Post-processing (Regex, Format Rules, OpenCC)
-                # Applied LAST because format rules (e.g. double newline) break line alignment
-                processed_block_text = post_processor.process(preview_block_text)
-                
-                # Traditional Chinese Conversion (OpenCC)
-                if cc_converter:
-                    processed_block_text = cc_converter.convert(processed_block_text)
-                    preview_block_text = cc_converter.convert(preview_block_text) # Also convert preview
-                
-                final_lines = processed_block_text.split('\n')
-                total_lines_raw = len(final_lines) # renamed to avoid confusion, actual total_lines updated later
-                
-                duration = time.time() - start_t
-                total_chars += len(block.prompt_text)
-                total_time += duration  # Update BEFORE emitting progress
-                
-                # Accumulate output character counts for final stats
-                # cot_content contains <think>...<think> with tags
-                # Extract inner content for char count
-                cot_inner = ""
-                if cot_content:
-                    inner_match = re.search(r'<think>(.*?)</think>', cot_content, re.DOTALL)
-                    cot_inner = inner_match.group(1) if inner_match else cot_content
-                
-                # Main chars = translated text (after parsing)
-                # CoT chars = thinking content (inside <think> tags)
-                main_chars = len(processed_block_text)
-                cot_chars = len(cot_inner)
-                total_main_chars += main_chars
-                total_cot_chars += cot_chars
-                
-                # Debug stats (only when --debug is enabled)
-                if args.debug:
-                    print(f"[STATS] Block {i+1}: main={main_chars}, cot={cot_chars}, raw={len(raw_output)}")
-                
-                # Quality Check (Robustness)
-                try:
-                    source_lines_for_check = block.prompt_text.split('\n')
-                    output_lines_for_check = final_lines
-                    quality_checker = QualityChecker(glossary=glossary)
-                    warnings = quality_checker.check_output(
-                        source_lines_for_check, 
-                        output_lines_for_check,
-                        source_lang="ja"  # TODO: make configurable
-                    )
-                    if warnings:
-                        warning_log = format_warnings_for_log(warnings)
-                        print(warning_log)
-                        # Emit as JSON for frontend tracking
-                        for w in warnings[:3]:  # Limit to first 3 warnings per block
-                            sys.stdout.write(f"\nJSON_WARNING:{json.dumps({'block': i+1, 'type': w['type'], 'message': w['message']}, ensure_ascii=False)}\n")
-                            sys.stdout.flush()
-                except Exception as e:
-                    if args.debug:
-                        print(f"[Quality Check Error] {e}")
-                
-                # Calculate speeds
-                block_speed = len(block.prompt_text) / duration if duration > 0 else 0
-                avg_speed = total_chars / total_time if total_time > 0 else 0  # Use AVERAGE speed for ETA
-                
-                print(f"Done ({duration:.2f}s, {block_speed:.1f} char/s)")
-                
-                # Emit Final JSON Logs for GUI (完整显示，不截断)
-                # 使用 sys.stdout.write 确保输出隔离
-                try:
-                    # Block-based Preview Emission
-                    # 发送当前块的完整原文和译文，让前端进行分块渲染，避免行数不匹配导致的级联错位
-                    preview_data = {
-                        "block": i + 1,
-                        "src": block.prompt_text,
-                        "output": preview_block_text
+                    
+                    # Emit Preview JSON for GUI -> MOVED TO MAIN LOOP (Ordered)
+                    # preview_data = { ... }
+                    # safe_print_json("JSON_PREVIEW_BLOCK", preview_data)
+
+                    return {
+                        "success": True,
+                        "block_idx": block_idx,
+                        "src_text": block.prompt_text,
+                        "out_text": processed_text,
+                        "preview_text": preview_text,
+                        "cot": final_cot,
+                        "raw_output": final_raw,
+                        "warnings": warnings,
+                        "lines_count": len([l for l in processed_text.splitlines() if l.strip()]),
+                        "chars_count": len(block.prompt_text),
+                        "cot_chars": len(final_cot),
+                        "usage": block_usage
                     }
-                    sys.stdout.write(f"\nJSON_PREVIEW_BLOCK:{json.dumps(preview_data, ensure_ascii=False)}\n")
-                    sys.stdout.flush()
+
+
+
                 except Exception as e:
-                    print(f"[ERROR] Preview JSON failed: {e}")
-                
-                # Calculate remaining time using AVERAGE speed (not instantaneous)
-                remaining_blocks = len(blocks) - (i + 1)
-                remaining_chars = sum(len(b.prompt_text) for b in blocks[i+1:])
-                eta = remaining_chars / avg_speed if avg_speed > 0 else 0
-                
-                # JSON_PROGRESS with improved ETA
-                # Calculate lines processed
-                lines_in_block = len([l for l in final_lines if l.strip()])
-                total_lines += lines_in_block
-                speed_lines = lines_in_block / duration if duration > 0 else 0
-                
-                try:
-                    progress_event = {
-                        "current": i + 1,
-                        "total": len(blocks),
-                        "percent": round((i + 1) / len(blocks) * 100, 1),
-                        "elapsed": round(total_time, 1),
-                        "remaining": round(eta, 1),
-                        "speed_lines": round(speed_lines, 2), 
-                        "speed_chars": round(avg_speed, 1)
+                    return {
+                        "success": False,
+                        "error": str(e),
+                        "block_idx": block_idx,
+                        "src_text": block.prompt_text
                     }
-                    sys.stdout.write(f"\nJSON_PROGRESS:{json.dumps(progress_event, ensure_ascii=False)}\n")
-                    sys.stdout.flush()
-                except Exception as e:
-                    print(f"[ERROR] Progress JSON failed: {e}")
 
-                # Write Output
-                f_out.write(processed_block_text + "\n")
-                if args.mode == "doc":
-                     f_out.write("\n") # Keep block separation
-                
-                f_out.flush()
-                
-                # Write to CoT Output (if enabled)
-                if args.save_cot:
-                    f_cot.write(f"[MURASAKI] ========== Block {i+1}/{len(blocks)} ==========\n")
-                    f_cot.write(raw_output + "\n\n")
-                    f_cot.flush()
-                
-                # 添加到翻译缓存（用于校对界面）
-                if translation_cache:
-                    warning_types = [w['type'] for w in warnings] if 'warnings' in dir() and warnings else []
-                    translation_cache.add_block(
-                        index=i,
-                        src=block.prompt_text,
-                        dst=preview_block_text,
-                        warnings=warning_types,
-                        cot=cot_content if args.save_cot else ''
-                    )
+            def restore_block_task(block_idx: int, stored_result: Dict):
+                """Dummy task to restore pre-calculated result immediately."""
+                return stored_result
 
-                if i > 0 and i % 5 == 0 and total_time > 0:
-                     print(f"    [Global Speed] {total_chars/total_time:.1f} chars/s (Input)")
             
-            # Wait for Async Tasks
-            print("\n[System] Waiting for background tasks...")
-            executor.shutdown(wait=True)
+            # Stats Initialization
+            total_out_chars = 0      # All Output Chars (Main + Summary etc)
+            total_cot_chars = 0      # CoT Thinking Chars
+            total_source_chars = 0   # Source Chars
+            total_source_lines = 0   # Source Lines
+            total_lines = 0          # Output Lines
+            total_prompt_tokens = 0  # Input/Prompt Tokens (from Engine)
+            total_gen_tokens = 0     # Generation Tokens (from Engine)
             
-            # Accumulate Final Stats from Futures
-            # Reset counters to ensure accuracy from actual processed results
-            # total_time is already measured
-            total_main_chars = 0
-            total_cot_chars = 0
-            final_output_lines = 0
+            # ...
+            # Main Execution Loop
+            # ========================================
             
-            for f in futures:
+            # Use ThreadPoolExecutor
+            max_workers = args.concurrency
+            executor = ThreadPoolExecutor(max_workers=max_workers)
+            
+            # Submit all tasks
+            # We maintain a map of future -> index
+            future_to_index = {}
+            
+            print(f"Starting execution with {max_workers} threads...")
+            
+            for i, block in enumerate(blocks):
+                # Resume skip
+                if i < skip_blocks_from_output:
+                    continue
+                
+                # Check temp progress
+                if i in precalculated_temp:
+                    future = executor.submit(restore_block_task, i, precalculated_temp[i])
+                    print(f"  - Restoring Block {i+1} from temp file...")
+                else:
+                    future = executor.submit(process_block_task, i, block)
+                
+                future_to_index[future] = i
+                
+            # --- 修复后的核心循环逻辑 ---
+            results_buffer = {}
+            next_write_idx = skip_blocks_from_output
+            
+            # 统计修正：过滤掉空块（用于负载均衡的占位块）
+            effective_blocks_indices = [idx for idx, b in enumerate(blocks) if b.prompt_text.strip()]
+            total_tasks_count = len(future_to_index)
+            effective_total = len(effective_blocks_indices)
+            completed_count = 0 
+            effective_completed = 0
+            
+            for future in as_completed(future_to_index):
+                block_idx = future_to_index[future]
                 try:
-                    res = f.result()
-                    if res:
-                        total_main_chars += res.get('main_chars', 0)
-                        total_cot_chars += res.get('cot_chars', 0)
-                        final_output_lines += res.get('lines', 0)
+                    result = future.result() 
                 except Exception as e:
-                    print(f"[Stats Error] Failed to get result from future: {e}")
-            
-            # Update total_lines to the accurate final count
-            total_lines = final_output_lines
-
-            # Write Summary to Files (if enabled)
-            if total_time > 0 and args.save_summary:
-                # Simple speed calculation (divide by total time)
-                cot_speed = total_cot_chars / total_time
-                main_speed = total_main_chars / total_time
-                total_out_speed = (total_cot_chars + total_main_chars) / total_time
+                    safe_print(f"Worker Error for Block {block_idx+1}: {e}")
+                    result = {
+                        "success": False,
+                        "error": str(e),
+                        "block_idx": block_idx,
+                        "src_text": blocks[block_idx].prompt_text if block_idx < len(blocks) else "Unknown",
+                        "out_text": "[Worker Exception]",
+                        "preview_text": "[Worker Exception]",
+                        "cot": "",
+                        "raw_output": "",
+                        "warnings": [],
+                        "lines_count": 0,
+                        "chars_count": 0,
+                        "cot_chars": 0,
+                        "usage": None
+                    }
                 
-                gpu_info = "All (-1)" if args.gpu_layers == -1 else str(args.gpu_layers)
-                
-                summary_text = (
-                    f"\n\n{'='*20} Translation Summary {'='*20}\n"
-                    f"Model:      {display_name}\n"
-                    f"Params:     {params}\n"
-                    f"Quant:      {quant}\n"
-                    f"GPU:        {gpu_name}\n"
-                    f"GPU Layers: {gpu_info}\n"
-                    f"Total Time: {total_time:.2f} s\n"
-                    f"Total Tokens: {total_tokens}\n"
-                    f"Input Chars: {total_chars}\n"
-                    f"CoT Chars:   {total_cot_chars}\n"
-                    f"Main Chars:  {total_main_chars}\n"
-                    f"----------------------------------------\n"
-                    f"CoT Speed:   {cot_speed:.1f} chars/s\n"
-                    f"Main Speed:  {main_speed:.1f} chars/s\n"
-                    f"Throughput:  {total_out_speed:.1f} chars/s (Main + CoT)\n"
-                    f"{'='*60}\n"
-                )
-                f_out.write(summary_text)
-                if args.save_cot:
-                    f_cot.write(summary_text)
+                # 放入缓冲区
+                results_buffer[block_idx] = result
+                completed_count += 1
+                if result["src_text"].strip():
+                    effective_completed += 1
+                    
+                # 1. 更新统计数据 (只要任务完成就更新，不论顺序)
+                if result["success"]:
+                    total_out_chars += len(result["out_text"])
+                    total_lines += result["lines_count"]
+                    total_cot_chars += result["cot_chars"]
+                    
+                    # Accumulate Tokens
+                    if result.get("usage"):
+                        total_prompt_tokens += result["usage"].get("prompt_tokens", 0)
+                        total_gen_tokens += result["usage"].get("completion_tokens", 0)
+                    
+                    if block_idx not in precalculated_temp:
+                        try:
+                            temp_line = json.dumps(result, ensure_ascii=False)
+                            temp_progress_file.write(temp_line + "\n")
+                            temp_progress_file.flush()
+                        except: pass
+                    
+                    block_src_text = result["src_text"]
+                    total_source_chars += len(block_src_text)
+                    total_source_lines += len([l for l in block_src_text.splitlines() if l.strip()])
+                    
+                    # 发送进度 JSON
+                    elapsed_so_far = max(0.1, time.time() - start_time)
+                    current_speed_chars = (total_out_chars + total_cot_chars) / elapsed_so_far
+                    
+                    # 计算剩余时间
+                    avg_time_per_block = elapsed_so_far / completed_count
+                    remaining_time = (total_tasks_count - completed_count) * avg_time_per_block
+                    
+                    progress_data = {
+                         "current": effective_completed + len([idx for idx in range(skip_blocks_from_output) if blocks[idx].prompt_text.strip()]),
+                         "ordered_current": next_write_idx,
+                         "total": effective_total,
+                         "percent": ((effective_completed + len([idx for idx in range(skip_blocks_from_output) if blocks[idx].prompt_text.strip()])) / max(1, effective_total)) * 100,
+                         "total_chars": total_out_chars,
+                         "total_lines": total_lines,
+                         "source_chars": total_source_chars,
+                         "source_lines": total_source_lines, 
+                         "speed_chars": round(current_speed_chars, 1),
+                         "speed_lines": round(total_lines / elapsed_so_far, 2),
+                         "speed_gen": round(total_gen_tokens / elapsed_so_far, 1),
+                         "speed_eval": round(total_prompt_tokens / elapsed_so_far, 1),
+                         "total_tokens": total_gen_tokens, # Cumulative gen tokens
+                         "elapsed": elapsed_so_far,
+                         "remaining": int(remaining_time)
+                    }
+                    
+                    now = time.time()
+                    if (now - last_progress_time > 0.1) or (completed_count == total_tasks_count):
+                        safe_print_json("JSON_PROGRESS", progress_data)
+                        last_progress_time = now
 
-        # 保存翻译缓存文件（用于校对界面）
+                # 2. 顺序写入文件 (关键修复：检查缓冲区是否有接下来的序号)
+                while next_write_idx in results_buffer:
+                    res = results_buffer.pop(next_write_idx)
+                    curr_disp = next_write_idx + 1
+                    
+                    if res["success"]:
+                        # 发送预览
+                        preview_data = {"block": curr_disp, "src": res['src_text'], "output": res['preview_text']}
+                        safe_print_json("JSON_PREVIEW_BLOCK", preview_data)
+                        
+                        # 更新校对缓存
+                        if translation_cache:
+                            w_types = [w['type'] for w in res["warnings"]] if res["warnings"] else []
+                            translation_cache.add_block(next_write_idx, res["src_text"], res["preview_text"], w_types, res["cot"])
+                        
+                        # 写入文件
+                        f_out.write(res["out_text"] + "\n")
+                        if args.mode == "doc": f_out.write("\n")
+                        
+                        if args.save_cot and res["cot"]:
+                            f_cot.write(f"[MURASAKI] ========== Block {curr_disp} ==========\n")
+                            f_cot.write(res["raw_output"] + "\n\n")
+                    else:
+                        f_out.write(f"\n[Block {curr_disp} Failed]\n")
+                    
+                    f_out.flush()
+                    next_write_idx += 1
+
+            executor.shutdown(wait=False)
+
+        # 任务结束后的总结
+        total_time = time.time() - start_time
         if translation_cache:
-            model_name = display_name if 'display_name' in dir() else ''
-            # Use resolved absolute path
-            if translation_cache.save(model_name=model_name, glossary_path=glossary_path or ''):
-                print(f"[Cache] Saved: {translation_cache.cache_path}")
-            else:
-                print("[Cache] Failed to save cache")
+            m_name = os.path.basename(args.model) if args.model else "Unknown"
+            translation_cache.save(model_name=m_name, glossary_path=args.glossary or "", concurrency=args.concurrency)
 
-        print(f"\n{'='*20} Summary Report {'='*20}")
-        print(f"Output File: {output_path}")
-        if args.save_cot:
-            print(f"CoT File:    {cot_path}")
-            
-        if total_time > 0:
-             # Simple speed calculation (divide by total time)
-             cot_speed = total_cot_chars / total_time
-             main_speed = total_main_chars / total_time
-             total_out_speed = (total_cot_chars + total_main_chars) / total_time
-             
-             gpu_info = "All (-1)" if args.gpu_layers == -1 else str(args.gpu_layers)
-             
-             print(f"\n[Global Stats]")
-             print(f"Model:       {display_name}")
-             print(f"Params:      {params}")
-             print(f"Quant:       {quant}")
-             print(f"GPU:         {gpu_name}")
-             print(f"GPU Layers:  {gpu_info}")
-             print(f"Total Time:  {total_time:.2f} s")
-             print(f"Total Tokens:  {total_tokens}")
-             print(f"----------------------------------------")
-             print(f"CoT Speed:   {cot_speed:.1f} chars/s")
-             print(f"Main Speed:  {main_speed:.1f} chars/s")
-             print(f"Throughput:  {total_out_speed:.1f} chars/s (Main + CoT)")
+        # 发送最终 JSON 统计
+        final_stats = {
+            "sourceLines": total_source_lines, "sourceChars": total_source_chars,
+            "outputLines": total_lines, "outputChars": total_out_chars,
+            "totalTime": round(total_time, 2), "avgSpeed": round(total_out_chars / total_time, 1) if total_time > 0 else 0
+        }
+        safe_print_json("JSON_FINAL", final_stats)
+        
+        # 清理临时文件
+        if (completed_count + skip_blocks_from_output) >= len(blocks):
+            try:
+                temp_progress_file.close()
+                if os.path.exists(temp_progress_path): os.remove(temp_progress_path)
+            except: pass
 
-             # 发送最终统计数据给前端
-             final_stats = {
-                 "sourceLines": source_lines,
-                 "sourceChars": source_chars,
-                 "outputLines": total_lines, 
-                 "outputChars": total_main_chars,
-                 "totalTokens": total_tokens,
-                 "totalTime": round(total_time, 2),
-                 "avgSpeed": round(total_out_speed, 1),
-                 "model": display_name
-             }
-             sys.stdout.write(f"\nJSON_FINAL:{json.dumps(final_stats, ensure_ascii=False)}\n")
-             sys.stdout.flush()
-        
-        print(f"{'='*56}\n")
-        
     except KeyboardInterrupt:
-        print("\nInterrupted.")
+        print("\n[System] Interrupted by user. Shutting down immediately...")
+        if 'executor' in locals():
+            executor.shutdown(wait=False, cancel_futures=True)
+        if engine: 
+            engine.stop_server()
+    except Exception as e:
+        print(f"\n[System] Critical Error: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
-        engine.stop_server()
+        if 'temp_progress_file' in locals():
+            try:
+                temp_progress_file.close()
+            except: pass
+        if engine:
+            engine.stop_server()
 
 if __name__ == "__main__":
     main()
