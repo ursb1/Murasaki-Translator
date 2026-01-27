@@ -248,6 +248,16 @@ class InferenceEngine:
                 if penalty > 1.0:
                     prefix = f"[Block {block_id}] " if block_id is not None else ""
                     logger.info(f"{prefix}Detected loop. Retrying with RepetitionPenalty={penalty}...")
+                    # Notify GUI of retry
+                    retry_data = {
+                        "block": block_id,
+                        "attempt": idx, # Current attempt index (0 was first, so 1 is first retry)
+                        "type": "repetition",
+                        "penalty": penalty
+                    }
+                    import sys
+                    sys.stdout.write(f"\nJSON_RETRY:{json.dumps(retry_data, ensure_ascii=False)}\n")
+                    sys.stdout.flush()
                 
                 req_start_time = time.time()
                 response = self.session.post(
