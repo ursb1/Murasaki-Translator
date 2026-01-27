@@ -1158,15 +1158,15 @@ export function Dashboard({ lang, active }: DashboardProps) {
                                 <div className="flex items-center gap-2 mb-2">
                                     <Layers className="w-4 h-4 text-indigo-500" />
                                     <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide">{t.dashboard.progress}</span>
+                                    {progress.retries > 0 && (
+                                        <span className="ml-auto text-xs font-bold text-amber-500 animate-pulse bg-amber-500/10 px-1.5 py-0.5 rounded whitespace-nowrap">
+                                            {t.dashboard.retries}: {progress.retries}
+                                        </span>
+                                    )}
                                 </div>
                                 <div className="flex items-baseline justify-between mb-1.5">
                                     <span className="text-lg font-black text-foreground font-mono">{progress.current}/{progress.total}</span>
                                     <div className="flex items-center gap-2">
-                                        {progress.retries > 0 && (
-                                            <span className="text-xs font-bold text-amber-500 animate-pulse bg-amber-500/10 px-1.5 py-0.5 rounded whitespace-nowrap">
-                                                {t.dashboard.retries}: {progress.retries}
-                                            </span>
-                                        )}
                                         <span className="text-base font-bold text-primary">{(progress.percent || 0).toFixed(1)}%</span>
                                     </div>
                                 </div>
