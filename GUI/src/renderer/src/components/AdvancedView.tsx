@@ -62,8 +62,6 @@ export function AdvancedView({ lang }: { lang: Language }) {
     const [retryRepBoost, setRetryRepBoost] = useState(0.1)
     const [retryPromptFeedback, setRetryPromptFeedback] = useState(true)
 
-    // Incremental Translation (增量翻译)
-    const [enableResume, setEnableResume] = useState(false)
     // Text Protection (文本保护)
     const [enableTextProtect, setEnableTextProtect] = useState(false)
     const [protectPatterns, setProtectPatterns] = useState("")
@@ -159,8 +157,6 @@ export function AdvancedView({ lang }: { lang: Language }) {
             setCoverageRetries(val > 5 ? 3 : val)
         }
 
-        // Load Resume Config
-        setEnableResume(localStorage.getItem("config_resume") === "true")
         // Load Text Protect Config
         setEnableTextProtect(localStorage.getItem("config_text_protect") === "true")
         setProtectPatterns(localStorage.getItem("config_protect_patterns") || "")
@@ -266,8 +262,6 @@ export function AdvancedView({ lang }: { lang: Language }) {
         localStorage.setItem("config_rep_penalty_max", String(repPenaltyMax))
         localStorage.setItem("config_max_retries", String(maxRetries))
 
-        // Save Resume Config
-        localStorage.setItem("config_resume", String(enableResume))
         // Save Text Protect Config
         localStorage.setItem("config_text_protect", enableTextProtect.toString())
         localStorage.setItem("config_protect_patterns", protectPatterns)
@@ -1592,25 +1586,6 @@ export function AdvancedView({ lang }: { lang: Language }) {
 
                         <Card>
                             <CardContent className="space-y-6 pt-6">
-                                {/* Incremental Translation */}
-                                <div className="space-y-3">
-                                    <div className="flex items-center justify-between">
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-sm font-medium">{t.advancedView.resume}</span>
-                                            <span className="text-[10px] bg-amber-500/10 text-amber-600 px-1.5 py-0.5 rounded">{t.advancedView.resumeBadge}</span>
-                                        </div>
-                                        <Switch
-                                            checked={enableResume}
-                                            onCheckedChange={(v) => {
-                                                setEnableResume(v)
-                                                localStorage.setItem("config_resume", v.toString())
-                                            }}
-                                        />
-                                    </div>
-                                    <p className="text-xs text-muted-foreground">
-                                        {t.advancedView.resumeDesc}
-                                    </p>
-                                </div>
 
                                 {/* Spacer */}
 

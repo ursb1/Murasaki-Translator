@@ -168,13 +168,15 @@ def calculate_skip_blocks(blocks, existing_lines: int) -> int:
     
     cumulative_lines = 0
     for i, block in enumerate(blocks):
-        # 估算这个块的输出行数（与输入行数大致相同）
+        # 估算这个块的应有输出行数（与输入行数相同）
         block_lines = block.prompt_text.count('\n') + 1
-        cumulative_lines += block_lines
         
-        # 如果累积行数超过已有行数，返回前一个块
-        if cumulative_lines >= existing_lines:
-            return i  # 从这个块开始重新翻译（保守策略）
+        # 如果当前块全部加入后超过了已有行数，说明此块不完整或未开始
+        # 必须从当前这个块 (i) 开始重新翻译，以保证数据完整性
+        if cumulative_lines + block_lines > existing_lines:
+            return i
+            
+        cumulative_lines += block_lines
     
     return len(blocks)  # 所有块都已完成
 
@@ -820,14 +822,12 @@ def main():
         with open(output_path, output_mode, encoding='utf-8', buffering=1) as f_out, \
              cot_context as f_cot:
 
-            # If resuming from output file, write existing content first
+            # If resuming from output file, update counters
             if skip_blocks_from_output > 0 and output_mode == 'a':
-                for line in existing_content:
-                    f_out.write(line + '\n')
-                # Update initial progress based on existing output
+                # Update initial progress based on existing output (don't write, it's already there)
                 total_lines += len(existing_content)
                 total_out_chars += sum(len(l) for l in existing_content)
-                # We don't have source chars for these, so we'll just use the output lines/chars for progress
+                # We don't have source chars for these, so we'll just use the output lines/chars for progress estimations
                 # The `current` and `percent` will be based on blocks, so this is fine.
             
             # ========================================
