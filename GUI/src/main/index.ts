@@ -153,8 +153,8 @@ const getPythonPath = () => {
     if (is.dev) {
         return process.env.ELECTRON_PYTHON_PATH || 'python'
     }
-    // In prod: resources/python_env/Scripts/python.exe
-    return join(process.resourcesPath, 'python_env', 'Scripts', 'python.exe')
+    // In prod: resources/python_env/python.exe (Embeddable)
+    return join(process.resourcesPath, 'python_env', 'python.exe')
 }
 
 // Helper to spawn Python process with sanitized environment

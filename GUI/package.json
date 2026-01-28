@@ -62,7 +62,8 @@
           "**/*",
           "!**/__pycache__/*",
           "!**/Scripts/*.pdb",
-          "!**/Lib/test/*"
+          "!**/Lib/test/*",
+          "!get-pip.py"
         ]
       }
     ]
