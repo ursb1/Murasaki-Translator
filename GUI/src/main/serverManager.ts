@@ -238,10 +238,28 @@ export class ServerManager {
 
     async stop(): Promise<void> {
         if (this.process) {
+            const pid = this.process.pid
             this.logs.push('Stopping server...')
-            this.process.kill()
-            // On windows, might need tree kill?
-            // Since shell: false, .kill() usually works on the direct entry.
+
+            try {
+                this.process.kill()
+            } catch (e) {
+                // Ignore if already dead
+            }
+
+            // Windows: Force kill with tree kill to ensure child processes are terminated
+            if (process.platform === 'win32' && pid) {
+                try {
+                    const { execSync } = require('child_process')
+                    execSync(`taskkill /F /T /PID ${pid}`, {
+                        stdio: 'ignore',
+                        windowsHide: true
+                    })
+                } catch (e) {
+                    // Process may already be dead, ignore
+                }
+            }
+
             this.process = null
             this.model = null
         }

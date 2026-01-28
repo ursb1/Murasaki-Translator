@@ -117,8 +117,8 @@ class InferenceEngine:
         logger.info("Waiting for server to be ready...")
         start = time.time()
         while time.time() - start < timeout:
-            # Failsafe: Check if process died
-            if self.process.poll() is not None:
+            # Failsafe: Check if process died (guard for no_spawn mode where self.process is None)
+            if self.process and self.process.poll() is not None:
                 logger.error(f"Server process terminated unexpectedly with code {self.process.returncode}")
                 break
 
@@ -335,14 +335,17 @@ class InferenceEngine:
                                         loop_detected = True
                                     
                                     # 2. Phrase Loop (e.g. "output... output...")
-                                    # Check for repeated suffixes of length 20 to 1000
+                                    # Optimized: Sample specific lengths instead of O(n) scan
                                     if not loop_detected and len(full_text) > 60:
-                                        # Optimization: Check only specific logical boundaries or plain range
-                                        limit = min(1000, len(full_text) // 2)
-                                        for length in range(20, limit):
-                                            # Quick check last char to avoid slice cost
-                                            if full_text[-1] != full_text[-1-length]: continue
-                                            
+                                        # Sample at key lengths: common repeat patterns (20, 40, 60, 100, 200, 500)
+                                        sample_lengths = [20, 40, 60, 100, 200, 500]
+                                        max_check = len(full_text) // 2
+                                        for length in sample_lengths:
+                                            if length > max_check:
+                                                break
+                                            # Quick exit: last char mismatch means no match
+                                            if full_text[-1] != full_text[-1-length]: 
+                                                continue
                                             # Check if the last 'length' chars are same as previous 'length'
                                             if full_text[-length:] == full_text[-2*length:-length]:
                                                 logger.warning(f"Detected phrase loop (len={length}). Aborting.")

@@ -106,7 +106,8 @@ class EpubDocument(BaseDocument):
                                             }
                                         })
                                         uid += 1
-                        except: pass
+                        except Exception as e:
+                            pass  # Skip malformed files silently (logged in debug if needed)
                     elif lower_path.endswith('.ncx'):
                         try:
                             content = z.read(zip_path).decode('utf-8-sig', errors='ignore')

@@ -356,6 +356,17 @@ export const Dashboard = forwardRef<any, DashboardProps>(({ lang, active }, ref)
                         })
                     } catch (e) { console.error("Warning Parse Error:", e) }
                     return
+                } else if (log.startsWith("JSON_ERROR:")) {
+                    // Critical error from backend - show internal alert
+                    try {
+                        const data = JSON.parse(log.substring("JSON_ERROR:".length))
+                        showAlert({
+                            title: data.title || "错误",
+                            description: data.message || "发生未知错误",
+                            variant: 'destructive'
+                        })
+                    } catch (e) { console.error("JSON_ERROR Parse Error:", e) }
+                    return
                 } else if (log.startsWith("JSON_FINAL:")) {
                     // Final stats from backend
                     try {

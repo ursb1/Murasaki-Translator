@@ -139,7 +139,7 @@ class Chunker:
         """
         # Check if we have metadata
         if any(b.metadata for b in blocks):
-             # print("[Chunker] Metadata detected. Skipping tail balancing to preserve structure.")
+             # Structured documents (EPUB/SRT) should not have blocks rebalanced
              return
 
         # Determine how many blocks to involve (min of existing blocks and configured range)

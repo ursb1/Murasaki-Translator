@@ -12,6 +12,10 @@ from typing import List, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor, Future, as_completed
 
 from pathlib import Path
+import logging
+
+# Module-level logger for all functions (fixes NameError in nested functions)
+logger = logging.getLogger("murasaki")
 
 # Add middleware directory to sys.path for package imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -330,7 +334,8 @@ def translate_block_with_retry(
             [l for l in processed_text.split('\n') if l.strip()], 
             source_lang="ja"
         )
-    except: pass
+    except Exception as e:
+        logger.debug(f"[QualityChecker] Check failed: {e}")
 
     return {
         "success": True,
@@ -1324,11 +1329,7 @@ def main():
                 
                 future_to_index[future] = i
             
-            # Fill skipped blocks if they exist in precalculated_temp or if we need to regenerate?
-            # For now, if we resume, we rely on the fact that doc.save usually only needs the new blocks?
-            # NO, for EPUB/SRT, we need THE ENTIRE document.
-            if skip_blocks_from_output > 0:
-                print(f"[Resume] Warning: Full document reconstruction (EPUB/SRT) requires all blocks. Currently only new blocks are in memory.")
+            # Note: EPUB/SRT reconstruction handled by memory rebuild logic above (skip_blocks_from_output)
             
             # --- Execution Status Initialization ---
             results_buffer = {}
@@ -1376,7 +1377,8 @@ def main():
                                 temp_line = json.dumps(result, ensure_ascii=False)
                                 temp_progress_file.write(temp_line + "\n")
                                 temp_progress_file.flush()
-                            except: pass
+                            except Exception as e:
+                                logger.debug(f"[TempProgress] Write failed: {e}")
                         
                         block_src_text = result["src_text"]
                         total_source_chars += len(block_src_text)
@@ -1437,6 +1439,20 @@ def main():
         # 此操作在 f_out 关闭后执行，确保所有文本已落盘
         if is_structured_doc:
             try:
+                # [Integrity Check] Ensure all blocks have valid results before reconstruction
+                missing_blocks = [i for i in range(len(blocks)) if all_results[i] is None]
+                if missing_blocks:
+                    error_msg = f"[CRITICAL] Resume integrity check failed: {len(missing_blocks)} blocks missing (indices: {missing_blocks[:10]}{'...' if len(missing_blocks) > 10 else ''})"
+                    print(error_msg)
+                    # Output JSON error for GUI to display internal-style alert
+                    safe_print_json("JSON_ERROR", {
+                        "type": "resume_integrity",
+                        "title": "重建失败",
+                        "message": f"无法重建结构化文档！\n\n缺失 {len(missing_blocks)} 个翻译块。\n\n可能原因：\n1. 临时文件 (.temp.jsonl) 已损坏或被删除\n2. 输出文件与进度不匹配\n\n建议：删除输出文件并重新翻译。",
+                        "missing_count": len(missing_blocks)
+                    })
+                    raise ValueError(error_msg)
+                
                 print(f"[Final] Reconstructing structured document: {output_path}...")
                 from murasaki_translator.core.chunker import TextBlock
                 translated_blocks = []

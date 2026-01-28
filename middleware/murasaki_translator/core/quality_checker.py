@@ -271,7 +271,7 @@ def calculate_glossary_coverage(
     cot_text: str = "",
     output_hit_threshold: float = 60.0,
     cot_coverage_threshold: float = 80.0
-) -> Tuple[float, int, int]:
+) -> Tuple[bool, float, float, int, int]:
     """
     计算术语表覆盖率（支持 CoT 检查）
     
@@ -284,9 +284,6 @@ def calculate_glossary_coverage(
         translated_text: 译文文本
         glossary: 术语表 {原文: 译文}
         cot_text: 模型思考过程文本（可选）
-        output_hit_threshold: 输出精确命中阈值（默认 60%）
-        cot_coverage_threshold: CoT 覆盖阈值（默认 80%）
-    Args:
         output_hit_threshold: 输出精确命中阈值（默认 60%）
         cot_coverage_threshold: CoT 覆盖阈值（默认 80%）
         
