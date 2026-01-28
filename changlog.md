@@ -1,5 +1,30 @@
 # Murasaki Translator - Changelog
 
+## [1.2.1] - 2026-01-29
+
+### 代码审计与健壮性修复 (Code Audit & Robustness)
+- **进程管理 (`serverManager.ts`)**:
+    - 引入 Windows 专用 `taskkill /F /T` 终止逻辑，确保 Python 子进程及其衍生进程被彻底清理，防止端口占用和内存泄露。
+- **循环检测精度 (`engine.py`)**:
+    - 修复了 v1.2.0 中引入的循环检测抽样过于稀疏的问题。采用密集抽样策略：`range(20, 100, 5) + [150, 200, 300, 500]`，兼顾性能与检测精度。
+- **推理引擎守卫 (`engine.py`)**:
+    - 新增 `self.process` 判空检查，防止在 `no_spawn` 模式下访问空对象导致崩溃。
+- **断点续传完整性 (`main.py`)**:
+    - 在结构化文档（EPUB/SRT）重建前新增 `missing_blocks` 完整性检查。若进度文件损坏导致数据缺失，系统将通过 GUI 弹窗报错并终止，防止生成空白或不完整的文件。
+    - 清理了过时的 Resume 警告信息（相关逻辑已由内存重建机制覆盖）。
+- **异常处理规范化**:
+    - 将多处裸 `except: pass` 替换为 `except Exception as e: logger.debug(e)`，便于调试静默失败问题。涉及文件：`main.py`、`epub.py`。
+- **前后端通信 (`Dashboard.tsx`)**:
+    - 新增 `JSON_ERROR:` 前缀日志监听，后端关键错误可触发 GUI 内部样式警告弹窗。
+- **日志模块 (`main.py`)**:
+    - 将 `logger` 提升为模块级变量，解决嵌套函数中可能出现的 `NameError`。
+
+### 代码质量 (Code Quality)
+- **分块器注释 (`chunker.py`)**: 优化了尾部平衡跳过逻辑的注释说明。
+- **类型注解 (`quality_checker.py`)**: 修正了 `calculate_glossary_coverage` 的返回值类型签名。
+
+---
+
 ## [1.2.0] - 2026-01-28
 
 ### EPUB 引擎重构 (EPUB Engine Refactor)

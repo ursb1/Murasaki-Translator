@@ -337,8 +337,8 @@ class InferenceEngine:
                                     # 2. Phrase Loop (e.g. "output... output...")
                                     # Optimized: Sample specific lengths instead of O(n) scan
                                     if not loop_detected and len(full_text) > 60:
-                                        # Sample at key lengths: common repeat patterns (20, 40, 60, 100, 200, 500)
-                                        sample_lengths = [20, 40, 60, 100, 200, 500]
+                                        # Full coverage: step 10 (20-500) + step 50 (500-1000) = ~58 checks
+                                        sample_lengths = list(range(20, 500, 10)) + list(range(500, 1001, 50))
                                         max_check = len(full_text) // 2
                                         for length in sample_lengths:
                                             if length > max_check:
