@@ -793,18 +793,32 @@ ipcMain.handle('retranslate-block', async (event, { src, index, modelPath, confi
         if (config.temperature) args.push('--temperature', config.temperature.toString())
         if (config.repPenaltyBase) args.push('--rep-penalty-base', config.repPenaltyBase.toString())
         if (config.repPenaltyMax) args.push('--rep-penalty-max', config.repPenaltyMax.toString())
+        if (config.repPenaltyStep) args.push('--rep-penalty-step', config.repPenaltyStep.toString())
         if (config.preset) args.push('--preset', config.preset)
 
         // Force f16 KV Cache for single block re-translation (Quality Priority)
         args.push('--kv-cache-type', 'f16')
 
-        // Glossary Coverage Check
-        if (config.outputHitThreshold) args.push('--output-hit-threshold', config.outputHitThreshold.toString())
-        if (config.cotCoverageThreshold) args.push('--cot-coverage-threshold', config.cotCoverageThreshold.toString())
-
         // Glossary Path
         if (config.glossaryPath && fs.existsSync(config.glossaryPath)) {
             args.push('--glossary', config.glossaryPath)
+        }
+
+        // Retry Strategy for Single Block
+        if (config.maxRetries !== undefined) {
+            args.push('--max-retries', config.maxRetries.toString())
+        }
+        if (config.retryTempBoost !== undefined) {
+            args.push('--retry-temp-boost', config.retryTempBoost.toString())
+        }
+        if (config.retryPromptFeedback) {
+            args.push('--retry-prompt-feedback')
+        }
+        if (config.outputHitThreshold !== undefined) {
+            args.push('--output-hit-threshold', config.outputHitThreshold.toString())
+        }
+        if (config.cotCoverageThreshold !== undefined) {
+            args.push('--cot-coverage-threshold', config.cotCoverageThreshold.toString())
         }
     }
 
@@ -1217,6 +1231,9 @@ ipcMain.on('start-translation', (event, { inputFile, modelPath, config }) => {
         if (config.repPenaltyMax !== undefined) {
             args.push('--rep-penalty-max', config.repPenaltyMax.toString())
         }
+        if (config.repPenaltyStep !== undefined) {
+            args.push('--rep-penalty-step', config.repPenaltyStep.toString())
+        }
         if (config.maxRetries !== undefined) {
             args.push('--max-retries', config.maxRetries.toString())
         }
@@ -1239,9 +1256,6 @@ ipcMain.on('start-translation', (event, { inputFile, modelPath, config }) => {
         if (config.retryTempBoost !== undefined) {
             args.push('--retry-temp-boost', config.retryTempBoost.toString())
         }
-        if (config.retryRepBoost !== undefined) {
-            args.push('--retry-rep-boost', config.retryRepBoost.toString())
-        }
         if (config.retryPromptFeedback) {
             args.push('--retry-prompt-feedback')
         }
@@ -1262,6 +1276,12 @@ ipcMain.on('start-translation', (event, { inputFile, modelPath, config }) => {
     event.reply('log-update', `System: Config - CTX: ${config?.ctxSize || '8192'}, Concurrency: ${config?.concurrency || '1'}, KV: ${config?.kvCacheType || 'f16'}`)
 
     const env = { ...process.env }
+
+    // [Fix] Remove system-wide Python paths to prevent pollution of bundled environment
+    // This is critical for users who have other Python versions installed globally
+    delete env['PYTHONHOME']
+    delete env['PYTHONPATH']
+    console.log('Sanitized Environment: Removed PYTHONHOME/PYTHONPATH')
 
     // Set GPU ID if specified and not in CPU mode
     if (config?.deviceMode !== 'cpu' && config?.gpuDeviceId) {

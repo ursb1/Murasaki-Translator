@@ -56,11 +56,11 @@ export function AdvancedView({ lang }: { lang: Language }) {
     const [enableCoverageCheck, setEnableCoverageCheck] = useState(true)
     const [outputHitThreshold, setOutputHitThreshold] = useState(60)  // 输出精确命中阈值
     const [cotCoverageThreshold, setCotCoverageThreshold] = useState(80)  // CoT覆盖阈值
-    const [coverageRetries, setCoverageRetries] = useState(3)
+    const [coverageRetries, setCoverageRetries] = useState(2)
 
     // Dynamic Retry Strategy (动态重试策略)
-    const [retryTempBoost, setRetryTempBoost] = useState(0.1)
-    const [retryRepBoost, setRetryRepBoost] = useState(0.1)
+    const [retryTempBoost, setRetryTempBoost] = useState(0.05)
+    const [repPenaltyStep, setRepPenaltyStep] = useState(0.1)
     const [retryPromptFeedback, setRetryPromptFeedback] = useState(true)
 
     // Text Protection (文本保护)
@@ -153,11 +153,18 @@ export function AdvancedView({ lang }: { lang: Language }) {
         const savedCotCoverageThreshold = localStorage.getItem("config_cot_coverage_threshold")
         if (savedCotCoverageThreshold) setCotCoverageThreshold(parseInt(savedCotCoverageThreshold))
         const savedCoverageRetries = localStorage.getItem("config_coverage_retries")
-        // 修复：如果保存的值大于5，重置为默认值3
+        // 修复：如果保存的值大于5，重置为默认值2
         if (savedCoverageRetries) {
             const val = parseInt(savedCoverageRetries)
-            setCoverageRetries(val > 5 ? 3 : val)
+            setCoverageRetries(val > 5 ? 2 : val)
         }
+
+        // Load Dynamic Retry Strategy Config
+        const savedRetryTempBoost = localStorage.getItem("config_retry_temp_boost")
+        if (savedRetryTempBoost) setRetryTempBoost(parseFloat(savedRetryTempBoost))
+        const savedRepPenaltyStep = localStorage.getItem("config_rep_penalty_step")
+        if (savedRepPenaltyStep) setRepPenaltyStep(parseFloat(savedRepPenaltyStep))
+        setRetryPromptFeedback(localStorage.getItem("config_retry_prompt_feedback") !== "false")
 
         // Load Text Protect Config
         setEnableTextProtect(localStorage.getItem("config_text_protect") === "true")
@@ -169,13 +176,6 @@ export function AdvancedView({ lang }: { lang: Language }) {
         if (savedThreshold) setBalanceThreshold(parseFloat(savedThreshold))
         const savedCount = localStorage.getItem("config_balance_count")
         if (savedCount) setBalanceCount(parseInt(savedCount))
-
-        // Load Dynamic Retry Strategy Config
-        const savedRetryTempBoost = localStorage.getItem("config_retry_temp_boost")
-        if (savedRetryTempBoost) setRetryTempBoost(parseFloat(savedRetryTempBoost))
-        const savedRetryRepBoost = localStorage.getItem("config_retry_rep_boost")
-        if (savedRetryRepBoost) setRetryRepBoost(parseFloat(savedRetryRepBoost))
-        setRetryPromptFeedback(localStorage.getItem("config_retry_prompt_feedback") !== "false")
 
         loadHardwareSpecs()
     }, [])
@@ -276,7 +276,7 @@ export function AdvancedView({ lang }: { lang: Language }) {
 
         // Save Dynamic Retry Strategy Config
         localStorage.setItem("config_retry_temp_boost", String(retryTempBoost))
-        localStorage.setItem("config_retry_rep_boost", String(retryRepBoost))
+        localStorage.setItem("config_rep_penalty_step", String(repPenaltyStep))
         localStorage.setItem("config_retry_prompt_feedback", String(retryPromptFeedback))
 
         setSaved(true)
@@ -1336,7 +1336,7 @@ export function AdvancedView({ lang }: { lang: Language }) {
                                 </div>
 
                                 {/* Global Max Retries - 全局最大重试次数 */}
-                                <div className="space-y-3 border-t pt-4">
+                                <div className="space-y-4 border-t pt-4">
                                     <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-2">
                                             <span className="text-sm font-medium">{t.advancedView.maxRetries}</span>
@@ -1346,7 +1346,7 @@ export function AdvancedView({ lang }: { lang: Language }) {
                                             type="number"
                                             className="w-20 border p-1.5 rounded text-sm bg-secondary text-center"
                                             value={maxRetries}
-                                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setMaxRetries(parseInt(e.target.value) || 1)}
+                                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setMaxRetries(parseInt(e.target.value) || 3)}
                                             onBlur={e => {
                                                 const v = Math.max(1, Math.min(10, parseInt(e.target.value) || 3))
                                                 setMaxRetries(v)
@@ -1354,9 +1354,29 @@ export function AdvancedView({ lang }: { lang: Language }) {
                                             }}
                                         />
                                     </div>
-                                    <p className="text-xs text-muted-foreground">
+                                    <p className="text-xs text-muted-foreground -mt-1">
                                         {t.advancedView.maxRetriesDesc}
                                     </p>
+
+                                    {/* Unified Retry Strategy (Temp Step) */}
+                                    <div className="space-y-3 pt-3 border-t border-dashed">
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-sm font-medium">{t.advancedView.retryTempBoost}</span>
+                                                <span className="text-[10px] font-mono opacity-50 bg-secondary px-1.5 py-0.5 rounded">±Step</span>
+                                            </div>
+                                            <input
+                                                type="number"
+                                                step="0.01"
+                                                className="w-20 border p-1.5 rounded text-sm bg-secondary text-center"
+                                                value={retryTempBoost}
+                                                onChange={e => setRetryTempBoost(parseFloat(e.target.value) || 0.05)}
+                                            />
+                                        </div>
+                                        <p className="text-xs text-muted-foreground">
+                                            此参数同时用于行数升温和术语降温
+                                        </p>
+                                    </div>
                                 </div>
 
                                 {/* Validation Rules Sub-header */}
@@ -1454,34 +1474,47 @@ export function AdvancedView({ lang }: { lang: Language }) {
                                     </p>
                                     {enableRepPenaltyRetry && (
                                         <div className="border-l-2 border-primary/30 pl-4 ml-2 mt-2">
-                                            <div className="grid grid-cols-2 gap-4">
+                                            <div className="grid grid-cols-3 gap-4">
                                                 <div className="space-y-1">
                                                     <label className="text-xs text-muted-foreground">{t.advancedView.repBase}</label>
                                                     <input
                                                         type="number"
-                                                        step="0.1"
+                                                        step="0.05"
                                                         className="w-full border p-1.5 rounded text-sm bg-secondary text-center"
                                                         value={repPenaltyBase}
-                                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setRepPenaltyBase(parseFloat(e.target.value) || 1.0)}
+                                                        onChange={e => setRepPenaltyBase(parseFloat(e.target.value) || 1.0)}
                                                     />
                                                 </div>
                                                 <div className="space-y-1">
                                                     <label className="text-xs text-muted-foreground">{t.advancedView.repMax}</label>
                                                     <input
                                                         type="number"
-                                                        step="0.1"
+                                                        step="0.05"
                                                         className="w-full border p-1.5 rounded text-sm bg-secondary text-center"
                                                         value={repPenaltyMax}
-                                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setRepPenaltyMax(parseFloat(e.target.value) || 1.5)}
+                                                        onChange={e => setRepPenaltyMax(parseFloat(e.target.value) || 1.5)}
+                                                    />
+                                                </div>
+                                                <div className="space-y-1">
+                                                    <label className="text-xs text-muted-foreground">{t.advancedView.repBoost}</label>
+                                                    <input
+                                                        type="number"
+                                                        step="0.01"
+                                                        className="w-full border p-1.5 rounded text-sm bg-secondary text-center"
+                                                        value={repPenaltyStep}
+                                                        onChange={e => setRepPenaltyStep(parseFloat(e.target.value) || 0.1)}
                                                     />
                                                 </div>
                                             </div>
+                                            <p className="text-[10px] text-muted-foreground italic mt-2">
+                                                {t.advancedView.repBoostDesc}
+                                            </p>
                                         </div>
                                     )}
                                 </div>
 
                                 {/* Glossary Coverage Check */}
-                                <div className="space-y-3 border-t pt-4">
+                                <div className="space-y-3">
                                     <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-2">
                                             <span className="text-sm font-medium">{t.advancedView.glossaryCoverage}</span>
@@ -1536,79 +1569,35 @@ export function AdvancedView({ lang }: { lang: Language }) {
                                                         type="number"
                                                         className="w-full border p-1.5 rounded text-sm bg-secondary text-center"
                                                         value={coverageRetries}
-                                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCoverageRetries(parseInt(e.target.value) || 1)}
+                                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCoverageRetries(parseInt(e.target.value) || 2)}
                                                         onBlur={e => {
-                                                            const v = Math.max(1, Math.min(5, parseInt(e.target.value) || 3))
+                                                            const v = Math.max(1, Math.min(5, parseInt(e.target.value) || 2))
                                                             setCoverageRetries(v)
                                                             localStorage.setItem("config_coverage_retries", v.toString())
                                                         }}
                                                     />
                                                 </div>
                                             </div>
+
+                                            {/* Prompt Feedback Toggle */}
+                                            <div className="space-y-3 pt-4 border-t border-dashed mt-4">
+                                                <div className="flex items-center justify-between">
+                                                    <span className="text-sm font-medium">Prompt 反馈注入</span>
+                                                    <Switch
+                                                        checked={retryPromptFeedback}
+                                                        onCheckedChange={(v) => {
+                                                            setRetryPromptFeedback(v)
+                                                            localStorage.setItem("config_retry_prompt_feedback", v.toString())
+                                                        }}
+                                                    />
+                                                </div>
+                                                <p className="text-xs text-muted-foreground">
+                                                    重试时在提示词中明确告知模型遗漏了哪些术语
+                                                </p>
+                                            </div>
                                         </div>
                                     )}
                                 </div>
-
-                                {/* Dynamic Retry Strategy (动态重试策略) - 仅在术语覆盖率检测启用时显示 */}
-                                {enableCoverageCheck && (
-                                    <div className="space-y-3 border-l-2 border-primary/30 pl-4 ml-2 mt-2">
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-sm font-medium">术语表重试策略</span>
-                                        </div>
-                                        <p className="text-xs text-muted-foreground">
-                                            覆盖率不足时<span className="text-primary font-medium">降低</span>温度增强确定性，自动选择覆盖率最高的结果
-                                        </p>
-
-                                        <div className="grid grid-cols-2 gap-4 mt-2">
-                                            <div className="space-y-1">
-                                                <label className="text-xs text-muted-foreground">温度降低/次</label>
-                                                <input
-                                                    type="number"
-                                                    step="0.05"
-                                                    className="w-full border p-1.5 rounded text-sm bg-secondary text-center"
-                                                    value={retryTempBoost}
-                                                    onChange={e => setRetryTempBoost(parseFloat(e.target.value) || 0)}
-                                                    onBlur={e => {
-                                                        const v = Math.max(0, Math.min(0.5, parseFloat(e.target.value) || 0.1))
-                                                        setRetryTempBoost(v)
-                                                        localStorage.setItem("config_retry_temp_boost", v.toString())
-                                                    }}
-                                                />
-                                            </div>
-                                            <div className="space-y-1">
-                                                <label className="text-xs text-muted-foreground">惩罚提升/次</label>
-                                                <input
-                                                    type="number"
-                                                    step="0.01"
-                                                    className="w-full border p-1.5 rounded text-sm bg-secondary text-center"
-                                                    value={retryRepBoost}
-                                                    onChange={e => setRetryRepBoost(parseFloat(e.target.value) || 0)}
-                                                    onBlur={e => {
-                                                        const v = Math.max(0, Math.min(0.3, parseFloat(e.target.value) || 0.1))
-                                                        setRetryRepBoost(v)
-                                                        localStorage.setItem("config_retry_rep_boost", v.toString())
-                                                    }}
-                                                />
-                                            </div>
-                                        </div>
-
-                                        <div className="flex items-center justify-between mt-3">
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-sm">Prompt 反馈注入</span>
-                                            </div>
-                                            <Switch
-                                                checked={retryPromptFeedback}
-                                                onCheckedChange={(v) => {
-                                                    setRetryPromptFeedback(v)
-                                                    localStorage.setItem("config_retry_prompt_feedback", v.toString())
-                                                }}
-                                            />
-                                        </div>
-                                        <p className="text-xs text-muted-foreground">
-                                            重试时在提示词中明确告知模型遗漏了哪些术语
-                                        </p>
-                                    </div>
-                                )}
                             </CardContent>
                         </Card>
                     </div>

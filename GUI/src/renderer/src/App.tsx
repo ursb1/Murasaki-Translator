@@ -66,7 +66,7 @@ function AppContent() {
             />
             {/* Keep Dashboard mounted to preserve translation state (logs, process listeners) */}
             <div className={`flex-1 ${view === 'dashboard' ? 'flex' : 'hidden'}`}>
-                <Dashboard lang={lang} active={view === 'dashboard'} />
+                <Dashboard ref={dashboardRef} lang={lang} active={view === 'dashboard'} />
             </div>
             {view === 'settings' && <SettingsView lang={lang} />}
             {view === 'model' && <ModelView lang={lang} />}

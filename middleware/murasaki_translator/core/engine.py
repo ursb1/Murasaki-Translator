@@ -191,7 +191,7 @@ class InferenceEngine:
             except: pass
             self.server_log = None
 
-    def chat_completion(self, messages: List[Dict], temperature: float = 0.7, stream: bool = True, stream_callback=None, rep_base: float = 1.0, rep_max: float = 1.5, block_id: int = 0) -> str:
+    def chat_completion(self, messages: List[Dict], temperature: float = 0.7, stream: bool = True, stream_callback=None, rep_base: float = 1.0, rep_max: float = 1.5, rep_step: float = 0.1, block_id: int = 0) -> str:
         """
         调用 Chat Completion API (With Auto-Retry Strategy)
         Strategy:
@@ -203,6 +203,10 @@ class InferenceEngine:
         local_last_usage = None
         local_token_count = 0
         
+        # 强制兜底，防止配置错误导致死循环
+        if rep_step <= 0:
+            rep_step = 0.1
+
         # 动态生成尝试策略
         attempts = [rep_base]
         if rep_base < rep_max:
@@ -211,10 +215,10 @@ class InferenceEngine:
             if second <= rep_max:
                 attempts.append(round(second, 2))
             # 递增
-            p = second + 0.1
+            p = second + rep_step
             while p <= rep_max + 0.05:  # Allow slightly over due to float prec
                 attempts.append(round(p, 2))
-                p += 0.1
+                p += rep_step
              
         final_idx = len(attempts) - 1
         

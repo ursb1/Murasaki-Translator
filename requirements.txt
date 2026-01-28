@@ -52,3 +52,8 @@ unidic-lite>=1.0.8
 
 # Embedding Models
 sentence-transformers>=2.2.0  # For BGE-M3 alignment
+
+# Formatted Document Reconstruction (EPUB/HTML)
+lxml>=4.9.0
+beautifulsoup4>=4.12.0
+ebooklib>=0.18

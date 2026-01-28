@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from "react"
+import { useEffect, useState, useRef, useCallback, forwardRef, useImperativeHandle } from "react"
 import { Play, X, FolderOpen, FileText, BookOpen, Clock, Zap, Layers, Terminal, ChevronDown, Plus, FolderPlus, Trash2, FileCheck, ArrowRight, AlertTriangle, GripVertical, RefreshCw } from "lucide-react"
 import { Button, Card } from "./ui/core"
 import { translations, Language } from "../lib/i18n"
@@ -18,7 +18,7 @@ interface DashboardProps {
     active?: boolean
 }
 
-export function Dashboard({ lang, active }: DashboardProps) {
+export const Dashboard = forwardRef<any, DashboardProps>(({ lang, active }, ref) => {
     const t = translations[lang]
 
     // Queue System (从 localStorage 恢复)
@@ -308,7 +308,7 @@ export function Dashboard({ lang, active }: DashboardProps) {
                         setProgress(prev => ({ ...prev, retries: prev.retries + 1 }))
                         // 添加到触发事件以便记录到历史
                         const retryType = data.type === 'repetition' ? 'rep_penalty_increase' :
-                            data.type === 'glossary' ? 'empty_retry' :
+                            data.type === 'glossary' ? 'glossary_missed' :
                                 data.type === 'empty' ? 'empty_retry' : 'line_mismatch'
                         triggersBufferRef.current.push({
                             time: new Date().toISOString(),
@@ -318,7 +318,9 @@ export function Dashboard({ lang, active }: DashboardProps) {
                                 ? `重复惩罚提升至 ${data.penalty}`
                                 : data.type === 'glossary'
                                     ? `术语覆盖率 ${data.coverage?.toFixed(1)}% 不足，重试中`
-                                    : `区块 ${data.block} 输出异常，重试中`
+                                    : data.type === 'empty'
+                                        ? `区块 ${data.block} 输出为空，跳过/重试`
+                                        : `区块 ${data.block} 行数差异 ${data.src_lines - data.dst_lines}，重试中`
                         })
                     } catch (e) { console.error("JSON_RETRY Parse Error:", e, log) }
                 } else if (log.includes("JSON_PREVIEW_BLOCK:")) {
@@ -402,23 +404,34 @@ export function Dashboard({ lang, active }: DashboardProps) {
             window.api?.removeLogListener()
             window.api?.removeProcessExitListener()
         }
-    }, []) // Empty deps - listeners are stable now
+    }, [])
 
-    // Keyboard Shortcuts
+    // 快捷键监听 (带有依赖数组，防止闭包陷阱)
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
+            if (!active) return
+
             if (e.ctrlKey && e.key === 'Enter') {
                 e.preventDefault()
                 if (!isRunning && fileQueue.length > 0) handleStartQueue()
-            }
-            if (e.key === 'Escape') {
+            } else if (e.key === 'Escape') {
                 e.preventDefault()
                 if (isRunning) handleStop()
             }
         }
         window.addEventListener('keydown', handleKeyDown)
         return () => window.removeEventListener('keydown', handleKeyDown)
-    }, [isRunning, fileQueue])
+    }, [isRunning, fileQueue, active])
+
+    // Expose methods to parent via ref
+    useImperativeHandle(ref, () => ({
+        startTranslation: () => {
+            if (!isRunning && fileQueue.length > 0) handleStartQueue()
+        },
+        stopTranslation: () => {
+            if (isRunning) handleStop()
+        }
+    }))
 
     // 日志自动滚动到底部
     useEffect(() => {
@@ -569,6 +582,7 @@ export function Dashboard({ lang, active }: DashboardProps) {
                 : "off",
             repPenaltyBase: parseFloat(localStorage.getItem("config_rep_penalty_base") || "1.0"),
             repPenaltyMax: parseFloat(localStorage.getItem("config_rep_penalty_max") || "1.5"),
+            repPenaltyStep: parseFloat(localStorage.getItem("config_rep_penalty_step") || "0.1"),
             maxRetries: parseInt(localStorage.getItem("config_max_retries") || "3"),
 
             // Glossary Coverage Check (术语表覆盖率检测)
@@ -582,7 +596,6 @@ export function Dashboard({ lang, active }: DashboardProps) {
 
             // Dynamic Retry Strategy (动态重试策略)
             retryTempBoost: parseFloat(localStorage.getItem("config_retry_temp_boost") || "0.1"),
-            retryRepBoost: parseFloat(localStorage.getItem("config_retry_rep_boost") || "0.1"),
             retryPromptFeedback: localStorage.getItem("config_retry_prompt_feedback") !== "false",
 
             // Daemon Mode
@@ -1155,11 +1168,11 @@ export function Dashboard({ lang, active }: DashboardProps) {
 
                             {/* Progress Module */}
                             <div className="bg-card rounded-lg border border-border/50 p-3">
-                                <div className="flex items-center gap-2 mb-2">
-                                    <Layers className="w-4 h-4 text-indigo-500" />
-                                    <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide">{t.dashboard.progress}</span>
+                                <div className="flex items-center gap-2 mb-2 min-w-0">
+                                    <Layers className="w-4 h-4 text-indigo-500 shrink-0" />
+                                    <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide shrink-0">{t.dashboard.progress}</span>
                                     {progress.retries > 0 && (
-                                        <span className="ml-auto text-xs font-bold text-amber-500 animate-pulse bg-amber-500/10 px-1.5 py-0.5 rounded whitespace-nowrap">
+                                        <span className="ml-auto text-[10px] font-bold text-amber-500 animate-pulse bg-amber-500/10 px-1 py-0.5 rounded whitespace-nowrap border border-amber-500/20">
                                             {t.dashboard.retries}: {progress.retries}
                                         </span>
                                     )}
@@ -1366,4 +1379,4 @@ export function Dashboard({ lang, active }: DashboardProps) {
             <AlertModal {...alertProps} />
         </div>
     )
-}
+})

@@ -120,12 +120,17 @@ def load_existing_output(output_path: str) -> tuple:
             # 文件已完成，不需要续翻
             return -1, [], False
         
-        # 分割为行，过滤空行
-        lines = [l for l in content.split('\n') if l.strip()]
+        # 分割为行，保留物理行结构（不进行 strip 过滤，也不过滤空行）
+        lines = content.split('\n')
+        # 如果文件以换行符结尾，内容中的最后一个空字符串是 split 产生的噪音，移除它
+        if content.endswith('\n'):
+            lines = lines[:-1]
+            
         return len(lines), lines, True
     except Exception as e:
         print(f"[Warning] Failed to load existing output: {e}")
         return 0, [], False
+
 
 def get_missed_terms(source_text: str, translated_text: str, glossary: Dict[str, str]) -> List[tuple]:
     """
@@ -158,7 +163,193 @@ def build_retry_feedback(missed_terms: List[tuple], coverage: float) -> str:
     return feedback
 
 
-def calculate_skip_blocks(blocks, existing_lines: int) -> int:
+def translate_block_with_retry(
+    block_idx: int,
+    original_src_text: str,   # Needed for glossary checks and post-processing
+    processed_src_text: str,  # Actual text to send to model (already normalized/protected)
+    args,
+    engine,
+    prompt_builder,
+    response_parser,
+    post_processor,
+    glossary,
+    stdout_lock,
+    strict_mode: bool,
+    protector=None
+):
+    """
+    Unified A/B/C/D retry strategy for a single block.
+    Used by both batch translation and single-block re-translation.
+    """
+    # Build Initial Prompt
+    messages = prompt_builder.build_messages(
+        processed_src_text, 
+        enable_cot=args.debug,
+        preset=args.preset
+    )
+    
+    global_attempts = 0
+    glossary_attempts = 0
+    retry_reason = None
+    last_missed_terms = []
+    last_coverage = 0.0
+    best_result = None
+    
+    final_output = None
+
+    while True:
+        attempt = global_attempts + glossary_attempts
+        if attempt > (args.max_retries + args.coverage_retries): break
+
+        current_temp = args.temperature
+        current_rep_base = args.rep_penalty_base
+        
+        if retry_reason == 'line_check' or retry_reason == 'strict_line_check':
+            current_temp = min(args.temperature + (global_attempts * args.retry_temp_boost), 1.2)
+        elif retry_reason == 'glossary':
+            current_temp = max(args.temperature - (glossary_attempts * args.retry_temp_boost), 0.3)
+
+        messages_for_attempt = messages
+        if attempt > 0 and args.retry_prompt_feedback and glossary and last_missed_terms and retry_reason == 'glossary':
+            feedback = build_retry_feedback(last_missed_terms, last_coverage)
+            if feedback:
+                messages_for_attempt = messages.copy()
+                for j in range(len(messages_for_attempt) - 1, -1, -1):
+                    if messages_for_attempt[j].get("role") == "user":
+                        messages_for_attempt[j] = {
+                            "role": "user",
+                            "content": messages_for_attempt[j]["content"] + feedback
+                        }
+                        break
+        
+        accumulated_output = ""
+        def on_stream_chunk(chunk):
+            nonlocal accumulated_output
+            accumulated_output += chunk
+            if "<think>" in chunk or "</think>" in chunk or (accumulated_output.strip().startswith("<think>") and not "</think>" in accumulated_output):
+                try:
+                    with stdout_lock:
+                        sys.stdout.write(f"\nJSON_THINK_DELTA:{json.dumps(chunk, ensure_ascii=False)}\n")
+                        sys.stdout.flush()
+                except: pass
+
+        full_response_text, block_usage = engine.chat_completion(
+            messages=messages_for_attempt,
+            temperature=current_temp,
+            stream=True,
+            stream_callback=on_stream_chunk,
+            rep_base=current_rep_base,
+            rep_max=args.rep_penalty_max,
+            rep_step=args.rep_penalty_step,
+            block_id=block_idx + 1
+        )
+        
+        raw_output = full_response_text
+        parsed_lines, cot_content = response_parser.parse(raw_output or "", expected_count=0)
+        has_content = parsed_lines and any(line.strip() for line in parsed_lines)
+
+        if not has_content:
+            if global_attempts < args.max_retries:
+                global_attempts += 1
+                retry_reason = 'empty'
+                safe_print_json("JSON_RETRY", {'block': block_idx + 1, 'attempt': global_attempts, 'type': 'empty', 'temp': round(current_temp, 2)})
+                continue
+            else: break
+
+        src_line_count = len([l for l in original_src_text.splitlines() if l.strip()])
+        dst_line_count = len([l for l in parsed_lines if l.strip()])
+        diff = abs(dst_line_count - src_line_count)
+        pct_diff = diff / max(1, src_line_count)
+        
+        is_invalid_lines = False
+        error_type = 'line_check'
+        if strict_mode and diff > 0:
+            is_invalid_lines = True
+            error_type = 'strict_line_check'
+        elif args.line_check and (diff > args.line_tolerance_abs or pct_diff > args.line_tolerance_pct):
+            is_invalid_lines = True
+            error_type = 'line_check'
+
+        if is_invalid_lines:
+            if global_attempts < args.max_retries:
+                global_attempts += 1
+                retry_reason = error_type
+                safe_print_json("JSON_RETRY", {'block': block_idx + 1, 'attempt': global_attempts, 'type': error_type, 'src_lines': src_line_count, 'dst_lines': dst_line_count, 'temp': round(current_temp, 2)})
+                continue
+            else: break
+
+        if glossary and args.output_hit_threshold > 0:
+            translated_text = '\n'.join(parsed_lines)
+            passed, coverage, cot_coverage, hit, total = calculate_glossary_coverage(
+                original_src_text, translated_text, glossary, cot_content,
+                args.output_hit_threshold, args.cot_coverage_threshold
+            )
+            last_coverage = coverage
+            last_missed_terms = get_missed_terms(original_src_text, translated_text, glossary)
+            
+            if best_result is None or coverage > best_result[3]:
+                best_result = (parsed_lines.copy(), cot_content, raw_output, coverage, block_usage)
+
+            if total > 0 and not passed:
+                if glossary_attempts < args.coverage_retries:
+                    glossary_attempts += 1
+                    retry_reason = 'glossary'
+                    safe_print_json("JSON_RETRY", {
+                        'block': block_idx + 1, 'attempt': glossary_attempts, 'type': 'glossary',
+                        'coverage': round(coverage, 1), 'temp': round(current_temp, 2),
+                        'missed_count': len(last_missed_terms)
+                    })
+                    continue
+                elif best_result and best_result[3] > coverage:
+                    parsed_lines, cot_content, raw_output, _, block_usage = best_result
+        
+        final_output = {
+            "parsed_lines": parsed_lines,
+            "cot": cot_content,
+            "raw": raw_output,
+            "usage": block_usage
+        }
+        break
+
+    if final_output is None:
+        if best_result:
+            parsed_lines, cot_content, raw_output, _, block_usage = best_result
+        else:
+            parsed_lines = ["[翻译失败]"] + original_src_text.split('\n')
+            cot_content, raw_output, block_usage = "", "", {}
+        final_output = {"parsed_lines": parsed_lines, "cot": cot_content, "raw": raw_output, "usage": block_usage}
+
+    base_text = '\n'.join(final_output["parsed_lines"])
+    processed_text = post_processor.process(base_text, src_text=original_src_text, protector=protector, strict_line_count=strict_mode)
+    
+    warnings = []
+    try:
+        qc = QualityChecker(glossary=glossary)
+        warnings = qc.check_output(
+            [l for l in original_src_text.split('\n') if l.strip()], 
+            [l for l in processed_text.split('\n') if l.strip()], 
+            source_lang="ja"
+        )
+    except: pass
+
+    return {
+        "success": True,
+        "block_idx": block_idx,
+        "src_text": original_src_text,
+        "out_text": processed_text,
+        "preview_text": processed_text,
+        "cot": final_output["cot"],
+        "raw_output": final_output["raw"],
+        "warnings": warnings,
+        "lines_count": len([l for l in processed_text.splitlines() if l.strip()]),
+        "chars_count": len(original_src_text),
+        "cot_chars": len(final_output["cot"]),
+        "usage": final_output["usage"],
+        "protector_stats": protector.get_stats() if protector else None
+    }
+
+
+def calculate_skip_blocks(blocks, existing_lines: int, is_doc_mode: bool = False) -> int:
     """
     根据已翻译行数计算应该跳过的块数。
     采用保守策略：只跳过完全匹配的块。
@@ -171,14 +362,16 @@ def calculate_skip_blocks(blocks, existing_lines: int) -> int:
         # 估算这个块的应有输出行数（与输入行数相同）
         block_lines = block.prompt_text.count('\n') + 1
         
+        # doc 模式下，每个块输出后会多加一个空行
+        physical_lines = block_lines + 1 if is_doc_mode else block_lines
+        
         # 如果当前块全部加入后超过了已有行数，说明此块不完整或未开始
-        # 必须从当前这个块 (i) 开始重新翻译，以保证数据完整性
-        if cumulative_lines + block_lines > existing_lines:
+        if cumulative_lines + physical_lines > existing_lines:
             return i
             
-        cumulative_lines += block_lines
+        cumulative_lines += physical_lines
     
-    return len(blocks)  # 所有块都已完成
+    return len(blocks)
 
 
 def get_gpu_name():
@@ -305,7 +498,7 @@ def translate_single_block(args):
             
         print(f"[Init] Retranslate started for block {args.file or 'Manual'}")
         
-        # 2. Pre-processing & Protection
+        # Pre-processing & Protection
         print(f"[Process] Applying pre-processing rules (Strict: {enforce_strict_alignment})...")
         processed_src = pre_processor.process(src_text, strict_line_count=enforce_strict_alignment)
         processed_src = Normalizer.normalize(processed_src)
@@ -313,133 +506,44 @@ def translate_single_block(args):
         if protector:
             print(f"[Process] Applying text protection...")
             processed_src = protector.protect(processed_src)
-            
-        # 3. Build Prompt
-        messages = prompt_builder.build_messages(
-            processed_src,
-            enable_cot=args.debug,
-            preset=args.preset
+
+        # 4. Translation with Unified Retry Strategy
+        print(f"[Inference] Starting chat completion with unified retry strategy...")
+        
+        # Disable balance logs in single block
+        args.balance_enable = False 
+        
+        result_payload = translate_block_with_retry(
+            block_idx=0,
+            original_src_text=src_text,
+            processed_src_text=processed_src,
+            args=args,
+            engine=engine,
+            prompt_builder=prompt_builder,
+            response_parser=parser,
+            post_processor=post_processor,
+            glossary=glossary,
+            stdout_lock=threading.Lock(), # Local lock for single block
+            strict_mode=enforce_strict_alignment,
+            protector=protector
         )
-        
-        # 4. Translation Loop with Coverage Check
-        print(f"[Inference] Starting chat completion (Temp: {args.temperature})...")
-        
-        max_retries = getattr(args, 'coverage_retries', 3)
-        current_temp = args.temperature
-        current_rep_base = getattr(args, 'rep_penalty_base', 1.0)
-        feedback_prompt = ""
-        
-        final_dst = ""
-        cot_content = ""
-        last_error = ""
-
-        for attempt in range(max_retries + 1):
-            if attempt > 0:
-                print(f"\n[Retry] Low coverage detected. Attempt {attempt}/{max_retries}...")
-                current_temp += getattr(args, 'retry_temp_boost', 0.2)
-                current_rep_base += getattr(args, 'retry_rep_boost', 0.1)
-                
-            # Re-build messages if feedback prompt exists
-            if feedback_prompt:
-                messages = prompt_builder.build_messages(
-                    processed_src + f"\n\n{feedback_prompt}", 
-                    enable_cot=args.debug,
-                    preset=args.preset
-                )
-            
-            accumulated_output = ""
-            def on_stream_chunk(chunk):
-                nonlocal accumulated_output
-                accumulated_output += chunk
-                # sys.stdout.write(chunk)
-                # sys.stdout.flush()
-                pass
-
-            raw_output, block_usage = engine.chat_completion(
-                messages=messages,
-                temperature=min(current_temp, 1.5),
-                stream=True,
-                stream_callback=on_stream_chunk,
-                rep_base=current_rep_base,
-                rep_max=getattr(args, 'rep_penalty_max', 1.5),
-                block_id=0
-            )
-
-            if not raw_output:
-                last_error = "Empty output from model"
-                continue
-
-            # Parse
-            parsed_lines, current_cot = parser.parse(raw_output)
-            temp_dst = '\n'.join(parsed_lines)
-            
-            # Post-process (Rule Restoration)
-            processed_dst = post_processor.process(
-                temp_dst, 
-                src_text=src_text, 
-                protector=protector, 
-                strict_line_count=enforce_strict_alignment
-            )
-
-            # Coverage Check
-            is_passed, out_cov, cot_cov, hits, total = calculate_glossary_coverage(
-                src_text,
-                processed_dst,
-                glossary,
-                cot_text=current_cot,
-                output_hit_threshold=getattr(args, 'output_hit_threshold', 60.0),
-                cot_coverage_threshold=getattr(args, 'cot_coverage_threshold', 80.0)
-            )
-
-            # [Log] Simulate main verification flow
-            
-            # Defense against empty glossary / non-list hits
-            hits_count = len(hits) if isinstance(hits, (list, tuple, dict)) else 0
-            
-            print(f"\n[Audit] Glossary Coverage Check: {'PASS' if is_passed else 'FAIL'}")
-            if total > 0:
-                print(f"        Output Coverage: {out_cov:.1f}% ({hits_count}/{total})")
-            else:
-                 print(f"        Output Coverage: N/A (No glossary terms found)")
-
-            if args.debug:
-                print(f"        CoT Coverage:    {cot_cov:.1f}%")
-            
-            if not is_passed:
-                print(f"        Missing Terms: {total - len(hits)}")
-
-            if is_passed or attempt == max_retries:
-                if attempt == max_retries and not is_passed:
-                    print(f"[Warn] Reached max retries ({max_retries}). Accepting result despite low coverage.")
-                
-                final_dst = processed_dst
-                cot_content = current_cot
-                break
-            
-            # If failed, construct feedback for next attempt (if enabled)
-            if getattr(args, 'retry_prompt_feedback', True) and glossary:
-                missed = [t for t, d in glossary.items() if len(t) > 1 and t in src_text and d not in processed_dst]
-                if missed:
-                    missed_str = "、".join(missed[:5])
-                    print(f"[Retry] Feedback: Missing terms -> {missed_str}")
-                    feedback_prompt = "注意：以下术语在上次翻译中遗漏，请务必在本次翻译中使用：" + missed_str
 
         print("\n[Inference] Done.")
         
-        if final_dst:
-            print(f"\n[Retranslate] Success! Generated {len(final_dst)} chars.")
+        if result_payload["success"]:
+            print(f"\n[Retranslate] Success! Generated {len(result_payload['out_text'])} chars.")
             result = {
                 'success': True,
                 'src': src_text,
-                'dst': final_dst,
-                'cot': cot_content if args.debug else ''
+                'dst': result_payload['out_text'],
+                'cot': result_payload['cot'] if args.debug else ''
             }
         else:
             result = {
                 'success': False,
                 'src': src_text,
                 'dst': '',
-                'error': last_error or 'Translation failed'
+                'error': result_payload.get('error') or 'Translation failed'
             }
         
         # Output
@@ -505,16 +609,16 @@ def main():
     parser.add_argument("--line-tolerance-pct", type=float, default=0.2, help="Line count percent tolerance (default 0.2 = 20%%)")
     parser.add_argument("--rep-penalty-base", type=float, default=1.0, help="Initial repetition penalty (default 1.0)")
     parser.add_argument("--rep-penalty-max", type=float, default=1.5, help="Max repetition penalty (default 1.5)")
+    parser.add_argument("--rep-penalty-step", type=float, default=0.1, help="Internal loop penalty increment (default 0.1)")
     parser.add_argument("--max-retries", type=int, default=3, help="Max retries for empty output (default 3)")
     
     # Glossary Coverage Check (术语表覆盖率检测)
     parser.add_argument("--output-hit-threshold", type=float, default=60.0, help="Min output exact hit percentage to pass (default 60)")
     parser.add_argument("--cot-coverage-threshold", type=float, default=80.0, help="Min CoT coverage percentage to pass (default 80)")
-    parser.add_argument("--coverage-retries", type=int, default=3, help="Max retries for low coverage (default 3)")
+    parser.add_argument("--coverage-retries", type=int, default=2, help="Max retries for low coverage (default 2)")
     
     # Dynamic Retry Strategy (动态重试策略)
-    parser.add_argument("--retry-temp-boost", type=float, default=0.2, help="Temperature boost per retry (default 0.2)")
-    parser.add_argument("--retry-rep-boost", type=float, default=0.1, help="Repetition penalty boost per retry (default 0.1)")
+    parser.add_argument("--retry-temp-boost", type=float, default=0.05, help="Temperature boost per retry (default 0.05)")
     parser.add_argument("--retry-prompt-feedback", action="store_true", default=True, help="Inject feedback about missed terms in retry prompts")
     
     # Incremental Translation (增量翻译)
@@ -656,6 +760,9 @@ def main():
             glossary = {}
 
     # Determine Output Paths
+    _, file_ext = os.path.splitext(input_path)
+    is_structured_doc = file_ext.lower() in ['.epub', '.srt', '.ass', '.ssa']
+
     if args.output:
         output_path = args.output
         base, ext = os.path.splitext(output_path)
@@ -666,6 +773,11 @@ def main():
         suffix = f"_Murasaki-8B-v0.1_{args.preset}_{args.mode}"
         output_path = f"{base}{suffix}{ext}"
         cot_path = f"{base}{suffix}_cot{ext}"
+
+    # Structured docs (EPUB/SRT) need binary post-processing.
+    # We write to a .txt sidecar during translation to avoid corrupting the binary target.
+    # actual_output_path is what f_out will use.
+    actual_output_path = output_path + ".txt" if is_structured_doc else output_path
 
     # Temp Progress Path (Deterministic for Resume)
     temp_progress_path = f"{output_path}.temp.jsonl"
@@ -785,20 +897,22 @@ def main():
     # [Audit Fix] Auto-detect protection requirement from rules
     protection_rules = [r for r in post_rules if r.get('pattern') == 'restore_protection']
     
-    # 针对 SRT/ASS 的特殊工程化处理
-    is_sub = input_path.lower().endswith(('.srt', '.ass', '.ssa'))
-    if is_sub:
-        # 1. 强制开启标签保护 (即使前端没勾选，为了保护字幕结构和合法标签)
+    # 针对 SRT/ASS/EPUB 的特殊工程化处理
+    is_structured = input_path.lower().endswith(('.srt', '.ass', '.ssa', '.epub'))
+    if is_structured:
+        # 1. 强制开启标签保护 (即使前端没勾选，为了保护锚点 ID、结构和合法标签)
         if not args.text_protect:
-            print(f"[Auto-Config] {os.path.splitext(input_path)[1].upper()} detected. Enabling TextProtector for structural safety.")
+            print(f"[Auto-Config] Structured document ({os.path.splitext(input_path)[1].upper()}) detected. Enabling TextProtector for structural safety.")
             args.text_protect = True
         
-        # 2. 规则熔断：剔除所有可能破坏字幕换行或合并行数的规则
-        melt_patterns = ['ensure_single_newline', 'ensure_double_newline', 'clean_empty_lines', 'merge_short_lines']
-        original_count = len(post_rules)
-        post_rules = [r for r in post_rules if r.get('pattern') not in melt_patterns]
-        if len(post_rules) < original_count:
-            print(f"[Auto-Config] Subtitle detected. Disabled {original_count - len(post_rules)} formatting rules to preserve structure.")
+        # 2. 规则熔断：针对字幕格式，剔除所有可能破坏换行或合并行数的规则
+        is_sub = input_path.lower().endswith(('.srt', '.ass', '.ssa'))
+        if is_sub:
+            melt_patterns = ['ensure_single_newline', 'ensure_double_newline', 'clean_empty_lines', 'merge_short_lines']
+            original_count = len(post_rules)
+            post_rules = [r for r in post_rules if r.get('pattern') not in melt_patterns]
+            if len(post_rules) < original_count:
+                print(f"[Auto-Config] Subtitle detected. Disabled {original_count - len(post_rules)} formatting rules to preserve structure.")
 
     # [Critical Fix] 强制将样式还原逻辑置于所有后处理规则的最末端，确保还原后不会再次被误伤
     # 先移除已有的（如果有），再追加到最后
@@ -808,10 +922,14 @@ def main():
         print("[Auto-Config] Ensured 'restore_protection' is the final post-processing rule.")
 
     custom_protector_patterns = None
-    if is_sub:
+    if input_path.lower().endswith(('.srt', '.ass', '.ssa')):
         # [Specialized Rule] 针对字幕，优先使用合法的标签捕获规则，避免拦截 【】 （） [ ] 等
         custom_protector_patterns = TextProtector.SUBTITLE_PATTERNS
         print("[Auto-Config] Using restrictive SUBTITLE_PATTERNS for legal tags only.")
+    elif input_path.lower().endswith('.epub'):
+        # [Specialized Rule] 针对 EPUB，保护 @id=ID@/@end=ID@ 锚点和可能残留的 HTML 标签
+        custom_protector_patterns = [r'@id=\d+@', r'@end=\d+@', r'<[^>]+>']
+        print("[Auto-Config] Using EPUB_ANCHOR_PATTERNS for @id=ID@ anchors.")
 
     protection_rules = [r for r in post_rules if r.get('pattern') == 'restore_protection']
     if protection_rules:
@@ -894,7 +1012,7 @@ def main():
         print(f"  Rep Penalty Retry: Base={args.rep_penalty_base}, Max={args.rep_penalty_max}")
         print(f"  Max Retries: {args.max_retries}")
         print(f"  Glossary Coverage: {'[V] Enabled' if args.output_hit_threshold < 100 else '[X] Disabled'} (Output>={args.output_hit_threshold}% or CoT>={args.cot_coverage_threshold}%, Retries={args.coverage_retries})")
-        print(f"  Dynamic Retry: TempBoost={args.retry_temp_boost}, RepBoost={args.retry_rep_boost}, Feedback={'[V]' if args.retry_prompt_feedback else '[X]'}")
+        print(f"  Dynamic Retry: TempBoost={args.retry_temp_boost}, Feedback={'[V]' if args.retry_prompt_feedback else '[X]'}")
         print(f"  Text Protect: {'[V] Enabled' if args.text_protect else '[X] Disabled'}")
         print(f"  Traditional Chinese: {'[V] Enabled' if args.traditional else '[X] Disabled'}")
         print(f"  Resume Mode: {'[V] Enabled' if args.resume else '[X] Disabled'}")
@@ -950,12 +1068,13 @@ def main():
         resume_config_matched = False
         
         if args.resume:
-            existing_lines, existing_content, is_valid = load_existing_output(output_path)
+            existing_lines, existing_content, is_valid = load_existing_output(actual_output_path)
             if existing_lines == -1:
                 print("[Resume] Output file already complete. Nothing to do.")
                 return
             elif is_valid and existing_lines > 0:
-                skip_blocks_from_output = calculate_skip_blocks(blocks, existing_lines)
+                # Pass mode to skip block calculation
+                skip_blocks_from_output = calculate_skip_blocks(blocks, existing_lines, is_doc_mode=(args.mode == "doc"))
                 if skip_blocks_from_output >= len(blocks):
                     print(f"[Resume] All {len(blocks)} blocks already translated. Nothing to do.")
                     return
@@ -1010,7 +1129,7 @@ def main():
             temp_progress_file.flush()
         
         cot_context = open(cot_path, 'w', encoding='utf-8', buffering=1) if args.save_cot else nullcontext()
-        with open(output_path, output_mode, encoding='utf-8', buffering=1) as f_out, \
+        with open(actual_output_path, output_mode, encoding='utf-8', buffering=1) as f_out, \
              cot_context as f_cot:
 
             # If resuming from output file, update counters
@@ -1076,229 +1195,24 @@ def main():
                          processed_src_text = local_protector.protect(processed_src_text)
                          logger.debug(f"[Block {block_idx+1}] [Experimental] After Protection: {len(processed_src_text)} chars")
                     
-                    # Build Prompt
-                    messages = prompt_builder.build_messages(
-                        processed_src_text, 
-                        enable_cot=args.debug,
-                        preset=args.preset
+                    # Pre-processing & Protection happens locally in caller
+                    # because they might vary (different blocks/pattern instances)
+                    
+                    # Unified Call
+                    return translate_block_with_retry(
+                        block_idx=block_idx,
+                        original_src_text=block.prompt_text,
+                        processed_src_text=processed_src_text,
+                        args=args,
+                        engine=engine,
+                        prompt_builder=prompt_builder,
+                        response_parser=response_parser,
+                        post_processor=post_processor,
+                        glossary=glossary,
+                        stdout_lock=stdout_lock,
+                        strict_mode=strict_mode,
+                        protector=local_protector
                     )
-                    
-                    # Retry Strategy Variables
-                    max_retries = args.max_retries
-                    best_result = None # (parsed_lines, cot_content, raw_output, coverage)
-                    retry_reason = None
-                    last_missed_terms = []
-                    last_coverage = 0.0
-                    
-                    final_parsed_lines = None
-                    final_cot = ""
-                    final_raw = ""
-
-                    for attempt in range(max_retries + 1):
-                        # Dynamic Parameters Calculation
-                        if retry_reason == 'glossary':
-                            current_temp = max(args.temperature - (attempt * args.retry_temp_boost), 0.3)
-                            current_rep_base = args.rep_penalty_base + (attempt * args.retry_rep_boost)
-                        else:
-                            current_temp = min(args.temperature + (attempt * args.retry_temp_boost), 1.2)
-                            current_rep_base = args.rep_penalty_base + (attempt * args.retry_rep_boost)
-
-                        # Feedback Injection
-                        messages_for_attempt = messages
-                        if attempt > 0 and args.retry_prompt_feedback and glossary and last_missed_terms and retry_reason == 'glossary':
-                            feedback = build_retry_feedback(last_missed_terms, last_coverage)
-                            if feedback:
-                                messages_for_attempt = messages.copy()
-                                for j in range(len(messages_for_attempt) - 1, -1, -1):
-                                    if messages_for_attempt[j].get("role") == "user":
-                                        messages_for_attempt[j] = {
-                                            "role": "user",
-                                            "content": messages_for_attempt[j]["content"] + feedback
-                                        }
-                                        break
-                        
-                        accumulated_output = ""
-                        # Stream Callback
-                        def on_stream_chunk(chunk):
-                            nonlocal accumulated_output
-                            accumulated_output += chunk
-                            if "<think>" in chunk or "</think>" in chunk or (accumulated_output.strip().startswith("<think>") and not "</think>" in accumulated_output):
-                                try:
-                                    with stdout_lock:
-                                        sys.stdout.write(f"\nJSON_THINK_DELTA:{json.dumps(chunk, ensure_ascii=False)}\n")
-                                        sys.stdout.flush()
-                                except: pass
-
-                        # Inference
-                        # engine.chat_completion returns (text, usage)
-                        full_response_text, block_usage = engine.chat_completion(
-                            messages=messages_for_attempt,
-                            temperature=current_temp,
-                            stream=True,
-                            stream_callback=on_stream_chunk,
-                            rep_base=current_rep_base,
-                            rep_max=args.rep_penalty_max,
-                            block_id=block_idx + 1
-                        )
-                        
-                        raw_output = full_response_text
-                        parsed_lines, cot_content = response_parser.parse(raw_output or "", expected_count=0)
-                        
-                        # Fix lines count to be consistent (non-empty lines)
-                        has_content = parsed_lines and any(line.strip() for line in parsed_lines)
-
-                        # 1. Empty Output Guard
-                        if not has_content:
-                            retry_reason = 'empty'
-                            if attempt < max_retries:
-                                retry_data = {
-                                    'block': block_idx + 1, 
-                                    'attempt': attempt + 1, 
-                                    'type': 'empty', 
-                                    'temp': round(current_temp, 2)
-                                }
-                                safe_print_json("JSON_RETRY", retry_data)
-                                continue
-                            else:
-                                break # Failed all retries
-                        
-                        # 2. Quality Checks
-                        should_retry = False
-                        
-                        # Glossary Coverage Check
-                        if glossary and args.output_hit_threshold > 0:
-                            translated_text = '\n'.join(parsed_lines)
-                            passed, coverage, cot_coverage, hit, total = calculate_glossary_coverage(
-                                block.prompt_text, translated_text, glossary, cot_content,
-                                args.output_hit_threshold, args.cot_coverage_threshold
-                            )
-                            last_coverage = coverage
-                            last_missed_terms = get_missed_terms(block.prompt_text, translated_text, glossary)
-                            
-                            if best_result is None or coverage > best_result[3]:
-                                best_result = (parsed_lines.copy(), cot_content, raw_output, coverage)
-
-                            if total > 0 and not passed:
-                                retry_reason = 'glossary'
-                                coverage_attempts = min(attempt + 1, args.coverage_retries)
-                                if coverage_attempts < args.coverage_retries and attempt < max_retries:
-                                    retry_data = {
-                                        'block': block_idx + 1, 
-                                        'attempt': attempt + 1, 
-                                        'type': 'glossary',
-                                        'coverage': round(coverage, 1),
-                                        'temp': round(current_temp, 2),
-                                        'missed_count': len(last_missed_terms)
-                                    }
-                                    safe_print_json("JSON_RETRY", retry_data)
-                                    should_retry = True
-                                elif best_result and best_result[3] > coverage:
-                                    # Use best result if current one is worse and we are out of glossary retries
-                                    parsed_lines, cot_content, raw_output, _ = best_result
-                        
-                        # Line Count Check (Validation Pipeline)
-                        if not should_retry:
-                            src_line_count = len([l for l in block.prompt_text.splitlines() if l.strip()])
-                            dst_line_count = len([l for l in parsed_lines if l.strip()])
-                            diff = abs(dst_line_count - src_line_count)
-                            pct_diff = diff / max(1, src_line_count)
-                            
-                            is_invalid = False
-                            error_type = 'line_check'
-                            
-                            if strict_mode: # Parameter passed to task
-                                logger.info(f"[Block {block_idx+1}] [Strict Mode] Validating line count: Source={src_line_count}, Output={dst_line_count}")
-                                if diff > 0:
-                                    is_invalid = True
-                                    error_type = 'strict_line_check'
-                                    logger.warning(f"[Block {block_idx+1}] [Strict Mode] Line count mismatch! (Diff: {diff})")
-                            elif args.line_check: # Tolerance fallback
-                                logger.debug(f"[Block {block_idx+1}] [Tolerance Mode] Validating line count: Source={src_line_count}, Output={dst_line_count}")
-                                if diff > args.line_tolerance_abs or pct_diff > args.line_tolerance_pct:
-                                    is_invalid = True
-                                    error_type = 'line_check'
-                                    logger.warning(f"[Block {block_idx+1}] [Tolerance Mode] Line count exceeds threshold! (Diff: {diff}, Pct: {pct_diff:.1%})")
-                                    
-                            if is_invalid:
-                                if attempt < max_retries:
-                                    retry_reason = error_type
-                                    retry_data = {
-                                        'block': block_idx + 1, 
-                                        'attempt': attempt + 1, 
-                                        'type': error_type,
-                                        'src_lines': src_line_count,
-                                        'dst_lines': dst_line_count
-                                    }
-                                    safe_print_json("JSON_RETRY", retry_data)
-                                    should_retry = True
-                        
-                        if should_retry:
-                            continue
-                        
-                        # Success or acceptable quality
-                        final_parsed_lines = parsed_lines
-                        block_elapsed = time.time() - start_block_time
-                        speed_cps = len(accumulated_output) / max(0.1, block_elapsed)
-                        logger.info(f"[Block {block_idx+1}/{len(blocks)}] Finished in {block_elapsed:.1f}s (Chars: {len(accumulated_output)}, Speed: {speed_cps:.1f} chars/s)")
-                        final_cot = cot_content
-                        final_raw = raw_output
-                        break
-
-                    # Final Fallback if all retries failed
-                    if final_parsed_lines is None:
-                        if best_result:
-                            final_parsed_lines, final_cot, final_raw, _ = best_result
-                        else:
-                            final_parsed_lines = ["[翻译失败]"] + block.prompt_text.split('\n')
-                            final_cot = ""
-                            final_raw = ""
-
-                    # Post-Process (Consolidated Pipeline)
-                    # 1. Join decoded lines
-                    base_text = '\n'.join(final_parsed_lines)
-                    
-                    # 2. Unified Rule Processor Application (Integrated Restoration)
-                    # Restoration happens inside process() if 'restore_protection' rule exists
-                    logger.debug(f"[Block {block_idx+1}] Post-processing start (len: {len(base_text)})")
-                    processed_text = post_processor.process(base_text, src_text=block.prompt_text, protector=local_protector, strict_line_count=strict_mode)
-                    logger.debug(f"[Block {block_idx+1}] Post-processing finished (len: {len(processed_text)})")
-                    
-                    # Ensure Consistency: Preview = Output = Cache
-                    preview_text = processed_text
-                        
-                    # Quality Check Warnings (for cache)
-                    warnings = []
-                    try:
-                        qc = QualityChecker(glossary=glossary)
-                        warnings = qc.check_output(
-                            [l for l in block.prompt_text.split('\n') if l.strip()], 
-                            [l for l in preview_text.split('\n') if l.strip()], 
-                            source_lang="ja"
-                        )
-                    except Exception as e:
-                        print(f"[Warning] Quality Check failed: {e}")
-                    
-
-                    
-                    # Emit Preview JSON for GUI -> MOVED TO MAIN LOOP (Ordered)
-                    # preview_data = { ... }
-                    # safe_print_json("JSON_PREVIEW_BLOCK", preview_data)
-
-                    return {
-                        "success": True,
-                        "block_idx": block_idx,
-                        "src_text": block.prompt_text,
-                        "out_text": processed_text,
-                        "preview_text": preview_text,
-                        "cot": final_cot,
-                        "raw_output": final_raw,
-                        "warnings": warnings,
-                        "lines_count": len([l for l in processed_text.splitlines() if l.strip()]),
-                        "chars_count": len(block.prompt_text),
-                        "cot_chars": len(final_cot),
-                        "usage": block_usage,
-                        "protector_stats": local_protector.get_stats() if local_protector else None
-                    }
 
 
 
@@ -1360,37 +1274,38 @@ def main():
                 print(f"[Init] Strict Line Count Mode INACTIVE (Policy: {args.strict_mode}).")
 
             # [Audit Fix] Fill skipped blocks from output file to support EPUB/SRT reconstruction
-            # Only for structured docs as TXT streaming is sufficient and reconstruction causes drift
-            if skip_blocks_from_output > 0 and existing_content and is_structured_doc:
-                print(f"[Resume] Rebuilding memory state for {skip_blocks_from_output} blocks (Structured Doc)...")
+            # We must reconstruct the memory state for all skipped blocks so reconstruction works.
+            if skip_blocks_from_output > 0:
+                print(f"[Resume] Rebuilding memory state for {skip_blocks_from_output} skipped blocks...")
                 current_line_ptr = 0
                 for idx in range(skip_blocks_from_output):
-                    # Conservative reconstruction based on source block line counts
-                    # This assumes strict_line_count was used in previous run
+                    # 1. Try to find in temp progress file first (contains full metadata/cot)
+                    if idx in precalculated_temp:
+                         all_results[idx] = precalculated_temp[idx]
+                    # 2. Extract from existing output file (requires physical line alignment)
+                    elif existing_content:
+                        block_lines_count = blocks[idx].prompt_text.count('\n') + 1
+                        block_lines = existing_content[current_line_ptr : current_line_ptr + block_lines_count]
+                        
+                        if block_lines:
+                            all_results[idx] = {
+                                "success": True,
+                                "out_text": '\n'.join(block_lines),
+                                "preview_text": '\n'.join(block_lines),
+                                "block_idx": idx,
+                                "is_restorer": True,
+                                "warnings": [],
+                                "src_text": blocks[idx].prompt_text,
+                                "cot_chars": 0,
+                                "usage": {}
+                            }
+                        else:
+                            print(f"[Resume] Warning: Could not find content for block {idx} in existing output.")
+                    
+                    # Advance pointer (account for doc mode spacer if applicable)
                     block_lines_count = blocks[idx].prompt_text.count('\n') + 1
-                    block_lines = existing_content[current_line_ptr : current_line_ptr + block_lines_count]
-                    
-                    if block_lines:
-                        all_results[idx] = {
-                            "success": True,
-                            "out_text": '\n'.join(block_lines),
-                            "preview_text": '\n'.join(block_lines),
-                            "block_idx": idx,
-                            "is_restorer": True,
-                            "warnings": [],
-                            "src_text": blocks[idx].prompt_text,
-                            "cot_chars": 0,
-                            "usage": {}
-                        }
-                    else:
-                        print(f"[Resume] Warning: Could not find content for block {idx} in existing output.")
-                    
-                    current_line_ptr += block_lines_count
-            elif skip_blocks_from_output > 0:
-                print(f"[Resume] Skipping memory reconstruction for unstructured document (TXT).")
+                    current_line_ptr += (block_lines_count + 1) if args.mode == "doc" else block_lines_count
 
-            if is_structured_doc:
-                print(f"[Init] Detected structured document ({file_ext}). Enabling strict line count mode.")
 
             print(f"Starting execution with {max_workers} threads...")
             
@@ -1415,6 +1330,7 @@ def main():
             if skip_blocks_from_output > 0:
                 print(f"[Resume] Warning: Full document reconstruction (EPUB/SRT) requires all blocks. Currently only new blocks are in memory.")
             
+            # --- Execution Status Initialization ---
             results_buffer = {}
             next_write_idx = skip_blocks_from_output
             
@@ -1425,142 +1341,134 @@ def main():
             completed_count = 0 
             effective_completed = 0
             
+            # Main result processing loop
             for future in as_completed(future_to_index):
-                block_idx = future_to_index[future]
-                try:
-                    result = future.result() 
-                except Exception as e:
-                    safe_print(f"Worker Error for Block {block_idx+1}: {e}")
-                    result = {
-                        "success": False,
-                        "error": str(e),
-                        "block_idx": block_idx,
-                        "src_text": blocks[block_idx].prompt_text if block_idx < len(blocks) else "Unknown",
-                        "out_text": "[Worker Exception]",
-                        "preview_text": "[Worker Exception]",
-                        "cot": "",
-                        "raw_output": "",
-                        "warnings": [],
-                        "lines_count": 0,
-                        "chars_count": 0,
-                        "cot_chars": 0,
-                        "usage": None
-                    }
-                
-                # 放入缓冲区
-                results_buffer[block_idx] = result
-                completed_count += 1
-                if result["src_text"].strip():
-                    effective_completed += 1
+                    block_idx = future_to_index[future]
+                    try:
+                        result = future.result() 
+                    except Exception as e:
+                        safe_print(f"Worker Error for Block {block_idx+1}: {e}")
+                        result = {
+                            "success": False, "error": str(e), "block_idx": block_idx,
+                            "src_text": blocks[block_idx].prompt_text if block_idx < len(blocks) else "Unknown",
+                            "out_text": "[Worker Exception]", "preview_text": "[Worker Exception]",
+                            "cot": "", "raw_output": "", "warnings": [],
+                            "lines_count": 0, "chars_count": 0, "cot_chars": 0, "usage": None
+                        }
                     
-                # 1. 更新统计数据 (只要任务完成就更新，不论顺序)
-                if result["success"]:
-                    total_out_chars += len(result["out_text"])
-                    total_lines += result["lines_count"]
-                    total_cot_chars += result["cot_chars"]
-                    
-                    # Accumulate Tokens
-                    if result.get("usage"):
-                        total_prompt_tokens += result["usage"].get("prompt_tokens", 0)
-                        total_gen_tokens += result["usage"].get("completion_tokens", 0)
-                    
-                    if block_idx not in precalculated_temp:
-                        try:
-                            temp_line = json.dumps(result, ensure_ascii=False)
-                            temp_progress_file.write(temp_line + "\n")
-                            temp_progress_file.flush()
-                        except: pass
-                    
-                    block_src_text = result["src_text"]
-                    total_source_chars += len(block_src_text)
-                    total_source_lines += len([l for l in block_src_text.splitlines() if l.strip()])
-                    
-                    # 发送进度 JSON
-                    elapsed_so_far = max(0.1, time.time() - start_time)
-                    current_speed_chars = (total_out_chars + total_cot_chars) / elapsed_so_far
-                    
-                    # 计算剩余时间
-                    avg_time_per_block = elapsed_so_far / completed_count
-                    remaining_time = (total_tasks_count - completed_count) * avg_time_per_block
-                    
-                    progress_data = {
-                         "current": effective_completed + len([idx for idx in range(skip_blocks_from_output) if blocks[idx].prompt_text.strip()]),
-                         "ordered_current": next_write_idx,
-                         "total": effective_total,
-                         "percent": ((effective_completed + len([idx for idx in range(skip_blocks_from_output) if blocks[idx].prompt_text.strip()])) / max(1, effective_total)) * 100,
-                         "total_chars": total_out_chars,
-                         "total_lines": total_lines,
-                         "source_chars": total_source_chars,
-                         "source_lines": total_source_lines, 
-                         "speed_chars": round(current_speed_chars, 1),
-                         "speed_lines": round(total_lines / elapsed_so_far, 2),
-                         "speed_gen": round(total_gen_tokens / elapsed_so_far, 1),
-                         "speed_eval": round(total_prompt_tokens / elapsed_so_far, 1),
-                         "total_tokens": total_gen_tokens, # Cumulative gen tokens
-                         "elapsed": elapsed_so_far,
-                         "remaining": int(remaining_time)
-                    }
-                    
-                    now = time.time()
-                    if (now - last_progress_time > 0.1) or (completed_count == total_tasks_count):
-                        safe_print_json("JSON_PROGRESS", progress_data)
-                        last_progress_time = now
+                    # Store results in buffer for ordered processing
+                    results_buffer[block_idx] = result
+                    completed_count += 1
+                    if result["src_text"].strip():
+                        effective_completed += 1
+                        
+                    # Stats processing
+                    if result["success"]:
+                        total_out_chars += len(result["out_text"])
+                        total_lines += result["lines_count"]
+                        total_cot_chars += result["cot_chars"]
+                        if result.get("usage"):
+                            total_prompt_tokens += result["usage"].get("prompt_tokens", 0)
+                            total_gen_tokens += result["usage"].get("completion_tokens", 0)
+                        
+                        if block_idx not in precalculated_temp:
+                            try:
+                                temp_line = json.dumps(result, ensure_ascii=False)
+                                temp_progress_file.write(temp_line + "\n")
+                                temp_progress_file.flush()
+                            except: pass
+                        
+                        block_src_text = result["src_text"]
+                        total_source_chars += len(block_src_text)
+                        total_source_lines += len([l for l in block_src_text.splitlines() if l.strip()])
+                        
+                        # Progress reporting
+                        elapsed_so_far = max(0.1, time.time() - start_time)
+                        current_speed_chars = (total_out_chars + total_cot_chars) / elapsed_so_far
+                        avg_time_per_block = elapsed_so_far / completed_count
+                        remaining_time = (total_tasks_count - completed_count) * avg_time_per_block
+                        
+                        progress_data = {
+                            "current": effective_completed + len([idx for idx in range(skip_blocks_from_output) if blocks[idx].prompt_text.strip()]),
+                            "ordered_current": next_write_idx, "total": effective_total,
+                            "percent": ((effective_completed + len([idx for idx in range(skip_blocks_from_output) if blocks[idx].prompt_text.strip()])) / max(1, effective_total)) * 100,
+                            "total_chars": total_out_chars, "total_lines": total_lines,
+                            "source_chars": total_source_chars, "source_lines": total_source_lines, 
+                            "speed_chars": round(current_speed_chars, 1), "speed_lines": round(total_lines / elapsed_so_far, 2),
+                            "speed_gen": round(total_gen_tokens / elapsed_so_far, 1), "speed_eval": round(total_prompt_tokens / elapsed_so_far, 1),
+                            "total_tokens": total_gen_tokens, "elapsed": elapsed_so_far, "remaining": int(remaining_time)
+                        }
+                        
+                        now = time.time()
+                        if (now - last_progress_time > 0.1) or (completed_count == total_tasks_count):
+                            safe_print_json("JSON_PROGRESS", progress_data)
+                            last_progress_time = now
 
-                # 2. 顺序写入文件 (关键修复：检查缓冲区是否有接下来的序号)
-                while next_write_idx in results_buffer:
-                    res = results_buffer.pop(next_write_idx)
-                    curr_disp = next_write_idx + 1
-                    
-                    if res["success"]:
-                        # 发送预览
-                        preview_data = {"block": curr_disp, "src": res['src_text'], "output": res['preview_text']}
-                        safe_print_json("JSON_PREVIEW_BLOCK", preview_data)
+                    # Ordered write to file (consuming from results_buffer)
+                    while next_write_idx in results_buffer:
+                        res = results_buffer.pop(next_write_idx)
+                        curr_disp = next_write_idx + 1
                         
-                        # 更新校对缓存
-                        if translation_cache:
-                            w_types = [w['type'] for w in res["warnings"]] if res["warnings"] else []
-                            translation_cache.add_block(next_write_idx, res["src_text"], res["preview_text"], w_types, res["cot"])
+                        if res["success"]:
+                            # Preview for GUI
+                            safe_print_json("JSON_PREVIEW_BLOCK", {"block": curr_disp, "src": res['src_text'], "output": res['preview_text']})
+                            
+                            if translation_cache:
+                                w_types = [w['type'] for w in res["warnings"]] if res["warnings"] else []
+                                translation_cache.add_block(next_write_idx, res["src_text"], res["preview_text"], w_types, res["cot"])
+                            
+                            # Write to txt stream
+                            f_out.write(res["out_text"] + "\n")
+                            if args.mode == "doc": f_out.write("\n")
+                            
+                            if args.save_cot and res["cot"]:
+                                f_cot.write(f"[MURASAKI] ========== Block {curr_disp} ==========\n{res['raw_output']}\n\n")
+                        else:
+                            f_out.write(f"\n[Block {curr_disp} Failed]\n")
                         
-                        # 写入文件
-                        f_out.write(res["out_text"] + "\n")
-                        if args.mode == "doc": f_out.write("\n")
-                        
-                        if args.save_cot and res["cot"]:
-                            f_cot.write(f"[MURASAKI] ========== Block {curr_disp} ==========\n")
-                            f_cot.write(res["raw_output"] + "\n\n")
-                    else:
-                        f_out.write(f"\n[Block {curr_disp} Failed]\n")
-                    
-                    f_out.flush()
-                    
-                    # Store for final save if needed (e.g. EPUB)
-                    all_results[next_write_idx] = res
-                    next_write_idx += 1
+                        f_out.flush()
+                        # CRITICAL: Store in all_results for post-processing reconstruction
+                        all_results[next_write_idx] = res
+                        next_write_idx += 1
 
-            executor.shutdown(wait=False)
+            executor.shutdown(wait=True)
         
-        # [Critical Fix] Final save outside 'with open as f_out' to avoid file lock/0-byte issue on Windows
+        # [Final Structured Save] 
+        # 此操作在 f_out 关闭后执行，确保所有文本已落盘
         if is_structured_doc:
             try:
-                # We need TextBlock objects with prompt_text = translated_text
-                # to satisfy the doc.save(output_path, blocks) signature
+                print(f"[Final] Reconstructing structured document: {output_path}...")
                 from murasaki_translator.core.chunker import TextBlock
                 translated_blocks = []
-                for i, res in enumerate(all_results):
-                    if res and res.get('out_text') is not None:
-                        translated_blocks.append(TextBlock(
-                            id=i,
-                            prompt_text=res['out_text'],
-                            metadata=blocks[i].metadata
-                        ))
+                for i in range(len(blocks)):
+                    res = all_results[i]
+                    if res and res.get('success'):
+                        # 构造 TextBlock 对象以满足 doc.save 的签名
+                        tb = TextBlock(id=i, prompt_text=res['out_text'])
+                        # 注入元数据以便 EPUB 精确回填
+                        if hasattr(blocks[i], 'metadata') and blocks[i].metadata:
+                            tb.metadata = blocks[i].metadata
+                        translated_blocks.append(tb)
                     else:
-                        # Placeholder for failed or missing blocks
-                        translated_blocks.append(blocks[i])
+                        # Fallback: keep original text to maintain the sequence for structural injection
+                        print(f"[Warning] Block {i+1} missing or failed. Using source text.")
+                        tb = TextBlock(id=i, prompt_text=blocks[i].prompt_text)
+                        if hasattr(blocks[i], 'metadata') and blocks[i].metadata:
+                            tb.metadata = blocks[i].metadata
+                        translated_blocks.append(tb)
                 
                 doc.save(output_path, translated_blocks)
-                print(f"[Success] Structured document rebuilt: {output_path}")
+                print(f"[Final] Reconstruction complete: {output_path}")
+                
+                # [Cleanup] Remove intermediate .txt file after successful reconstruction
+                if actual_output_path != output_path and os.path.exists(actual_output_path):
+                    try:
+                        os.remove(actual_output_path)
+                        print(f"[Cleanup] Removed intermediate file: {actual_output_path}")
+                    except Exception as ce:
+                        print(f"[Warning] Failed to remove intermediate file: {ce}")
             except Exception as e:
-                print(f"[Warning] Final document reconstruction failed: {e}")
+                print(f"[Error] Final reconstruction failed: {e}")
         else:
             print(f"[Success] Translation completed. Output saved to: {output_path}")
 
