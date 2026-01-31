@@ -50,9 +50,15 @@
           "!**/hf_cache/*",
           "!**/models/*.gguf",
           "!**/LLaMA-Factory/*",
-          "!**/.git/*",
+          "!**/.git*",
           "!**/.gitignore",
-          "!**/temp_*.json"
+          "!**/*.log",
+          "!**/temp_*.json",
+          "!**/.venv",
+          "!**/.venv/**",
+          "!**/temp_progress.jsonl",
+          "!**/*.diff",
+          "!**/*.bat"
         ]
       },
       {
