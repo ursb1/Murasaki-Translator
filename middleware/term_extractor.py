@@ -91,6 +91,72 @@ def extract_epub_text(epub_path: str) -> str:
     return '\n\n'.join(text_parts)
 
 
+def extract_ass_text(ass_path: str) -> str:
+    """Extract only dialogue text from ASS file"""
+    lines = []
+    try:
+        # Try different encodings
+        content = ""
+        for enc in ['utf-8-sig', 'utf-16', 'gbk', 'utf-8']:
+            try:
+                with open(ass_path, 'r', encoding=enc) as f:
+                    content = f.read()
+                if content:
+                    print(f"[TermExtractor] Read ASS with encoding: {enc} ({len(content)} chars)", file=sys.stderr)
+                    break
+            except:
+                continue
+        
+        if not content:
+            return ""
+
+        for line in content.splitlines():
+            if line.startswith('Dialogue:'):
+                parts = line.split(',', 9)
+                if len(parts) > 9:
+                    text = parts[9]
+                    # Strip ASS tags like {\pos(1,2)} or {\k10}
+                    text = re.sub(r'\{[^}]+\}', '', text)
+                    # Strip ASS newline \N
+                    text = text.replace(r'\N', '\n').replace(r'\n', '\n')
+                    lines.append(text)
+    except Exception as e:
+        print(f"[TermExtractor] Error reading ASS: {e}", file=sys.stderr)
+    
+    return '\n'.join(lines)
+
+
+def extract_srt_text(srt_path: str) -> str:
+    """Extract only text from SRT file"""
+    lines = []
+    try:
+        content = ""
+        for enc in ['utf-8-sig', 'utf-16', 'gbk', 'utf-8']:
+            try:
+                with open(srt_path, 'r', encoding=enc) as f:
+                    content = f.read()
+                if content:
+                    print(f"[TermExtractor] Read SRT with encoding: {enc} ({len(content)} chars)", file=sys.stderr)
+                    break
+            except:
+                continue
+
+        if not content:
+            return ""
+
+        # Simple SRT parsing: ignore numbers and timecodes
+        blocks = re.split(r'\n\s*\n', content)
+        for block in blocks:
+            parts = block.strip().splitlines()
+            if len(parts) >= 3:
+                # Part 0 is index, Part 1 is timecode, Part 2+ is text
+                lines.extend(parts[2:])
+    except Exception as e:
+        print(f"[TermExtractor] Error reading SRT: {e}", file=sys.stderr)
+    
+    return '\n'.join(lines)
+
+
 def read_input_file(filepath: str) -> str:
     """Read input file, auto-detecting format (TXT or EPUB)"""
     ext = os.path.splitext(filepath)[1].lower()
@@ -98,6 +164,12 @@ def read_input_file(filepath: str) -> str:
     if ext == '.epub':
         print("[TermExtractor] Detected EPUB format, extracting text...", file=sys.stderr)
         return extract_epub_text(filepath)
+    elif ext == '.ass':
+        print("[TermExtractor] Detected ASS format, extracting dialogue...", file=sys.stderr)
+        return extract_ass_text(filepath)
+    elif ext == '.srt':
+        print("[TermExtractor] Detected SRT format, extracting text...", file=sys.stderr)
+        return extract_srt_text(filepath)
     else:
         # Default: treat as plain text
         with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
@@ -110,7 +182,7 @@ try:
     import fugashi
     import unidic_lite
     FUGASHI_AVAILABLE = True
-    print(f"[TermExtractor] fugashi {fugashi.__version__} loaded (Dictionary: {unidic_lite.DICDIR})", file=sys.stderr)
+    print(f"[TermExtractor] fugashi loaded (Dictionary: {unidic_lite.DICDIR})", file=sys.stderr)
 except ImportError as e:
     print(f"[TermExtractor] ERROR: Dependency missing! {e}", file=sys.stderr)
     import traceback
@@ -196,15 +268,53 @@ class TermExtractor:
             try:
                 # 显式指向 unidic-lite 的字典目录，这对打包后的便携式环境至关重要
                 import unidic_lite
-                dic_dir = unidic_lite.DICDIR
-                self.tagger = fugashi.Tagger(f'-d "{dic_dir}"')
+                import os
+                
+                # MeCab 在 Windows 下对路径非常敏感，将反斜杠转换为正斜杠
+                raw_dic_dir = unidic_lite.DICDIR
+                dic_dir = raw_dic_dir.replace('\\', '/')
+                
+                print(f"[TermExtractor] Initializing Tagger with dic_dir: {dic_dir}", file=sys.stderr)
+                
+                # 检查字典文件是否存在
+                sys_dic = os.path.join(raw_dic_dir, 'sys.dic')
+                if not os.path.exists(sys_dic):
+                    print(f"[TermExtractor] ERROR: sys.dic not found in {raw_dic_dir}!", file=sys.stderr)
+                
+                # 尝试初始化
+                try:
+                    self.tagger = fugashi.Tagger(f'-d "{dic_dir}"')
+                    # 测试运行，确保 MeCab 的 DLL 和字典能正常工作
+                    t_token = list(self.tagger("测试"))
+                    print(f"[TermExtractor] Tagger initialized (unidic-lite, Test: {len(t_token)} tokens)", file=sys.stderr)
+                except Exception as e:
+                    print(f"[TermExtractor] MeCab Error during path init: {e}", file=sys.stderr)
+                    # 尝试不带引号的路径 (如果路径没有空格)
+                    if ' ' not in dic_dir:
+                        self.tagger = fugashi.Tagger(f'-d {dic_dir}')
+                        print("[TermExtractor] Tagger initialized successfully (no quotes)", file=sys.stderr)
+                    else:
+                        raise e
             except Exception as e:
                 print(f"[TermExtractor] Warning: Failed to initialize Tagger with unidic-lite: {e}", file=sys.stderr)
+                print(f"[TermExtractor] Python Path: {sys.path}", file=sys.stderr)
+                if FUGASHI_AVAILABLE:
+                    print(f"[TermExtractor] fugashi location: {fugashi.__file__}", file=sys.stderr)
+                
+                import traceback
+                traceback.print_exc(file=sys.stderr)
                 # Fallback to default
                 try:
+                    print("[TermExtractor] Falling back to default Tagger...", file=sys.stderr)
                     self.tagger = fugashi.Tagger()
-                except:
+                    # 测试运行
+                    t_token = list(self.tagger("测试"))
+                    print(f"[TermExtractor] Default Tagger initialized (Test: {len(t_token)} tokens)", file=sys.stderr)
+                except Exception as fe:
+                    print(f"[TermExtractor] Default Tagger also failed: {fe}", file=sys.stderr)
                     self.tagger = None
+        else:
+            print("[TermExtractor] fugashi NOT available, skipping dictionary extraction", file=sys.stderr)
     
     def _clean_ruby(self, text: str) -> str:
         """清理注音"""
@@ -370,18 +480,28 @@ class TermExtractor:
         # 方法1: 片假名人名 (优先)
         katakana_entities = self._extract_katakana_names(text)
         all_entities.update(katakana_entities)
+        katakana_count = len(katakana_entities)
         
         if progress_callback:
             progress_callback(0.15)
         
         # 方法2: fugashi 固有名詞
-        if FUGASHI_AVAILABLE:
+        fugashi_count = 0
+        if FUGASHI_AVAILABLE and self.tagger:
             fugashi_entities = self._extract_with_fugashi(text, progress_callback)
+            fugashi_count = len(fugashi_entities)
             for name, data in fugashi_entities.items():
                 if name not in all_entities:
                     all_entities[name] = data
                 else:
                     all_entities[name]['count'] += data['count']
+        else:
+            reason = "Import failed (Check logs/environment)" if not FUGASHI_AVAILABLE else "Tagger init failed (Check MeCab dictionary path)"
+            print(f"\n[TermExtractor] FATAL ERROR: {reason}", file=sys.stderr)
+            print("[TermExtractor] Fugashi component is essential for extraction.", file=sys.stderr)
+            sys.exit(1) # 强制失败，以便在 GUI 中弹出 AlertModal 显示诊断信息
+        
+        print(f"[TermExtractor] Stats: Katakana={katakana_count}, Fugashi={fugashi_count}", file=sys.stderr)
         
         if progress_callback:
             progress_callback(0.85)
@@ -434,6 +554,7 @@ def main():
     
     # Auto-detect file format (TXT/EPUB)
     text = read_input_file(args.input)
+    print(f"[TermExtractor] Input content loaded: {len(text)} characters", file=sys.stderr)
     
     if not text.strip():
         print("[TermExtractor] Error: No text content extracted from file", file=sys.stderr)
@@ -446,6 +567,7 @@ def main():
         print(f"[PROGRESS] {p:.1%}", file=sys.stderr)
     
     results = extractor.extract(text, progress_callback=progress_cb)
+    print(f"[TermExtractor] Extraction success: {len(results)} terms found", file=sys.stderr)
     
     if args.simple:
         output = [{'src': r['src'], 'dst': ' '} for r in results]

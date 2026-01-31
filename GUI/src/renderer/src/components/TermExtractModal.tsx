@@ -28,6 +28,7 @@ export function TermExtractModal({ lang, onClose, onImport, queueFiles = [] }: T
     const [results, setResults] = useState<TermItem[]>([])
     const [error, setError] = useState<string | null>(null)
     const [showAlert, setShowAlert] = useState(false)
+    const [hasExtracted, setHasExtracted] = useState(false)
     const [searchQuery, setSearchQuery] = useState("")
     const [isDragging, setIsDragging] = useState(false)
 
@@ -77,7 +78,7 @@ export function TermExtractModal({ lang, onClose, onImport, queueFiles = [] }: T
         if (files.length > 0) {
             const file = files[0]
             const ext = file.name.split('.').pop()?.toLowerCase()
-            if (ext === 'txt' || ext === 'epub') {
+            if (ext === 'txt' || ext === 'epub' || ext === 'ass' || ext === 'srt') {
                 // @ts-ignore - Electron provides path property
                 const filePath = file.path
                 if (filePath) {
@@ -85,7 +86,7 @@ export function TermExtractModal({ lang, onClose, onImport, queueFiles = [] }: T
                     setSourceType('upload')
                 }
             } else {
-                setError(lang === 'zh' ? '只支持 TXT 或 EPUB 文件' : 'Only TXT or EPUB files are supported')
+                setError(lang === 'zh' ? '只支持 TXT, EPUB, ASS 或 SRT 文件' : 'Only TXT, EPUB, ASS or SRT files are supported')
             }
         }
     }
@@ -108,7 +109,7 @@ export function TermExtractModal({ lang, onClose, onImport, queueFiles = [] }: T
             // @ts-ignore
             const result = await window.api.selectFile({
                 title: lang === 'zh' ? '选择要分析的文件' : 'Select file to analyze',
-                filters: [{ name: 'Text Files', extensions: ['txt', 'epub'] }]
+                filters: [{ name: 'Text/Subtitle Files', extensions: ['txt', 'epub', 'ass', 'srt'] }]
             })
             if (result) {
                 setSelectedFile(result)
@@ -136,6 +137,7 @@ export function TermExtractModal({ lang, onClose, onImport, queueFiles = [] }: T
 
             if (result.success) {
                 setResults(result.terms || [])
+                setHasExtracted(true)
             } else {
                 setError(result.error || 'Unknown error')
                 setShowAlert(true)
@@ -212,6 +214,7 @@ export function TermExtractModal({ lang, onClose, onImport, queueFiles = [] }: T
         setResults([])
         setSelectedFile("")
         setError(null)
+        setHasExtracted(false)
         setProgress(0)
     }
 
@@ -248,7 +251,7 @@ export function TermExtractModal({ lang, onClose, onImport, queueFiles = [] }: T
 
                 <CardContent className="flex-1 p-6 overflow-hidden flex flex-col gap-4">
                     {/* Source Selection */}
-                    {!isExtracting && results.length === 0 && (
+                    {!isExtracting && results.length === 0 && !hasExtracted && (
                         <div className="space-y-4">
                             {/* Source Type Toggle */}
                             <div className="flex gap-2">
@@ -324,7 +327,7 @@ export function TermExtractModal({ lang, onClose, onImport, queueFiles = [] }: T
                                             <p className="text-sm text-muted-foreground">
                                                 {isDragging
                                                     ? (lang === 'zh' ? '松开以上传文件' : 'Drop to upload')
-                                                    : (lang === 'zh' ? '点击选择或拖拽上传 TXT/EPUB 文件' : 'Click or drag TXT/EPUB file')}
+                                                    : (lang === 'zh' ? '点击选择或拖拽上传文件' : 'Click or drag TXT/EPUB/ASS/SRT file')}
                                             </p>
                                         </>
                                     )}
@@ -369,13 +372,7 @@ export function TermExtractModal({ lang, onClose, onImport, queueFiles = [] }: T
                                 </p>
                             </div>
 
-                            {/* Error Display */}
-                            {error && (
-                                <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl flex items-start gap-3">
-                                    <AlertTriangle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
-                                    <div className="text-sm text-red-500">{error}</div>
-                                </div>
-                            )}
+                            {/* Error Display - Handled by AlertModal */}
 
                             {/* Start Button */}
                             <Button
@@ -415,6 +412,29 @@ export function TermExtractModal({ lang, onClose, onImport, queueFiles = [] }: T
                                             : (lang === 'zh' ? '正在生成结果...' : 'Generating results...')}
                                 </p>
                             </div>
+                        </div>
+                    )}
+
+                    {/* No Results */}
+                    {!isExtracting && hasExtracted && results.length === 0 && (
+                        <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center">
+                            <div className="p-4 bg-secondary/50 rounded-full">
+                                <Search className="w-12 h-12 text-muted-foreground opacity-50" />
+                            </div>
+                            <div className="space-y-2">
+                                <p className="font-bold text-lg">
+                                    {lang === 'zh' ? '未找到提取项' : 'No Terms Found'}
+                                </p>
+                                <p className="text-sm text-muted-foreground max-w-xs mx-auto">
+                                    {lang === 'zh'
+                                        ? '当前文本中似乎没有符合条件的术语。可以尝试更换文件或检查内容是否包含足够多的文本。'
+                                        : 'We couldn\'t find any significant terms in the selected file. Try a different file or ensure there is enough text content.'}
+                                </p>
+                            </div>
+                            <Button variant="outline" onClick={handleReset} className="mt-4">
+                                <RotateCcw className="w-4 h-4 mr-2" />
+                                {lang === 'zh' ? '重新选择文件' : 'Try Another File'}
+                            </Button>
                         </div>
                     )}
 
