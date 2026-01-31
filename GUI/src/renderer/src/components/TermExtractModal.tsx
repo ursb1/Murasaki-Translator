@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react"
 import { X, FileUp, FileText, Sparkles, Download, Plus, Search, Loader2, CheckCircle, AlertTriangle, Trash2, RotateCcw } from "lucide-react"
 import { Button, Card, CardContent, CardHeader, CardTitle } from "./ui/core"
+import { AlertModal } from "./ui/AlertModal"
 import { Language } from "../lib/i18n"
 
 interface TermItem {
@@ -26,6 +27,7 @@ export function TermExtractModal({ lang, onClose, onImport, queueFiles = [] }: T
     const [progress, setProgress] = useState(0)
     const [results, setResults] = useState<TermItem[]>([])
     const [error, setError] = useState<string | null>(null)
+    const [showAlert, setShowAlert] = useState(false)
     const [searchQuery, setSearchQuery] = useState("")
     const [isDragging, setIsDragging] = useState(false)
 
@@ -136,9 +138,11 @@ export function TermExtractModal({ lang, onClose, onImport, queueFiles = [] }: T
                 setResults(result.terms || [])
             } else {
                 setError(result.error || 'Unknown error')
+                setShowAlert(true)
             }
         } catch (e: any) {
             setError(e.message)
+            setShowAlert(true)
         } finally {
             setIsExtracting(false)
         }
@@ -545,6 +549,15 @@ export function TermExtractModal({ lang, onClose, onImport, queueFiles = [] }: T
                     )}
                 </CardContent>
             </Card>
+
+            <AlertModal
+                open={showAlert}
+                onOpenChange={setShowAlert}
+                variant="destructive"
+                title={lang === 'zh' ? '术语提取失败' : 'Extraction Failed'}
+                description={error || ''}
+                confirmText={lang === 'zh' ? '知道了' : 'Got it'}
+            />
         </div>
     )
 }

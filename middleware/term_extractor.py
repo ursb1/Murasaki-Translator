@@ -105,15 +105,20 @@ def read_input_file(filepath: str) -> str:
 
 
 # 导入 fugashi
+FUGASHI_AVAILABLE = False
 try:
     import fugashi
+    import unidic_lite
     FUGASHI_AVAILABLE = True
-    print("[TermExtractor] fugashi loaded (CPU mode)", file=sys.stderr)
-except ImportError:
-    FUGASHI_AVAILABLE = False
-    # Make error more prominent
-    print("[TermExtractor] ERROR: fugashi not installed! Smart extraction disabled.", file=sys.stderr)
-    print("[TermExtractor] Install with: pip install fugashi unidic-lite", file=sys.stderr)
+    print(f"[TermExtractor] fugashi {fugashi.__version__} loaded (Dictionary: {unidic_lite.DICDIR})", file=sys.stderr)
+except ImportError as e:
+    print(f"[TermExtractor] ERROR: Dependency missing! {e}", file=sys.stderr)
+    import traceback
+    traceback.print_exc(file=sys.stderr)
+except Exception as e:
+    print(f"[TermExtractor] ERROR: Failed to initialize fugashi/unidic: {e}", file=sys.stderr)
+    import traceback
+    traceback.print_exc(file=sys.stderr)
 
 
 class TermExtractor:
@@ -185,7 +190,21 @@ class TermExtractor:
     
     def __init__(self, top_k: int = 500):
         self.top_k = top_k
-        self.tagger = fugashi.Tagger() if FUGASHI_AVAILABLE else None
+        self.tagger = None
+        
+        if FUGASHI_AVAILABLE:
+            try:
+                # 显式指向 unidic-lite 的字典目录，这对打包后的便携式环境至关重要
+                import unidic_lite
+                dic_dir = unidic_lite.DICDIR
+                self.tagger = fugashi.Tagger(f'-d "{dic_dir}"')
+            except Exception as e:
+                print(f"[TermExtractor] Warning: Failed to initialize Tagger with unidic-lite: {e}", file=sys.stderr)
+                # Fallback to default
+                try:
+                    self.tagger = fugashi.Tagger()
+                except:
+                    self.tagger = None
     
     def _clean_ruby(self, text: str) -> str:
         """清理注音"""
