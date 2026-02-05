@@ -222,7 +222,9 @@ jobs:
           enable-cache: true
 
       - name: Install Python dependencies
-        run: uv pip install --system -r middleware/requirements.txt
+        run: |
+          uv pip install --system -r middleware/requirements.txt
+          uv pip install --system -r middleware/server/requirements.txt
 
       - name: Build Python Engine (PyInstaller)
         run: |
@@ -318,7 +320,9 @@ jobs:
           enable-cache: true
 
       - name: Install Python dependencies
-        run: uv pip install --system -r middleware/requirements.txt
+        run: |
+          uv pip install --system -r middleware/requirements.txt
+          uv pip install --system -r middleware/server/requirements.txt
 
       - name: Install Node dependencies
         working-directory: GUI
