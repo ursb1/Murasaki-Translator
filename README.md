@@ -89,21 +89,29 @@ Murasaki 模型针对术语表进行了特化训练，支持 **Prompt 级术语�
 
 ### 快速开始
 
-1. **准备环境**: 
-   请直接下载 GitHub 页面右侧的 [Release](https://github.com/soundstarrain/Murasaki-Translator/releases) 版本。
-   - **Windows**: 下载 `*-cuda-x64.zip` (NVIDIA) 或 `*-vulkan-x64.zip` (AMD/Intel)，解压即用
-   - **macOS**: 下载 `*.dmg`，拖入 Applications 文件夹
-   - **Linux**: 下载 `*.AppImage`，添加执行权限后双击运行（Linux NVIDIA 用户如需 CUDA 加速，需[自行编译](./PLATFORM_COMPATIBILITY.md#-nvidia-cuda-加速可选高级用户)。）
-   
-   **[详细平台安装指南](./PLATFORM_COMPATIBILITY.md)** — 包含 Linux 服务器 CLI 部署、NVIDIA CUDA 编译说明等进阶内容。
-   
-   *(如需通过源码编译，请参考 [开发指南](./DEVELOPMENT.md)。)*
-   
-2. **获取模型**: 
-   前往 [Hugging Face](https://huggingface.co/Murasaki-Project) 下载 `Murasaki-GGUF` 模型文件。
+#### 1. 下载软件
 
-3. **启动翻译**: 
-   将下载的模型文件放入 `models` 目录中，启动软件并上传需要翻译的文件即可开始工作。
+前往 [Releases](https://github.com/soundstarrain/Murasaki-Translator/releases) 下载对应平台的安装包：
+
+| 平台 | 文件 | 说明 |
+|------|------|------|
+| Windows (NVIDIA) | `*-win-cuda-x64.zip` | 解压后运行 `Murasaki Translator.exe` |
+| Windows (AMD/Intel) | `*-win-vulkan-x64.zip` | 解压后运行 `Murasaki Translator.exe` |
+| macOS (Apple Silicon) | `*-arm64.dmg` | 拖入 Applications 后运行 |
+| macOS (Intel) | `*.dmg` (无 arm64 后缀) | 拖入 Applications 后运行 |
+| Linux | `*.AppImage` | `chmod +x` 后双击运行 |
+
+> 更多安装选项（Linux CLI 服务器、CUDA 编译等）请参阅 **[平台兼容性文档](./PLATFORM_COMPATIBILITY.md)**。
+
+   *(如需通过源码编译，请参考 [开发指南](./DEVELOPMENT.md)。)*
+
+#### 2. 下载模型
+
+前往 [Hugging Face](https://huggingface.co/Murasaki-Project) 下载 GGUF 格式的模型文件。
+
+#### 3. 开始翻译
+
+将下载的模型文件放入 `models` 目录中，启动软件并上传需要翻译的文件即可开始工作。
    - Windows: `解压目录\resources\middleware\models`
    - macOS: `应用程序/Murasaki Translator.app/Contents/Resources/middleware/models`
 
