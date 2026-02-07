@@ -95,15 +95,13 @@ Murasaki 模型针对术语表进行了特化训练，支持 **Prompt 级术语�
 
 | 平台 | 文件 | 说明 |
 |------|------|------|
-| Windows (NVIDIA) | `*-win-cuda-x64.zip` | 解压后运行 `Murasaki Translator.exe` |
-| Windows (AMD/Intel) | `*-win-vulkan-x64.zip` | 解压后运行 `Murasaki Translator.exe` |
-| macOS (Apple Silicon) | `*-arm64.dmg` | 拖入 Applications 后运行 |
-| macOS (Intel) | `*.dmg` (无 arm64 后缀) | 拖入 Applications 后运行 |
+| Windows | `*-win-cuda-x64.zip` 或 `*-win-vulkan-x64.zip` | 解压后运行 `Murasaki Translator.exe` |
+| macOS | `*-arm64.dmg` 或 `*.dmg` | 拖入 Applications 后运行 |
 | Linux | `*.AppImage` | `chmod +x` 后双击运行 |
 
 > 更多安装选项（Linux CLI 服务器、CUDA 编译等）请参阅 **[平台兼容性文档](./PLATFORM_COMPATIBILITY.md)**。
 
-   *(如需通过源码编译，请参考 [开发指南](./DEVELOPMENT.md)。)*
+*(如需通过源码编译，请参考 [开发指南](./DEVELOPMENT.md)。)*
 
 #### 2. 下载模型
 
