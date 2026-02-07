@@ -60,13 +60,23 @@ def find_llama_server():
         return False
     
     if sys.platform == 'linux':
-        # Linux: 有 NVIDIA GPU 则用 CUDA，否则 Vulkan
+        # Linux 后端优先级：CUDA > Vulkan > CPU
+        # 如果用户自行编译了 CUDA 版本，优先使用
         if has_nvidia_gpu():
-            candidate = middleware_dir / 'bin' / 'linux-cuda' / 'llama-server'
-            if not candidate.exists():
+            cuda_path = middleware_dir / 'bin' / 'linux-cuda' / 'llama-server'
+            if cuda_path.exists():
+                candidate = cuda_path
+                print("[INFO] Using CUDA backend (user-compiled)")
+            else:
                 candidate = middleware_dir / 'bin' / 'linux-vulkan' / 'llama-server'
+                print("[INFO] NVIDIA GPU detected, using Vulkan backend (CUDA not found)")
         else:
             candidate = middleware_dir / 'bin' / 'linux-vulkan' / 'llama-server'
+        
+        # 最终回退到 CPU
+        if not candidate.exists():
+            candidate = middleware_dir / 'bin' / 'linux-cpu' / 'llama-server'
+            print("[INFO] Falling back to CPU backend")
     elif sys.platform == 'darwin':
         import platform
         if 'arm' in platform.machine().lower():

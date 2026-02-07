@@ -53,8 +53,12 @@ const api = {
     // Update System
     checkUpdate: () => ipcRenderer.invoke('check-update'),
 
+    // System Diagnostics
+    getSystemDiagnostics: () => ipcRenderer.invoke('get-system-diagnostics'),
+
     // Debug Export
     readServerLog: () => ipcRenderer.invoke('read-server-log'),
+    getMainProcessLogs: () => ipcRenderer.invoke('get-main-process-logs'),
 
     // Theme Sync (for Windows title bar)
     setTheme: (theme: 'dark' | 'light') => ipcRenderer.send('set-theme', theme),

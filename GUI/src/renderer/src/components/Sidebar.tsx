@@ -14,6 +14,7 @@ import {
   Layers,
 } from "lucide-react";
 import { cn } from "../lib/utils";
+import { Tooltip } from "./ui/core";
 import { translations, Language } from "../lib/i18n";
 import { View } from "../App";
 import { APP_CONFIG } from "../lib/config";
@@ -133,34 +134,35 @@ export function Sidebar({ lang, setLang, view, setView }: SidebarProps) {
 
           {/* Theme Toggle */}
           <div className="w-px h-4 bg-border mx-1"></div>
-          <button
-            onClick={() => {
-              const html = document.documentElement;
-              const newIsDark = !isDark;
+          <Tooltip content={isDark ? t.nav.toggleLight : t.nav.toggleDark}>
+            <button
+              onClick={() => {
+                const html = document.documentElement;
+                const newIsDark = !isDark;
 
-              // Directly manipulate DOM
-              if (newIsDark) {
-                html.classList.add("dark");
-              } else {
-                html.classList.remove("dark");
-              }
+                // Directly manipulate DOM
+                if (newIsDark) {
+                  html.classList.add("dark");
+                } else {
+                  html.classList.remove("dark");
+                }
 
-              // Update state and localStorage
-              localStorage.setItem("theme", newIsDark ? "dark" : "light");
-              setIsDark(newIsDark);
+                // Update state and localStorage
+                localStorage.setItem("theme", newIsDark ? "dark" : "light");
+                setIsDark(newIsDark);
 
-              console.log("[Theme] Toggled to:", newIsDark ? "dark" : "light");
-              console.log("[Theme] HTML class now:", html.className);
-            }}
-            className="p-1.5 rounded-lg bg-secondary hover:bg-primary/20 transition-colors group"
-            title={isDark ? t.nav.toggleLight : t.nav.toggleDark}
-          >
-            {isDark ? (
-              <Sun className="w-4 h-4 text-amber-400 group-hover:text-amber-300" />
-            ) : (
-              <Moon className="w-4 h-4 text-primary group-hover:text-primary/80" />
-            )}
-          </button>
+                console.log("[Theme] Toggled to:", newIsDark ? "dark" : "light");
+                console.log("[Theme] HTML class now:", html.className);
+              }}
+              className="p-1.5 rounded-lg bg-secondary hover:bg-primary/20 transition-colors group"
+            >
+              {isDark ? (
+                <Sun className="w-4 h-4 text-amber-400 group-hover:text-amber-300" />
+              ) : (
+                <Moon className="w-4 h-4 text-primary group-hover:text-primary/80" />
+              )}
+            </button>
+          </Tooltip>
         </div>
 
         <div className="flex items-center gap-2 px-2">

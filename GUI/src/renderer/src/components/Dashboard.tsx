@@ -994,6 +994,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(({ lang, active, onRunn
         }
 
         const checkResult = await window.api?.checkOutputFileExists(inputPath, config)
+        console.log('[checkAndStart] inputPath:', inputPath)
+        console.log('[checkAndStart] config:', config)
+        console.log('[checkAndStart] checkResult:', checkResult)
 
         if (checkResult?.exists && checkResult.path) {
             setConfirmModal({
@@ -1569,7 +1572,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(({ lang, active, onRunn
                             {/* 固定高度容器，彻底解决 ResponsiveContainer 的 0 尺寸报错 */}
                             <div style={{ width: '100%', flex: 1, position: 'relative', minHeight: '180px' }}>
                                 {active && chartData.length > 0 ? (
-                                    <ResponsiveContainer width="100%" height="100%">
+                                    <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100}>
                                         <AreaChart data={chartData} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
                                             <defs>
                                                 <linearGradient id="colorSpeedGradient" x1="0" y1="0" x2="0" y2="1">

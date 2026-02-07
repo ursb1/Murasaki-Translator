@@ -140,6 +140,16 @@ export interface ElectronAPI {
     // Update
     checkUpdate: () => Promise<any>
 
+    // System Diagnostics
+    getSystemDiagnostics: () => Promise<{
+        os: { platform: string; release: string; arch: string; cpuCores: number; totalMem: string }
+        gpu: { name: string; driver?: string; vram?: string } | null
+        python: { version: string; path: string } | null
+        cuda: { version: string; available: boolean } | null
+        vulkan: { available: boolean; version?: string; devices?: string[] } | null
+        llamaServer: { status: 'online' | 'offline' | 'unknown'; port?: number; model?: string }
+    }>
+
     // System
     showNotification: (title: string, body: string) => void
     setTheme: (theme: 'dark' | 'light') => void

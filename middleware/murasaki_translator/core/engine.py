@@ -361,6 +361,9 @@ class InferenceEngine:
                                         # Full coverage: step 10 (20-500) + step 50 (500-1000) = ~58 checks
                                         sample_lengths = list(range(20, 500, 10)) + list(range(500, 1001, 50))
                                         max_check = len(full_text) // 2
+                                        # 装饰性符号白名单（作者常用的分隔符）
+                                        DECORATIVE_CHARS = set('*=-_~·•◆◇■□▲△▼▽○●★☆♪♫♡♥✦✧※→←↑↓ \n\t　')
+                                        
                                         for length in sample_lengths:
                                             if length > max_check:
                                                 break
@@ -369,7 +372,15 @@ class InferenceEngine:
                                                 continue
                                             # Check if the last 'length' chars are same as previous 'length'
                                             if full_text[-length:] == full_text[-2*length:-length]:
-                                                logger.warning(f"Detected phrase loop (len={length}). Aborting.")
+                                                repeated_phrase = full_text[-length:]
+                                                # 如果重复片段只包含装饰性符号，则不拦截
+                                                if all(c in DECORATIVE_CHARS for c in repeated_phrase):
+                                                    continue  # Skip decorative patterns like "***", "===", etc.
+                                                # 截取重复内容前50字符用于日志（避免过长）
+                                                preview = repeated_phrase[:50].replace('\n', '\\n')
+                                                if len(repeated_phrase) > 50:
+                                                    preview += '...'
+                                                logger.warning(f"Detected phrase loop (len={length}): '{preview}'. Aborting.")
                                                 loop_detected = True
                                                 break
                                     

@@ -12,7 +12,7 @@ import {
   FolderOpen,
   ExternalLink,
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "./ui/core";
+import { Card, CardContent, CardHeader, CardTitle, Tooltip } from "./ui/core";
 import { Button } from "./ui/core";
 import { AlertModal } from "./ui/AlertModal";
 import { translations, Language } from "../lib/i18n";
@@ -30,20 +30,20 @@ export interface TriggerEvent {
   time: string;
   /** Type of trigger event */
   type:
-    | "empty_retry"
-    | "rep_penalty_increase"
-    | "line_mismatch"
-    | "parse_fallback"
-    | "kana_residue"
-    | "hangeul_residue"
-    | "high_similarity"
-    | "glossary_missed"
-    | "warning_line_mismatch"
-    | "warning_kana_residue"
-    | "warning_hangeul_residue"
-    | "warning_high_similarity"
-    | "warning_glossary_missed"
-    | "warning_quality";
+  | "empty_retry"
+  | "rep_penalty_increase"
+  | "line_mismatch"
+  | "parse_fallback"
+  | "kana_residue"
+  | "hangeul_residue"
+  | "high_similarity"
+  | "glossary_missed"
+  | "warning_line_mismatch"
+  | "warning_kana_residue"
+  | "warning_hangeul_residue"
+  | "warning_high_similarity"
+  | "warning_glossary_missed"
+  | "warning_quality";
   /** Block number where the event occurred (0 if not applicable) */
   block: number;
   /** Human-readable message describing the event */
@@ -534,7 +534,7 @@ export function HistoryView({ lang }: { lang: Language }) {
                           <p className="text-xs font-medium text-muted-foreground mb-2">
                             {t.dashboard.terminal} (共 {record.logs.length} 条)
                           </p>
-                          <div className="bg-black/90 rounded p-3 max-h-80 overflow-y-auto font-mono text-xs text-green-400 space-y-0.5 scrollbar-thin scrollbar-thumb-gray-600">
+                          <div className="bg-slate-100 dark:bg-slate-900/50 rounded-lg p-3 max-h-80 overflow-y-auto font-mono text-xs text-slate-700 dark:text-slate-300 space-y-0.5 scrollbar-thin scrollbar-thumb-slate-300 dark:scrollbar-thumb-slate-700 border border-slate-200 dark:border-slate-800">
                             {record.logs.map((log, i) => (
                               <div key={i} className="whitespace-pre-wrap">
                                 {log}
@@ -554,35 +554,37 @@ export function HistoryView({ lang }: { lang: Language }) {
                           <span className="truncate flex-1">
                             {record.filePath}
                           </span>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 px-2"
-                            onClick={() =>
-                              window.api?.openPath?.(record.filePath)
-                            }
-                            title={t.historyView.labels.openFile}
-                          >
-                            <ExternalLink className="w-3 h-3" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 px-2"
-                            onClick={() => {
-                              const folderPath = record.filePath.substring(
-                                0,
-                                Math.max(
-                                  record.filePath.lastIndexOf("\\"),
-                                  record.filePath.lastIndexOf("/"),
-                                ),
-                              );
-                              window.api?.openFolder?.(folderPath);
-                            }}
-                            title={t.historyView.labels.openFolder}
-                          >
-                            <FolderOpen className="w-3 h-3" />
-                          </Button>
+                          <Tooltip content={t.historyView.labels.openFile}>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 px-2"
+                              onClick={() =>
+                                window.api?.openPath?.(record.filePath)
+                              }
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                            </Button>
+                          </Tooltip>
+                          <Tooltip content={t.historyView.labels.openFolder}>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 px-2"
+                              onClick={() => {
+                                const folderPath = record.filePath.substring(
+                                  0,
+                                  Math.max(
+                                    record.filePath.lastIndexOf("\\"),
+                                    record.filePath.lastIndexOf("/"),
+                                  ),
+                                );
+                                window.api?.openFolder?.(folderPath);
+                              }}
+                            >
+                              <FolderOpen className="w-3 h-3" />
+                            </Button>
+                          </Tooltip>
                         </div>
                         {/* Output File */}
                         {record.outputPath && (
@@ -593,35 +595,37 @@ export function HistoryView({ lang }: { lang: Language }) {
                             <span className="truncate flex-1">
                               {record.outputPath}
                             </span>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 px-2"
-                              onClick={() =>
-                                window.api?.openPath?.(record.outputPath!)
-                              }
-                              title={t.historyView.labels.openFile}
-                            >
-                              <ExternalLink className="w-3 h-3" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 px-2"
-                              onClick={() => {
-                                const folderPath = record.outputPath!.substring(
-                                  0,
-                                  Math.max(
-                                    record.outputPath!.lastIndexOf("\\"),
-                                    record.outputPath!.lastIndexOf("/"),
-                                  ),
-                                );
-                                window.api?.openFolder?.(folderPath);
-                              }}
-                              title={t.historyView.labels.openFolder}
-                            >
-                              <FolderOpen className="w-3 h-3" />
-                            </Button>
+                            <Tooltip content={t.historyView.labels.openFile}>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 px-2"
+                                onClick={() =>
+                                  window.api?.openPath?.(record.outputPath!)
+                                }
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                              </Button>
+                            </Tooltip>
+                            <Tooltip content={t.historyView.labels.openFolder}>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 px-2"
+                                onClick={() => {
+                                  const folderPath = record.outputPath!.substring(
+                                    0,
+                                    Math.max(
+                                      record.outputPath!.lastIndexOf("\\"),
+                                      record.outputPath!.lastIndexOf("/"),
+                                    ),
+                                  );
+                                  window.api?.openFolder?.(folderPath);
+                                }}
+                              >
+                                <FolderOpen className="w-3 h-3" />
+                              </Button>
+                            </Tooltip>
                           </div>
                         )}
                       </div>

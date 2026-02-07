@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react'
-import { Button } from './ui/core'
+import { Button, Tooltip } from './ui/core'
 import {
     FolderOpen,
     RefreshCw,
@@ -685,9 +685,9 @@ export default function ProofreadView({ t, lang, onUnsavedChangesChange }: Proof
 
     // Status Indicator
     const StatusIndicator = ({ block }: { block: CacheBlock }) => {
-        if (block.warnings.length > 0) return <div title={block.warnings.join('\n')}><AlertTriangle className="w-4 h-4 text-amber-500" /></div>
-        if (block.status === 'edited') return <div className="w-2 h-2 rounded-full bg-blue-500" title="Edited" />
-        if (block.status === 'processed') return <div title="Processed"><Check className="w-3 h-3 text-green-500/50" /></div>
+        if (block.warnings.length > 0) return <Tooltip content={block.warnings.join(', ')}><div><AlertTriangle className="w-4 h-4 text-amber-500" /></div></Tooltip>
+        if (block.status === 'edited') return <Tooltip content="已编辑"><div className="w-2 h-2 rounded-full bg-blue-500" /></Tooltip>
+        if (block.status === 'processed') return <Tooltip content="已处理"><div><Check className="w-3 h-3 text-green-500/50" /></div></Tooltip>
         return null
     }
 
@@ -959,14 +959,18 @@ export default function ProofreadView({ t, lang, onUnsavedChangesChange }: Proof
                                 <span>{cacheData.stats.blockCount} 块</span>
                                 <span>{cacheData.stats.srcLines} 行</span>
                                 {Object.keys(glossary).length > 0 ? (
-                                    <span className="flex items-center gap-1 text-primary/80" title="已加载术语表">
-                                        <Book className="w-3 h-3" /> {Object.keys(glossary).length}
-                                    </span>
+                                    <Tooltip content="已加载术语表">
+                                        <span className="flex items-center gap-1 text-primary/80">
+                                            <Book className="w-3 h-3" /> {Object.keys(glossary).length}
+                                        </span>
+                                    </Tooltip>
                                 ) : (
                                     cacheData.glossaryPath && (
-                                        <span className="flex items-center gap-1 text-amber-500" title="术语表未加载或为空">
-                                            <AlertTriangle className="w-3 h-3" /> 0
-                                        </span>
+                                        <Tooltip content="术语表未加载或为空">
+                                            <span className="flex items-center gap-1 text-amber-500">
+                                                <AlertTriangle className="w-3 h-3" /> 0
+                                            </span>
+                                        </Tooltip>
                                     )
                                 )}
                             </span>
@@ -997,43 +1001,51 @@ export default function ProofreadView({ t, lang, onUnsavedChangesChange }: Proof
                         {searchKeyword && (
                             <div className="flex items-center gap-1 text-xs text-muted-foreground shrink-0">
                                 <span className="tabular-nums">{matchList.length > 0 ? currentMatchIndex + 1 : 0}/{matchList.length}</span>
-                                <button onClick={prevMatch} className="p-0.5 hover:bg-secondary rounded" title="上一个">
-                                    <ChevronUp className="w-3.5 h-3.5" />
-                                </button>
-                                <button onClick={nextMatch} className="p-0.5 hover:bg-secondary rounded" title="下一个">
-                                    <ChevronDown className="w-3.5 h-3.5" />
-                                </button>
+                                <Tooltip content="上一个匹配">
+                                    <button onClick={prevMatch} className="p-0.5 hover:bg-secondary rounded">
+                                        <ChevronUp className="w-3.5 h-3.5" />
+                                    </button>
+                                </Tooltip>
+                                <Tooltip content="下一个匹配">
+                                    <button onClick={nextMatch} className="p-0.5 hover:bg-secondary rounded">
+                                        <ChevronDown className="w-3.5 h-3.5" />
+                                    </button>
+                                </Tooltip>
                             </div>
                         )}
                         {/* Toggles */}
-                        <button
-                            onClick={() => setIsRegex(!isRegex)}
-                            className={`p-1 rounded text-xs ${isRegex ? 'bg-primary/20 text-primary' : 'text-muted-foreground hover:bg-muted'}`}
-                            title="正则模式"
-                        >
-                            <Regex className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                            onClick={() => setShowReplace(!showReplace)}
-                            className={`p-1 rounded text-xs ${showReplace ? 'bg-secondary' : 'text-muted-foreground hover:bg-muted'}`}
-                            title="替换"
-                        >
-                            <Replace className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                            onClick={() => { setFilterWarnings(!filterWarnings); setCurrentPage(1) }}
-                            className={`p-1 rounded text-xs ${filterWarnings ? 'bg-amber-100 text-amber-600 dark:bg-amber-900/30' : 'text-muted-foreground hover:bg-muted'}`}
-                            title="只显示警告"
-                        >
-                            <Filter className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                            onClick={() => setLineMode(!lineMode)}
-                            className={`p-1 rounded text-xs ${lineMode ? 'bg-primary/20 text-primary' : 'text-muted-foreground hover:bg-muted'}`}
-                            title={lineMode ? '行模式 (点击切换段落模式)' : '段落模式 (点击切换行模式)'}
-                        >
-                            <AlignJustify className="w-3.5 h-3.5" />
-                        </button>
+                        <Tooltip content="正则表达式模式">
+                            <button
+                                onClick={() => setIsRegex(!isRegex)}
+                                className={`p-1 rounded text-xs ${isRegex ? 'bg-primary/20 text-primary' : 'text-muted-foreground hover:bg-muted'}`}
+                            >
+                                <Regex className="w-3.5 h-3.5" />
+                            </button>
+                        </Tooltip>
+                        <Tooltip content="查找替换">
+                            <button
+                                onClick={() => setShowReplace(!showReplace)}
+                                className={`p-1 rounded text-xs ${showReplace ? 'bg-secondary' : 'text-muted-foreground hover:bg-muted'}`}
+                            >
+                                <Replace className="w-3.5 h-3.5" />
+                            </button>
+                        </Tooltip>
+                        <Tooltip content="只显示警告">
+                            <button
+                                onClick={() => { setFilterWarnings(!filterWarnings); setCurrentPage(1) }}
+                                className={`p-1 rounded text-xs ${filterWarnings ? 'bg-amber-100 text-amber-600 dark:bg-amber-900/30' : 'text-muted-foreground hover:bg-muted'}`}
+                            >
+                                <Filter className="w-3.5 h-3.5" />
+                            </button>
+                        </Tooltip>
+                        <Tooltip content={lineMode ? '行模式 (点击切换段落模式)' : '段落模式 (点击切换行模式)'}>
+                            <button
+                                onClick={() => setLineMode(!lineMode)}
+                                className={`p-1 rounded text-xs ${lineMode ? 'bg-primary/20 text-primary' : 'text-muted-foreground hover:bg-muted'}`}
+                            >
+                                <AlignJustify className="w-3.5 h-3.5" />
+                            </button>
+                        </Tooltip>
                     </div>
 
                     {/* Right Actions */}
@@ -1134,23 +1146,25 @@ export default function ProofreadView({ t, lang, onUnsavedChangesChange }: Proof
                                     <div className="flex items-center gap-2 px-3 py-1 border-b border-border/10 bg-muted/20">
                                         <span className="text-[10px] text-muted-foreground/50 font-mono">#{block.index + 1}</span>
                                         <StatusIndicator block={block} />
-                                        <button
-                                            onClick={() => retranslateBlock(block.index)}
-                                            className={`w-5 h-5 flex items-center justify-center rounded transition-all opacity-0 group-hover:opacity-100 ${loading ? 'text-muted-foreground' : 'text-primary/50 hover:text-primary hover:bg-primary/10'}`}
-                                            title="重新翻译此块"
-                                            disabled={loading}
-                                        >
-                                            <RefreshCw className={`w-3 h-3 ${retranslatingBlocks.has(block.index) ? 'animate-spin' : ''}`} />
-                                        </button>
+                                        <Tooltip content="重新翻译此块">
+                                            <button
+                                                onClick={() => retranslateBlock(block.index)}
+                                                className={`w-5 h-5 flex items-center justify-center rounded transition-all opacity-0 group-hover:opacity-100 ${loading ? 'text-muted-foreground' : 'text-primary/50 hover:text-primary hover:bg-primary/10'}`}
+                                                disabled={loading}
+                                            >
+                                                <RefreshCw className={`w-3 h-3 ${retranslatingBlocks.has(block.index) ? 'animate-spin' : ''}`} />
+                                            </button>
+                                        </Tooltip>
                                         {/* Log button - show when block has logs */}
                                         {blockLogs[block.index]?.length > 0 && (
-                                            <button
-                                                onClick={() => setShowLogModal(block.index)}
-                                                className="w-5 h-5 flex items-center justify-center rounded transition-all text-blue-500/70 hover:text-blue-500 hover:bg-blue-500/10"
-                                                title="查看翻译日志"
-                                            >
-                                                <Terminal className="w-3 h-3" />
-                                            </button>
+                                            <Tooltip content="查看翻译日志">
+                                                <button
+                                                    onClick={() => setShowLogModal(block.index)}
+                                                    className="w-5 h-5 flex items-center justify-center rounded transition-all text-blue-500/70 hover:text-blue-500 hover:bg-blue-500/10"
+                                                >
+                                                    <Terminal className="w-3 h-3" />
+                                                </button>
+                                            </Tooltip>
                                         )}
                                     </div>
 

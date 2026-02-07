@@ -99,8 +99,8 @@ const buttonVariants = cva(
 
 export interface ButtonProps
   extends
-    React.ButtonHTMLAttributes<HTMLButtonElement>,
-    VariantProps<typeof buttonVariants> {
+  React.ButtonHTMLAttributes<HTMLButtonElement>,
+  VariantProps<typeof buttonVariants> {
   asChild?: boolean;
 }
 
@@ -227,15 +227,33 @@ interface TooltipProps {
 
 const Tooltip = ({ children, content, className }: TooltipProps) => {
   const [isVisible, setIsVisible] = React.useState(false);
-  const [position, setPosition] = React.useState({ top: 0, left: 0 });
+  const [position, setPosition] = React.useState({ top: 0, left: 0, placement: 'top' as 'top' | 'bottom' });
   const triggerRef = React.useRef<HTMLDivElement>(null);
+  const tooltipRef = React.useRef<HTMLDivElement>(null);
 
   const updatePosition = React.useCallback(() => {
     if (triggerRef.current) {
       const rect = triggerRef.current.getBoundingClientRect();
+      const tooltipHeight = 40; // Estimated tooltip height
+      const spacing = 8;
+
+      // Check if there's enough space above
+      const spaceAbove = rect.top;
+      const spaceBelow = window.innerHeight - rect.bottom;
+
+      // Prefer top, but use bottom if not enough space above
+      const placement = spaceAbove < tooltipHeight + spacing && spaceBelow > spaceAbove ? 'bottom' : 'top';
+
+      // Calculate left position with boundary check
+      let left = rect.left + rect.width / 2;
+      const minLeft = 120; // Half of max tooltip width
+      const maxLeft = window.innerWidth - 120;
+      left = Math.max(minLeft, Math.min(left, maxLeft));
+
       setPosition({
-        top: rect.top - 8, // Above the element with spacing
-        left: rect.left + rect.width / 2,
+        top: placement === 'top' ? rect.top - spacing : rect.bottom + spacing,
+        left,
+        placement,
       });
     }
   }, []);
@@ -272,18 +290,24 @@ const Tooltip = ({ children, content, className }: TooltipProps) => {
       {isVisible &&
         createPortal(
           <div
+            ref={tooltipRef}
             className={cn(
-              "fixed px-3 py-1.5 bg-popover border border-border text-popover-foreground text-[11px] rounded-lg shadow-xl z-[9999] w-max max-w-[240px] leading-relaxed backdrop-blur-md whitespace-pre-line pointer-events-none animate-in fade-in-0 zoom-in-95 duration-150",
+              "fixed px-3 py-1.5 bg-popover border border-border text-popover-foreground text-[11px] rounded-lg shadow-2xl z-[99999] w-max max-w-[240px] leading-relaxed backdrop-blur-md whitespace-pre-line pointer-events-none animate-in fade-in-0 zoom-in-95 duration-150",
               className,
             )}
             style={{
               top: position.top,
               left: position.left,
-              transform: "translate(-50%, -100%)",
+              transform: position.placement === 'top' ? "translate(-50%, -100%)" : "translate(-50%, 0)",
             }}
           >
             {content}
-            <div className="absolute top-full left-1/2 -translate-x-1/2 border-x-[5px] border-x-transparent border-t-[5px] border-t-popover" />
+            {/* Arrow indicator */}
+            {position.placement === 'top' ? (
+              <div className="absolute top-full left-1/2 -translate-x-1/2 border-x-[5px] border-x-transparent border-t-[5px] border-t-popover" />
+            ) : (
+              <div className="absolute bottom-full left-1/2 -translate-x-1/2 border-x-[5px] border-x-transparent border-b-[5px] border-b-popover" />
+            )}
           </div>,
           document.body,
         )}

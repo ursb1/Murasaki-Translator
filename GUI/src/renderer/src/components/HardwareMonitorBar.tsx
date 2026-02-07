@@ -1,5 +1,6 @@
 import { Database, Cpu } from "lucide-react";
 import { translations, Language } from "../lib/i18n";
+import { Tooltip } from "./ui/core";
 
 export interface MonitorData {
   name: string;
@@ -96,18 +97,22 @@ export function HardwareMonitorBar({ data, lang }: HardwareMonitorBarProps) {
       {/* GPU Stats - 紧凑显示 */}
       <div className="flex items-center gap-3 text-muted-foreground shrink-0 ml-3">
         <div className="w-px h-3.5 bg-border" />
-        <div className="flex items-center gap-1.5" title={t.monitor.gpuLoad}>
-          <span>GPU</span>
-          <span
-            className={`font-bold font-mono ${getUtilColor(displayData.gpu_util)}`}
-          >
-            {displayData.gpu_util}%
-          </span>
-        </div>
-        <div className="flex items-center gap-1.5" title={t.monitor.vramLoad}>
-          <span>V-IO</span>
-          <span className="font-mono">{displayData.mem_util}%</span>
-        </div>
+        <Tooltip content={t.monitor.gpuLoad}>
+          <div className="flex items-center gap-1.5">
+            <span>GPU</span>
+            <span
+              className={`font-bold font-mono ${getUtilColor(displayData.gpu_util)}`}
+            >
+              {displayData.gpu_util}%
+            </span>
+          </div>
+        </Tooltip>
+        <Tooltip content={t.monitor.vramLoad}>
+          <div className="flex items-center gap-1.5">
+            <span>V-IO</span>
+            <span className="font-mono">{displayData.mem_util}%</span>
+          </div>
+        </Tooltip>
       </div>
     </div>
   );

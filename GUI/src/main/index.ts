@@ -11,6 +11,28 @@ import { TranslateOptions } from './remoteClient'
 let pythonProcess: ChildProcess | null = null
 let mainWindow: BrowserWindow | null = null
 
+// 主进程日志缓冲区 - 用于调试工具箱查看完整终端日志
+const mainProcessLogs: string[] = []
+const MAX_MAIN_LOGS = 1000
+
+// 拦截 console 方法收集日志
+const originalConsoleLog = console.log
+const originalConsoleWarn = console.warn
+const originalConsoleError = console.error
+
+const addMainLog = (level: string, ...args: unknown[]) => {
+    const timestamp = new Date().toISOString().slice(11, 23)
+    const message = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ')
+    mainProcessLogs.push(`[${timestamp}] [${level}] ${message}`)
+    if (mainProcessLogs.length > MAX_MAIN_LOGS) {
+        mainProcessLogs.shift()
+    }
+}
+
+console.log = (...args) => { addMainLog('LOG', ...args); originalConsoleLog(...args) }
+console.warn = (...args) => { addMainLog('WARN', ...args); originalConsoleWarn(...args) }
+console.error = (...args) => { addMainLog('ERROR', ...args); originalConsoleError(...args) }
+
 // 单实例锁 - 防止重复启动
 const gotTheLock = app.requestSingleInstanceLock()
 
@@ -601,6 +623,161 @@ ipcMain.handle('check-update', async () => {
     }
 })
 // --------------------------
+
+// --- Main Process Logs IPC ---
+ipcMain.handle('get-main-process-logs', () => {
+    return mainProcessLogs.slice() // 返回副本
+})
+
+// --- System Diagnostics IPC ---
+ipcMain.handle('get-system-diagnostics', async () => {
+    const { exec } = require('child_process')
+    const { promisify } = require('util')
+    const execAsync = promisify(exec)
+    const os = require('os')
+    const net = require('net')
+
+    const result: {
+        os: { platform: string; release: string; arch: string; cpuCores: number; totalMem: string }
+        gpu: { name: string; driver?: string; vram?: string } | null
+        python: { version: string; path: string } | null
+        cuda: { version: string; available: boolean } | null
+        vulkan: { available: boolean; version?: string; devices?: string[] } | null
+        llamaServer: { status: 'online' | 'offline' | 'unknown'; port?: number; model?: string }
+    } = {
+        os: {
+            platform: os.platform(),
+            release: os.release(),
+            arch: os.arch(),
+            cpuCores: os.cpus().length,
+            totalMem: `${Math.round(os.totalmem() / (1024 * 1024 * 1024))}GB`
+        },
+        gpu: null,
+        python: null,
+        cuda: null,
+        vulkan: null,
+        llamaServer: { status: 'unknown' }
+    }
+
+    // 辅助函数：带超时的异步执行
+    const execWithTimeout = async (cmd: string, timeout: number): Promise<string> => {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), timeout)
+        try {
+            const { stdout } = await execAsync(cmd, { signal: controller.signal })
+            return stdout
+        } finally {
+            clearTimeout(timeoutId)
+        }
+    }
+
+    // GPU Detection (NVIDIA) - 并行执行
+    const gpuPromise = (async () => {
+        try {
+            const cmd = process.platform === 'win32'
+                ? 'nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader,nounits'
+                : 'nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader,nounits 2>/dev/null'
+            const output = await execWithTimeout(cmd, 5000)
+            const parts = output.trim().split(', ')
+            if (parts.length >= 3) {
+                result.gpu = { name: parts[0], driver: parts[1], vram: `${parts[2]} MB` }
+            }
+        } catch { /* No NVIDIA GPU or nvidia-smi not available */ }
+    })()
+
+    // Python Detection - Use embedded Python path
+    const pythonPromise = (async () => {
+        try {
+            const pythonInfo = getPythonPath()
+            const output = await execWithTimeout(`"${pythonInfo.path}" --version`, 3000)
+            result.python = {
+                version: output.trim().replace('Python ', ''),
+                path: pythonInfo.type === 'bundle' ? 'Bundle Mode' : pythonInfo.path
+            }
+        } catch { /* Python not found */ }
+    })()
+
+    // CUDA Detection
+    const cudaPromise = (async () => {
+        try {
+            const cmd = process.platform === 'win32' ? 'nvcc --version' : 'nvcc --version 2>/dev/null'
+            const output = await execWithTimeout(cmd, 3000)
+            const match = output.match(/release (\d+\.\d+)/)
+            if (match) {
+                result.cuda = { version: match[1], available: true }
+            }
+        } catch {
+            result.cuda = { version: 'N/A', available: false }
+        }
+    })()
+
+    // Vulkan Detection
+    const vulkanPromise = (async () => {
+        try {
+            const output = await execWithTimeout('vulkaninfo --summary', 5000)
+            const versionMatch = output.match(/Vulkan Instance Version:\s*(\d+\.\d+\.\d+)/i)
+            const version = versionMatch ? versionMatch[1] : undefined
+            result.vulkan = { available: true, version }
+        } catch {
+            result.vulkan = { available: false }
+        }
+    })()
+
+    // 并行等待所有检测完成
+    await Promise.all([gpuPromise, pythonPromise, cudaPromise, vulkanPromise])
+
+    // llama-server Status Check (Use ServerManager's actual port)
+    const checkPort = (port: number): Promise<boolean> => {
+        return new Promise((resolve) => {
+            const socket = new net.Socket()
+            socket.setTimeout(1000)
+            socket.on('connect', () => { socket.destroy(); resolve(true) })
+            socket.on('timeout', () => { socket.destroy(); resolve(false) })
+            socket.on('error', () => { socket.destroy(); resolve(false) })
+            socket.connect(port, '127.0.0.1')
+        })
+    }
+
+    const serverStatus = ServerManager.getInstance().getStatus()
+    if (serverStatus.running) {
+        result.llamaServer = {
+            status: 'online',
+            port: serverStatus.port,
+            model: serverStatus.model || undefined
+        }
+    } else {
+        // Fallback: Check default port 8080 (for external servers)
+        try {
+            const isOnline = await checkPort(8080)
+            if (isOnline) {
+                result.llamaServer = { status: 'online', port: 8080 }
+                // Try to get model info from /health endpoint
+                try {
+                    const http = require('http')
+                    const healthData = await new Promise<string>((resolve, reject) => {
+                        const req = http.get('http://127.0.0.1:8080/health', { timeout: 2000 }, (res: import('http').IncomingMessage) => {
+                            let data = ''
+                            res.on('data', (chunk: Buffer) => data += chunk)
+                            res.on('end', () => resolve(data))
+                        })
+                        req.on('error', reject)
+                        req.on('timeout', () => { req.destroy(); reject(new Error('timeout')) })
+                    })
+                    const health = JSON.parse(healthData)
+                    if (health.model) {
+                        result.llamaServer.model = health.model
+                    }
+                } catch { /* Health endpoint failed */ }
+            } else {
+                result.llamaServer = { status: 'offline' }
+            }
+        } catch {
+            result.llamaServer = { status: 'unknown' }
+        }
+    }
+
+    return result
+})
 
 // Open External link in system browser
 ipcMain.on('open-external', (_event, url: string) => {
@@ -1366,10 +1543,28 @@ ipcMain.handle('check-output-file-exists', async (_event, { inputFile, config })
             outPath = `${base}${suffix}${ext}`
         }
 
+        console.log('[check-output-file-exists] inputFile:', inputFile)
+        console.log('[check-output-file-exists] outPath:', outPath)
+
         if (fs.existsSync(outPath)) {
             console.log("Detected existing output:", outPath)
             return { exists: true, path: outPath }
         }
+
+        // 检测临时进度文件（翻译中断后的主要缓存）
+        const tempPath = outPath + '.temp.jsonl'
+        if (fs.existsSync(tempPath)) {
+            console.log("Detected existing temp progress:", tempPath)
+            return { exists: true, path: tempPath, isCache: true }
+        }
+
+        // 兼容旧版缓存文件
+        const cachePath = outPath + '.cache.json'
+        if (fs.existsSync(cachePath)) {
+            console.log("Detected existing cache:", cachePath)
+            return { exists: true, path: cachePath, isCache: true }
+        }
+
         return { exists: false }
     } catch (e) {
         console.error("Check output error:", e)

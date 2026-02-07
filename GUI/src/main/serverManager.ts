@@ -137,7 +137,7 @@ export class ServerManager {
         }
 
         // High Fidelity Mode (Granular Control)
-        if (config.highFidelity || config.flashAttn) args.push('-fa')
+        if (config.highFidelity || config.flashAttn) args.push('-fa', 'on')
 
         // KV Cache Selection
         if (config.kvCacheType || config.highFidelity) {

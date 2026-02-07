@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
-import { Save, Settings, Trash2, AlertTriangle, Download, FolderOpen, XCircle, Github, Globe, ExternalLink, RefreshCw } from "lucide-react"
-import { Card, CardContent, CardHeader, CardTitle } from "./ui/core"
+import { Save, Settings, Trash2, AlertTriangle, Download, FolderOpen, XCircle, Github, Globe, ExternalLink, RefreshCw, CheckCircle2, XCircle as XCircleIcon, Activity, Layout, Zap, Terminal, Box, Layers, Link, ShieldCheck, TerminalSquare } from "lucide-react"
+import { Card, CardContent, CardHeader, CardTitle, Tooltip } from "./ui/core"
 import { Button } from "./ui/core"
 import { AlertModal } from "./ui/AlertModal"
 import { translations, Language } from "../lib/i18n"
@@ -21,6 +21,74 @@ export function SettingsView({ lang }: { lang: Language }) {
 
     const [saved, setSaved] = useState(false)
 
+    // System Diagnostics
+    const [diagnostics, setDiagnostics] = useState<{
+        os: { platform: string; release: string; arch: string; cpuCores: number; totalMem: string }
+        gpu: { name: string; driver?: string; vram?: string } | null
+        python: { version: string; path: string } | null
+        cuda: { version: string; available: boolean } | null
+        vulkan: { available: boolean; version?: string; devices?: string[] } | null
+        llamaServer: { status: 'online' | 'offline' | 'unknown'; port?: number; model?: string }
+    } | null>(null)
+    const [diagLoading, setDiagLoading] = useState(false)
+    const [diagError, setDiagError] = useState<string | null>(null)
+
+    // Cache key and expiry (5 minutes)
+    const DIAG_CACHE_KEY = 'system_diagnostics_cache'
+    const DIAG_CACHE_EXPIRY = 5 * 60 * 1000 // 5 minutes
+
+    const loadDiagnostics = async (forceRefresh = false) => {
+        // Try to load from cache first
+        if (!forceRefresh) {
+            try {
+                const cached = localStorage.getItem(DIAG_CACHE_KEY)
+                if (cached) {
+                    const { data, timestamp } = JSON.parse(cached)
+                    const age = Date.now() - timestamp
+                    // Validate cache: must have new fields (cpuCores, totalMem)
+                    const isValidCache = data?.os?.cpuCores !== undefined && data?.os?.totalMem !== undefined
+                    if (age < DIAG_CACHE_EXPIRY && data && isValidCache) {
+                        setDiagnostics(data)
+                        setDiagError(null)
+                        return
+                    }
+                }
+            } catch (e) {
+                console.warn('Failed to parse diagnostics cache:', e)
+            }
+        }
+
+        setDiagLoading(true)
+        setDiagError(null)
+        try {
+            // @ts-ignore
+            const result = await window.api.getSystemDiagnostics()
+            if (result) {
+                setDiagnostics(result)
+                // Save to cache
+                localStorage.setItem(DIAG_CACHE_KEY, JSON.stringify({
+                    data: result,
+                    timestamp: Date.now()
+                }))
+            } else {
+                setDiagError('诊断结果为空，请检查系统权限')
+            }
+        } catch (e) {
+            console.error('Failed to load diagnostics:', e)
+            const errorMsg = String(e)
+            if (errorMsg.includes('EACCES') || errorMsg.includes('permission')) {
+                setDiagError('权限不足：无法访问系统信息，请以管理员身份运行')
+            } else if (errorMsg.includes('timeout') || errorMsg.includes('ETIMEDOUT')) {
+                setDiagError('扫描超时：系统响应过慢，请稍后重试')
+            } else if (errorMsg.includes('ENOENT') || errorMsg.includes('not found')) {
+                setDiagError('组件缺失：部分诊断工具未安装')
+            } else {
+                setDiagError(`扫描失败：${errorMsg}`)
+            }
+        }
+        setDiagLoading(false)
+    }
+
     // Update States
     const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'found' | 'none' | 'error'>('idle')
     const [updateInfo, setUpdateInfo] = useState<{ latestVersion: string, releaseNotes: string, url: string, error?: string } | null>(null)
@@ -31,6 +99,9 @@ export function SettingsView({ lang }: { lang: Language }) {
         setAutoEpub(localStorage.getItem("config_auto_epub") === "true")
 
         setCacheDir(localStorage.getItem("config_cache_dir") || "")
+
+        // Auto-load diagnostics on mount
+        loadDiagnostics()
     }, [])
 
     const checkUpdates = async () => {
@@ -94,7 +165,10 @@ export function SettingsView({ lang }: { lang: Language }) {
     const [alertConfig, setAlertConfig] = useState<{
         open: boolean
         title: string
-        description: string
+        description: string | React.ReactNode
+        variant?: 'default' | 'destructive' | 'info' | 'success' | 'warning'
+        showCancel?: boolean
+        confirmText?: string
         onConfirm: () => void
     }>({ open: false, title: '', description: '', onConfirm: () => { } })
 
@@ -168,6 +242,24 @@ export function SettingsView({ lang }: { lang: Language }) {
             serverLogData = { error: String(e) }
         }
 
+        // Get system diagnostics (GPU, CUDA, Vulkan, Python, etc.)
+        let systemDiagnostics: unknown = null
+        try {
+            // @ts-ignore
+            systemDiagnostics = await window.api.getSystemDiagnostics()
+        } catch (e) {
+            systemDiagnostics = { error: String(e) }
+        }
+
+        // Get main process logs
+        let mainProcessLogs: unknown = null
+        try {
+            // @ts-ignore
+            mainProcessLogs = await window.api.getMainProcessLogs()
+        } catch (e) {
+            mainProcessLogs = { error: String(e) }
+        }
+
         const debugData = {
             // Export metadata
             exportTime: new Date().toISOString(),
@@ -225,7 +317,13 @@ export function SettingsView({ lang }: { lang: Language }) {
             history: historyData,
 
             // Server logs (llama-server.log)
-            serverLog: serverLogData
+            serverLog: serverLogData,
+
+            // System diagnostics (GPU, CUDA, Vulkan, Python, llama-server status)
+            diagnostics: systemDiagnostics,
+
+            // Main process console logs
+            mainProcessLogs: mainProcessLogs
         }
 
         const content = JSON.stringify(debugData, null, 2)
@@ -252,6 +350,286 @@ export function SettingsView({ lang }: { lang: Language }) {
 
             {/* Scrollable Content Area */}
             <div className="flex-1 overflow-y-auto px-8 pb-4 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent hover:scrollbar-thumb-muted-foreground/30">
+
+                {/* System Diagnostics Card */}
+                {/* System Diagnostics Card */}
+                <Card className="mb-6 overflow-hidden border-primary/10 shadow-sm">
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3 bg-secondary/10 border-b">
+                        <CardTitle className="text-base flex items-center gap-2 font-bold">
+                            <ShieldCheck className="w-4 h-4 text-primary" />
+                            运行环境诊断
+                        </CardTitle>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => loadDiagnostics(true)}
+                            disabled={diagLoading}
+                            className="gap-1.5 h-7 text-xs hover:bg-primary/10 hover:text-primary transition-colors"
+                        >
+                            <RefreshCw className={cn("w-3 h-3", diagLoading && "animate-spin")} />
+                            {diagLoading ? '刷新中' : '刷新'}
+                        </Button>
+                    </CardHeader>
+                    <CardContent className="p-0">
+                        {diagError ? (
+                            <div className="flex flex-col items-center justify-center py-12 gap-3">
+                                <div className="w-12 h-12 rounded-full bg-destructive/10 flex items-center justify-center">
+                                    <XCircleIcon className="w-6 h-6 text-destructive" />
+                                </div>
+                                <span className="text-sm text-destructive font-medium text-center px-4">{diagError}</span>
+                                <Button variant="outline" size="sm" onClick={() => loadDiagnostics(true)} className="mt-2">
+                                    <RefreshCw className="w-3 h-3 mr-1.5" />
+                                    重试
+                                </Button>
+                            </div>
+                        ) : diagLoading && !diagnostics ? (
+                            <div className="flex flex-col items-center justify-center py-12 gap-3">
+                                <Activity className="w-8 h-8 animate-pulse text-primary/40" />
+                                <span className="text-sm text-muted-foreground font-medium">正在扫描系统硬件与环境依赖...</span>
+                            </div>
+                        ) : diagnostics ? (
+                            <div className="divide-y divide-border">
+                                <div className="grid grid-cols-1 md:grid-cols-3 divide-x divide-border">
+                                    {/* OS Section */}
+                                    <div className="p-4 flex gap-3 hover:bg-zinc-50/50 dark:hover:bg-zinc-900/30 transition-colors">
+                                        <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center shrink-0">
+                                            <Layout className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                                        </div>
+                                        <div className="space-y-0.5 min-w-0">
+                                            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">操作系统</p>
+                                            <p className="text-sm font-semibold truncate">
+                                                {diagnostics.os.platform === 'win32' ? `Windows ${diagnostics.os.release}` :
+                                                    diagnostics.os.platform === 'darwin' ? 'macOS' : 'Linux'}
+                                            </p>
+                                            <p className="text-[10px] font-mono text-muted-foreground">{diagnostics.os.arch} / {diagnostics.os.cpuCores} Cores / {diagnostics.os.totalMem} RAM</p>
+                                        </div>
+                                    </div>
+
+                                    {/* GPU Section */}
+                                    <div className="p-4 flex gap-3 hover:bg-zinc-50/50 dark:hover:bg-zinc-900/30 transition-colors">
+                                        <div className="w-8 h-8 rounded-lg bg-yellow-500/10 flex items-center justify-center shrink-0">
+                                            <Zap className="w-4 h-4 text-yellow-600 dark:text-yellow-400" />
+                                        </div>
+                                        <div className="space-y-0.5 min-w-0">
+                                            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">图形处理器</p>
+                                            {diagnostics.gpu ? (
+                                                <>
+                                                    <p className="text-[13px] font-semibold truncate leading-tight" title={diagnostics.gpu.name}>
+                                                        {diagnostics.gpu.name}
+                                                    </p>
+                                                    <p className="text-[10px] font-mono text-muted-foreground">
+                                                        {diagnostics.gpu.vram} VRAM / {diagnostics.gpu.driver}
+                                                    </p>
+                                                </>
+                                            ) : (
+                                                <p className="text-sm font-semibold text-muted-foreground">未检测到 NVIDIA</p>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Python Section */}
+                                    <div className="p-4 flex gap-3 hover:bg-zinc-50/50 dark:hover:bg-zinc-900/30 transition-colors">
+                                        <div className="w-8 h-8 rounded-lg bg-green-500/10 flex items-center justify-center shrink-0">
+                                            <Terminal className="w-4 h-4 text-green-600 dark:text-green-400" />
+                                        </div>
+                                        <div className="space-y-0.5 min-w-0">
+                                            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Python 环境</p>
+                                            {diagnostics.python ? (
+                                                <>
+                                                    <p className="text-sm font-semibold flex items-center gap-1.5">
+                                                        {diagnostics.python.version}
+                                                        <CheckCircle2 className="w-3 h-3 text-green-500" />
+                                                    </p>
+                                                    <p className="text-[10px] font-mono text-muted-foreground truncate" title={diagnostics.python.path}>
+                                                        {diagnostics.python.path}
+                                                    </p>
+                                                </>
+                                            ) : (
+                                                <p className="text-sm font-semibold text-red-500 flex items-center gap-1">
+                                                    <XCircleIcon className="w-3 h-3" />
+                                                    未安装
+                                                </p>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-3 divide-x divide-border">
+                                    {/* CUDA Section */}
+                                    <div className="p-4 flex gap-3 hover:bg-zinc-50/50 dark:hover:bg-zinc-900/30 transition-colors">
+                                        <div className="w-8 h-8 rounded-lg bg-purple-500/10 flex items-center justify-center shrink-0">
+                                            <Box className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                                        </div>
+                                        <div className="space-y-0.5">
+                                            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">CUDA 加速</p>
+                                            {diagnostics.cuda?.available ? (
+                                                <p className="text-sm font-semibold flex items-center gap-1.5">
+                                                    版本 {diagnostics.cuda.version}
+                                                    <CheckCircle2 className="w-3 h-3 text-green-500" />
+                                                </p>
+                                            ) : (
+                                                <p className="text-sm font-semibold text-muted-foreground">未检出 nvcc</p>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Vulkan Section */}
+                                    <div className="p-4 flex gap-3 hover:bg-zinc-50/50 dark:hover:bg-zinc-900/30 transition-colors">
+                                        <div className="w-8 h-8 rounded-lg bg-orange-500/10 flex items-center justify-center shrink-0">
+                                            <Layers className="w-4 h-4 text-orange-600 dark:text-orange-400" />
+                                        </div>
+                                        <div className="space-y-0.5">
+                                            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Vulkan 后端</p>
+                                            {diagnostics.vulkan?.available ? (
+                                                <p className="text-sm font-semibold flex items-center gap-1.5">
+                                                    {diagnostics.vulkan.version ? `版本 ${diagnostics.vulkan.version}` : '可用驱动已加载'}
+                                                    <CheckCircle2 className="w-3 h-3 text-green-500" />
+                                                </p>
+                                            ) : (
+                                                <p className="text-sm font-semibold text-muted-foreground">不可用</p>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* llama-server Section */}
+                                    <div className="p-4 flex gap-3 hover:bg-zinc-50/50 dark:hover:bg-zinc-900/30 transition-colors">
+                                        <div className="w-8 h-8 rounded-lg bg-zinc-500/10 flex items-center justify-center shrink-0">
+                                            <Link className="w-4 h-4 text-zinc-600 dark:text-zinc-400" />
+                                        </div>
+                                        <div className="space-y-0.5 min-w-0">
+                                            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">推理后端</p>
+                                            {diagnostics.llamaServer.status === 'online' ? (
+                                                <>
+                                                    <p className="text-sm font-semibold flex items-center gap-1.5 text-primary">
+                                                        在线服务中
+                                                        <Activity className="w-3 h-3 animate-pulse" />
+                                                    </p>
+                                                    <p className="text-[10px] font-mono text-muted-foreground/70 truncate">
+                                                        localhost:{diagnostics.llamaServer.port}
+                                                    </p>
+                                                </>
+                                            ) : (
+                                                <p className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5">
+                                                    离线
+                                                    <span className="w-2 h-2 rounded-full bg-zinc-300 dark:bg-zinc-600" />
+                                                </p>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="p-8 text-center bg-secondary/5 border-y">
+                                <p className="text-sm text-muted-foreground font-medium italic">尚未初始化诊断数据，点击右上角开始检测</p>
+                            </div>
+                        )}
+
+                        {/* Debug Actions Section */}
+                        <div className="p-4 bg-muted/30 border-t flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <TerminalSquare className="w-4 h-4 text-muted-foreground/60" />
+                                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">调试工具箱</span>
+                            </div>
+                            <div className="flex gap-2">
+                                <Tooltip content="在文件资源管理器中打开 Python 环境所在目录">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-7 text-[11px] gap-1.5 bg-background shadow-xs hover:bg-secondary transition-all"
+                                        onClick={() => window.api?.openPath(diagnostics?.python?.path?.replace(/\\[^\\]+$/, '') || '')}
+                                        disabled={!diagnostics?.python}
+                                    >
+                                        <FolderOpen className="w-3 h-3" />
+                                        打开运行目录
+                                    </Button>
+                                </Tooltip>
+                                <Tooltip content="查看推理后端的实时运行日志">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-7 text-[11px] gap-1.5 bg-background shadow-xs hover:bg-secondary transition-all"
+                                        onClick={async () => {
+                                            // @ts-ignore
+                                            const logs = await window.api.serverLogs()
+                                            const logText = logs?.length ? logs.join('\n') : ''
+
+                                            setAlertConfig({
+                                                open: true,
+                                                title: logs?.length ? `服务器日志 (${logs.length} 条)` : '服务器日志',
+                                                description: (
+                                                    <div className="relative max-w-full">
+                                                        <button
+                                                            onClick={() => navigator.clipboard.writeText(logText)}
+                                                            className="absolute top-2 right-2 text-xs px-2 py-1 rounded bg-white/80 dark:bg-slate-800/80 hover:bg-white dark:hover:bg-slate-800 transition-colors flex items-center gap-1 shadow-sm border border-slate-200 dark:border-slate-700 z-10"
+                                                        >
+                                                            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                                            </svg>
+                                                            复制
+                                                        </button>
+                                                        <pre className="whitespace-pre-wrap break-all text-xs font-mono bg-slate-100 dark:bg-slate-900/50 text-slate-700 dark:text-slate-300 p-3 pt-10 rounded-lg border border-slate-200 dark:border-slate-800 max-h-[50vh] overflow-y-auto overflow-x-hidden">
+                                                            {logText || '后端服务器尚未产生运行日志'}
+                                                        </pre>
+                                                    </div>
+                                                ),
+                                                variant: 'info',
+                                                showCancel: false,
+                                                confirmText: '关闭',
+                                                onConfirm: () => setAlertConfig(prev => ({ ...prev, open: false }))
+                                            })
+                                        }}
+                                    >
+                                        <Activity className="w-3 h-3" />
+                                        查看运行日志
+                                    </Button>
+                                </Tooltip>
+                                <Tooltip content="查看开发模式下的完整主进程终端日志">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-7 text-[11px] gap-1.5 bg-background shadow-xs hover:bg-secondary transition-all"
+                                        onClick={async () => {
+                                            // @ts-ignore
+                                            const logs = await window.api.getMainProcessLogs()
+                                            const logText = logs?.length ? logs.join('\n') : ''
+
+                                            setAlertConfig({
+                                                open: true,
+                                                title: logs?.length ? `主进程日志 (${logs.length} 条)` : '主进程日志',
+                                                description: (
+                                                    <div className="relative max-w-full">
+                                                        <button
+                                                            onClick={() => navigator.clipboard.writeText(logText)}
+                                                            className="absolute top-2 right-2 text-xs px-2 py-1 rounded bg-white/80 dark:bg-slate-800/80 hover:bg-white dark:hover:bg-slate-800 transition-colors flex items-center gap-1 shadow-sm border border-slate-200 dark:border-slate-700 z-10"
+                                                        >
+                                                            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                                            </svg>
+                                                            复制
+                                                        </button>
+                                                        <pre className="whitespace-pre-wrap break-all text-xs font-mono bg-slate-100 dark:bg-slate-900/50 text-slate-700 dark:text-slate-300 p-3 pt-10 rounded-lg border border-slate-200 dark:border-slate-800 max-h-[50vh] overflow-y-auto overflow-x-hidden">
+                                                            {logText || '暂无主进程日志'}
+                                                        </pre>
+                                                    </div>
+                                                ),
+                                                variant: 'info',
+                                                showCancel: false,
+                                                confirmText: '关闭',
+                                                onConfirm: () => setAlertConfig(prev => ({ ...prev, open: false }))
+                                            })
+                                        }}
+                                    >
+                                        <TerminalSquare className="w-3 h-3" />
+                                        查看终端日志
+                                    </Button>
+                                </Tooltip>
+                            </div>
+                        </div>
+                    </CardContent>
+                </Card>
+
                 <Card>
                     <CardHeader>
                         <CardTitle className="text-base">{t.settingsTitle}</CardTitle>
@@ -277,14 +655,15 @@ export function SettingsView({ lang }: { lang: Language }) {
                                     {t.settingsView.selectDir}
                                 </Button>
                                 {outputDir && (
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => setOutputDir("")}
-                                        title="重置为默认"
-                                    >
-                                        <XCircle className="w-4 h-4 text-muted-foreground" />
-                                    </Button>
+                                    <Tooltip content="重置为默认">
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => setOutputDir("")}
+                                        >
+                                            <XCircle className="w-4 h-4 text-muted-foreground" />
+                                        </Button>
+                                    </Tooltip>
                                 )}
                             </div>
                             <p className="text-xs text-muted-foreground">
@@ -320,14 +699,15 @@ export function SettingsView({ lang }: { lang: Language }) {
                                     {t.settingsView.selectDir}
                                 </Button>
                                 {cacheDir && (
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => setCacheDir("")}
-                                        title="重置为默认"
-                                    >
-                                        <XCircle className="w-4 h-4 text-muted-foreground" />
-                                    </Button>
+                                    <Tooltip content="重置为默认">
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => setCacheDir("")}
+                                        >
+                                            <XCircle className="w-4 h-4 text-muted-foreground" />
+                                        </Button>
+                                    </Tooltip>
                                 )}
                             </div>
                             <p className="text-xs text-muted-foreground">
@@ -519,11 +899,11 @@ export function SettingsView({ lang }: { lang: Language }) {
                 onOpenChange={(open) => setAlertConfig(prev => ({ ...prev, open }))}
                 title={alertConfig.title}
                 description={alertConfig.description}
-                variant="destructive"
+                variant={alertConfig.variant || 'destructive'}
                 onConfirm={alertConfig.onConfirm}
-                showCancel={true}
+                showCancel={alertConfig.showCancel ?? true}
                 cancelText={t.glossaryView.cancel}
-                confirmText={t.config.storage.reset}
+                confirmText={alertConfig.confirmText || t.config.storage.reset}
             />
         </div>
     )

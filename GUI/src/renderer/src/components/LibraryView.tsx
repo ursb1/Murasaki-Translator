@@ -612,7 +612,7 @@ function FileConfigModal({
                 <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
                 <p className="text-[10px] text-amber-600 dark:text-amber-400 leading-relaxed">
                   {lang === "zh"
-                    ? "单句模式仅适用于零散短句，长文本翻译请使用轻小说或剧本模式。"
+                    ? "短句模式会导致翻译效率和质量下降，建议使用轻小说或剧本模式。"
                     : "Short mode is only for isolated sentences. Use Novel or Script mode for documents."}
                 </p>
               </div>
@@ -806,10 +806,8 @@ function FileConfigModal({
                   <option value="q4_0">{t.kvOptions.q4_0}</option>
                 </select>
               </div>
-            </div>
 
-            {/* Seed Input */}
-            <div className="grid grid-cols-2 gap-4">
+              {/* Seed Input */}
               <InputRow
                 icon={Sparkles}
                 label={t.seed}

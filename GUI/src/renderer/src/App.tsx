@@ -98,7 +98,7 @@ function AppContent() {
         setView={handleSwitchView}
       />
       {/* Keep Dashboard mounted to preserve translation state (logs, process listeners) */}
-      <div className={`flex-1 ${view === "dashboard" ? "flex" : "hidden"}`}>
+      <div className={`flex-1 min-w-0 ${view === "dashboard" ? "flex" : "hidden"}`}>
         <Dashboard
           ref={dashboardRef}
           lang={lang}
@@ -125,7 +125,7 @@ function AppContent() {
       {view === "advanced" && <AdvancedView lang={lang} />}
       {view === "history" && <HistoryView lang={lang} />}
       {view === "proofread" && (
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 min-w-0 overflow-hidden">
           <ProofreadView
             t={translations[lang]}
             lang={lang}

@@ -94,6 +94,12 @@ export function AdvancedView({ lang }: { lang: Language }) {
   const [daemonMode, setDaemonMode] = useState(
     () => localStorage.getItem("config_daemon_mode") === "true",
   );
+  const [localPort, setLocalPort] = useState(
+    () => localStorage.getItem("config_local_port") || "8080",
+  );
+  const [localHost, setLocalHost] = useState(
+    () => localStorage.getItem("config_local_host") || "127.0.0.1",
+  );
   const [serverStatus, setServerStatus] = useState<any>(null);
   const [isStartingServer, setIsStartingServer] = useState(false);
   const [isWarming, setIsWarming] = useState(false);
@@ -355,7 +361,7 @@ export function AdvancedView({ lang }: { lang: Language }) {
     setIsStartingServer(true);
     const config = {
       model: activeModel,
-      port: parseInt(localStorage.getItem("config_server_port") || "8080"),
+      port: parseInt(localStorage.getItem("config_local_port") || "8080"),
       gpuLayers: gpuLayers,
       ctxSize: ctxSize,
       concurrency: concurrency,
@@ -622,10 +628,10 @@ export function AdvancedView({ lang }: { lang: Language }) {
                     <div className="flex flex-col">
                       <span
                         className={`text-3xl font-bold font-mono tracking-tight transition-colors duration-500 ${parseInt(ctxSize) * concurrency > 32768
-                            ? "text-red-500"
-                            : parseInt(ctxSize) * concurrency > 16384
-                              ? "text-amber-500"
-                              : "text-emerald-500"
+                          ? "text-red-500"
+                          : parseInt(ctxSize) * concurrency > 16384
+                            ? "text-amber-500"
+                            : "text-emerald-500"
                           }`}
                       >
                         {ctxSize}
@@ -1044,10 +1050,10 @@ export function AdvancedView({ lang }: { lang: Language }) {
                         {/* Card 1: Token Throughput Stats */}
                         <div
                           className={`relative overflow-hidden rounded-xl border p-3 flex flex-col justify-between h-full transition-all duration-300 ${parseInt(ctxSize) * concurrency > 32768
-                              ? "bg-red-500/5 border-red-500/20"
-                              : parseInt(ctxSize) * concurrency > 16384
-                                ? "bg-amber-500/5 border-amber-500/20"
-                                : "bg-secondary/30 border-border/40 hover:border-primary/30"
+                            ? "bg-red-500/5 border-red-500/20"
+                            : parseInt(ctxSize) * concurrency > 16384
+                              ? "bg-amber-500/5 border-amber-500/20"
+                              : "bg-secondary/30 border-border/40 hover:border-primary/30"
                             }`}
                         >
                           <div className="flex flex-col">
@@ -1057,10 +1063,10 @@ export function AdvancedView({ lang }: { lang: Language }) {
                             <div className="flex items-baseline gap-1.5 mt-1">
                               <span
                                 className={`text-xl font-mono font-bold tracking-tight ${parseInt(ctxSize) * concurrency > 32768
-                                    ? "text-red-600"
-                                    : parseInt(ctxSize) * concurrency > 16384
-                                      ? "text-amber-600"
-                                      : "text-primary"
+                                  ? "text-red-600"
+                                  : parseInt(ctxSize) * concurrency > 16384
+                                    ? "text-amber-600"
+                                    : "text-primary"
                                   }`}
                               >
                                 {(
@@ -1075,10 +1081,10 @@ export function AdvancedView({ lang }: { lang: Language }) {
                           <div className="w-full h-1 mt-3 bg-foreground/5 rounded-full overflow-hidden">
                             <div
                               className={`h-full rounded-full transition-all duration-500 ${parseInt(ctxSize) * concurrency > 32768
-                                  ? "bg-red-500 w-full animate-pulse"
-                                  : parseInt(ctxSize) * concurrency > 16384
-                                    ? "bg-amber-500"
-                                    : "bg-emerald-500"
+                                ? "bg-red-500 w-full animate-pulse"
+                                : parseInt(ctxSize) * concurrency > 16384
+                                  ? "bg-amber-500"
+                                  : "bg-emerald-500"
                                 }`}
                               style={{
                                 width: `${Math.min(100, ((parseInt(ctxSize) * concurrency) / 32768) * 100)}%`,
@@ -1132,10 +1138,10 @@ export function AdvancedView({ lang }: { lang: Language }) {
                             return (
                               <div
                                 className={`relative overflow-hidden rounded-xl border p-3 flex flex-col justify-between h-full transition-all duration-300 ${!isSafe
-                                    ? "bg-red-500/5 border-red-500/20"
-                                    : usagePct > 90
-                                      ? "bg-amber-500/5 border-amber-500/20"
-                                      : "bg-secondary/30 border-border/40 hover:border-blue-500/30"
+                                  ? "bg-red-500/5 border-red-500/20"
+                                  : usagePct > 90
+                                    ? "bg-amber-500/5 border-amber-500/20"
+                                    : "bg-secondary/30 border-border/40 hover:border-blue-500/30"
                                   }`}
                               >
                                 <div className="flex flex-col">
@@ -1192,10 +1198,10 @@ export function AdvancedView({ lang }: { lang: Language }) {
                         parseInt(ctxSize) * concurrency > 16384) && (
                           <div
                             className={`rounded-xl border p-3 flex gap-3 items-start backdrop-blur-sm ${parseInt(ctxSize) * concurrency > 32768
-                                ? "bg-red-500/10 border-red-500/20 text-red-700 dark:text-red-400"
-                                : concurrency > 8
-                                  ? "bg-orange-500/10 border-orange-500/20 text-orange-700 dark:text-orange-400"
-                                  : "bg-secondary/40 border-border/50 text-foreground/80"
+                              ? "bg-red-500/10 border-red-500/20 text-red-700 dark:text-red-400"
+                              : concurrency > 8
+                                ? "bg-orange-500/10 border-orange-500/20 text-orange-700 dark:text-orange-400"
+                                : "bg-secondary/40 border-border/50 text-foreground/80"
                               }`}
                           >
                             <Info className="w-4 h-4 shrink-0 mt-0.5 opacity-80" />
@@ -1292,8 +1298,8 @@ export function AdvancedView({ lang }: { lang: Language }) {
                       <button
                         onClick={() => toggleDaemonMode(false)}
                         className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${!daemonMode
-                            ? "bg-background text-foreground shadow-sm"
-                            : "text-muted-foreground hover:text-foreground"
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground"
                           }`}
                       >
                         自动模式
@@ -1301,8 +1307,8 @@ export function AdvancedView({ lang }: { lang: Language }) {
                       <button
                         onClick={() => toggleDaemonMode(true)}
                         className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${daemonMode
-                            ? "bg-background text-foreground shadow-sm"
-                            : "text-muted-foreground hover:text-foreground"
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground"
                           }`}
                       >
                         常驻模式
@@ -1318,8 +1324,8 @@ export function AdvancedView({ lang }: { lang: Language }) {
 
                   {daemonMode && (
                     <div className="space-y-3 border-l-2 border-primary/30 pl-4">
-                      <div className="p-3 bg-amber-50 dark:bg-amber-950/30 rounded-lg border border-amber-200 dark:border-amber-900/50">
-                        <p className="text-xs text-amber-700 dark:text-amber-300">
+                      <div className="p-3 bg-blue-50 dark:bg-blue-950/30 rounded-lg border border-blue-200 dark:border-blue-900/50">
+                        <p className="text-xs text-blue-700 dark:text-blue-300">
                           <strong>常驻模式 (Daemon Mode)：</strong>
                           推理服务持续运行，翻译响应更快，但会持续占用显存。适合需要频繁翻译或对外提供
                           API 服务的场景。
@@ -1335,16 +1341,11 @@ export function AdvancedView({ lang }: { lang: Language }) {
                           <input
                             type="number"
                             className="w-full border p-2 rounded text-sm bg-secondary font-mono"
-                            value={
-                              localStorage.getItem("config_local_port") ||
-                              "8080"
-                            }
-                            onChange={(e) =>
-                              localStorage.setItem(
-                                "config_local_port",
-                                e.target.value,
-                              )
-                            }
+                            value={localPort}
+                            onChange={(e) => {
+                              setLocalPort(e.target.value);
+                              localStorage.setItem("config_local_port", e.target.value);
+                            }}
                           />
                         </div>
                         <div className="space-y-1">
@@ -1353,16 +1354,11 @@ export function AdvancedView({ lang }: { lang: Language }) {
                           </label>
                           <select
                             className="w-full border border-border p-2 rounded bg-secondary text-foreground text-sm"
-                            value={
-                              localStorage.getItem("config_local_host") ||
-                              "127.0.0.1"
-                            }
-                            onChange={(e) =>
-                              localStorage.setItem(
-                                "config_local_host",
-                                e.target.value,
-                              )
-                            }
+                            value={localHost}
+                            onChange={(e) => {
+                              setLocalHost(e.target.value);
+                              localStorage.setItem("config_local_host", e.target.value);
+                            }}
                           >
                             <option value="127.0.0.1">
                               127.0.0.1 (仅本机)
@@ -1386,8 +1382,7 @@ export function AdvancedView({ lang }: { lang: Language }) {
                             </span>
                             {serverStatus?.running && (
                               <span className="text-[10px] bg-secondary px-1 rounded border font-mono text-muted-foreground">
-                                :{serverStatus.port} (PID: {serverStatus.pid})
-                                ```
+                                监听端口:{serverStatus.port} (PID: {serverStatus.pid})
                               </span>
                             )}
                           </div>

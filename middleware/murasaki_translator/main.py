@@ -937,12 +937,10 @@ def main():
     _, file_ext = os.path.splitext(input_path)
     # Determine Architecture (Novel vs Structured vs Alignment)
     # is_structured: True for subtitle formats and alignment mode (which uses pseudo-SRT tags)
+    # 注意：普通 .txt 文件无论使用何种模式都不需要额外的 .txt 后缀
     is_structured = file_ext.lower() in ['.epub', '.srt', '.ass', '.ssa'] or args.alignment_mode
-    if is_structured:
-        is_structured_doc = True
-    else:
-        # Default Novel mode (doc) or Line mode
-        is_structured_doc = args.mode == 'doc'
+    # is_structured_doc: 决定是否需要写入临时 .txt 文件（仅对二进制/结构化格式需要）
+    is_structured_doc = is_structured  # 只有真正的结构化文档才需要临时 txt
 
     if args.output:
         output_path = args.output
@@ -1147,6 +1145,13 @@ def main():
 
     pre_processor = RuleProcessor(pre_rules)
     post_processor = RuleProcessor(post_rules)
+
+    # [Block Separator] 动态检测：如果后处理规则包含 ensure_double_newline，则 block 间使用双换行
+    # 这确保 block 内部和 block 之间的换行风格一致
+    use_double_newline_separator = any(
+        r.get('pattern') == 'ensure_double_newline' and r.get('active', True) 
+        for r in post_rules
+    )
 
     print(f"Loaded {len(pre_processor.rules)} pre-processing rules.")
     print(f"Loaded {len(post_processor.rules)} post-processing rules.")
@@ -1702,8 +1707,9 @@ def main():
                                 translation_cache.add_block(next_write_idx, res["src_text"], res["preview_text"], w_types, res["cot"], res.get("retry_history", []))
                             
                             # Write to txt stream
-                            f_out.write(res["out_text"] + "\n")
-                            if args.mode == "doc": f_out.write("\n")
+                            # 动态分隔符：如果后处理规则包含 ensure_double_newline，则 block 间使用双换行
+                            block_separator = "\n\n" if (use_double_newline_separator or args.mode == "doc") else "\n"
+                            f_out.write(res["out_text"] + block_separator)
                             
                             if args.save_cot and res["cot"]:
                                 f_cot.write(f"[MURASAKI] ========== Block {curr_disp} ==========\n{res['raw_output']}\n\n")
@@ -1797,6 +1803,33 @@ def main():
 
     except KeyboardInterrupt:
         print("\n[System] Interrupted by user. Shutting down immediately...")
+        
+        # [中断重建] 从 temp.jsonl 重建预览 txt 供用户查看已翻译内容
+        try:
+            if 'temp_progress_path' in locals() and os.path.exists(temp_progress_path):
+                rebuild_path = output_path + ".interrupted.txt"
+                with open(temp_progress_path, 'r', encoding='utf-8') as tf:
+                    lines = tf.readlines()
+                if lines:
+                    # json 已在顶层导入，无需重复导入
+                    rebuilt_blocks = []
+                    for line in lines:
+                        try:
+                            data = json.loads(line.strip())
+                            if data.get('output'):
+                                rebuilt_blocks.append(data['output'])
+                        except: pass
+                    if rebuilt_blocks:
+                        with open(rebuild_path, 'w', encoding='utf-8') as rf:
+                            rf.write("\n\n".join(rebuilt_blocks))
+                        print(f"[System] Partial translation saved to: {rebuild_path}")
+                        safe_print_json("JSON_INTERRUPTED", {
+                            "preview_path": rebuild_path,
+                            "blocks_saved": len(rebuilt_blocks)
+                        })
+        except Exception as e:
+            print(f"[System] Failed to rebuild preview: {e}")
+        
         if 'executor' in locals():
             executor.shutdown(wait=False, cancel_futures=True)
         if engine: 

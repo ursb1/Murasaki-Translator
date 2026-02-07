@@ -16,7 +16,7 @@ import {
   Eye,
   Loader2,
 } from "lucide-react";
-import { Button } from "./ui/core";
+import { Button, Tooltip } from "./ui/core";
 import { translations, Language } from "../lib/i18n";
 import { AlertModal } from "./ui/AlertModal";
 import { useAlertModal } from "../hooks/useAlertModal";
@@ -333,13 +333,13 @@ export function RuleEditor({ lang, mode }: RuleEditorProps) {
   const presetGroups =
     mode === "pre"
       ? [
-          { key: "pre_novel", label: "轻小说预处理", desc: "保留段落间距" },
-          { key: "pre_general", label: "通用文本预处理", desc: "清理空行" },
-        ]
+        { key: "pre_novel", label: "轻小说预处理", desc: "保留段落间距" },
+        { key: "pre_general", label: "通用文本预处理", desc: "清理空行" },
+      ]
       : [
-          { key: "post_novel", label: "轻小说后处理", desc: "双换行格式" },
-          { key: "post_general", label: "通用文本后处理", desc: "单换行紧凑" },
-        ];
+        { key: "post_novel", label: "轻小说后处理", desc: "双换行格式" },
+        { key: "post_general", label: "通用文本后处理", desc: "单换行紧凑" },
+      ];
 
   const currentStepText =
     activeStep >= 0 && testSteps[activeStep]
@@ -406,13 +406,14 @@ export function RuleEditor({ lang, mode }: RuleEditorProps) {
                             {p.desc}
                           </div>
                         </button>
-                        <button
-                          onClick={() => applyPreset(p.key, false)}
-                          className="p-3 rounded-xl bg-secondary/50 hover:bg-accent text-muted-foreground hover:text-foreground transition-all"
-                          title="追加"
-                        >
-                          <Plus className="w-4 h-4" />
-                        </button>
+                        <Tooltip content="追加到现有规则">
+                          <button
+                            onClick={() => applyPreset(p.key, false)}
+                            className="p-3 rounded-xl bg-secondary/50 hover:bg-accent text-muted-foreground hover:text-foreground transition-all"
+                          >
+                            <Plus className="w-4 h-4" />
+                          </button>
+                        </Tooltip>
                       </div>
                     ))}
                   </div>
@@ -592,13 +593,14 @@ export function RuleEditor({ lang, mode }: RuleEditorProps) {
                       </div>
 
                       <div className="pt-0 lg:pt-5">
-                        <button
-                          onClick={() => removeRule(rule.id)}
-                          className="p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all"
-                          title="删除规则"
-                        >
-                          <Trash className="w-4 h-4" />
-                        </button>
+                        <Tooltip content="删除规则">
+                          <button
+                            onClick={() => removeRule(rule.id)}
+                            className="p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all"
+                          >
+                            <Trash className="w-4 h-4" />
+                          </button>
+                        </Tooltip>
                       </div>
                     </div>
 
