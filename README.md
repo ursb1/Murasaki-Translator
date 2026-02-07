@@ -85,7 +85,7 @@ Murasaki 模型针对术语表进行了特化训练，支持 **Prompt 级术语�
 > | Murasaki-8B | 6 GB | 8 GB+ |
 > | Murasaki-14B | 10 GB | 12 GB+ |
 > 
-> Apple Silicon 使用统一内存，16GB+ 即可流畅运行。Linux NVIDIA 用户如需 CUDA 加速，需[自行编译](./PLATFORM_COMPATIBILITY.md#-nvidia-cuda-加速可选高级用户)。
+> Apple Silicon 使用统一内存，16GB+ 即可流畅运行。
 
 ### 快速开始
 
@@ -93,7 +93,7 @@ Murasaki 模型针对术语表进行了特化训练，支持 **Prompt 级术语�
    请直接下载 GitHub 页面右侧的 [Release](https://github.com/soundstarrain/Murasaki-Translator/releases) 版本。
    - **Windows**: 下载 `*-cuda-x64.zip` (NVIDIA) 或 `*-vulkan-x64.zip` (AMD/Intel)，解压即用
    - **macOS**: 下载 `*.dmg`，拖入 Applications 文件夹
-   - **Linux**: 下载 `*.AppImage`，添加执行权限后双击运行
+   - **Linux**: 下载 `*.AppImage`，添加执行权限后双击运行（Linux NVIDIA 用户如需 CUDA 加速，需[自行编译](./PLATFORM_COMPATIBILITY.md#-nvidia-cuda-加速可选高级用户)。）
    
    **[详细平台安装指南](./PLATFORM_COMPATIBILITY.md)** — 包含 Linux 服务器 CLI 部署、NVIDIA CUDA 编译说明等进阶内容。
    
