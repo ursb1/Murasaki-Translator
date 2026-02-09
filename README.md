@@ -27,6 +27,8 @@
 
 **Murasaki 系列模型** 是针对 ACGN 领域特化微调的翻译模型，其训练数据中 90% 以上为高质量的段落级长文本。模型原生支持 **Chain-of-Thought (CoT)** 思维链机制，具备结合长上下文进行精准 ACGN 文本翻译的能力。
 
+> **✨ Now Live:** 无需下载模型，点击 **[Online Demo](https://huggingface.co/spaces/Murasaki-Project/online-demo)** 在线体验模型。
+
 ---
 
 本项目基于 Murasaki 系列模型的原生 CoT 能力和长上下文特性，专门设计并优化了翻译引擎。我们对模型底层格式及特性进行了深度的适配与工程优化，底层采用 **llama.cpp** 推理框架，前端使用 **Electron + React** 构建，旨在为轻小说翻译提供一个轻量级、高性能且功能完备的解决方案。
