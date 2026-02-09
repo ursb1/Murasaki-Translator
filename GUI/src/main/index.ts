@@ -1078,7 +1078,15 @@ ipcMain.handle('check-env-component', async (_event, component: string) => {
             clearTimeout(timeout)
 
             try {
-                const report = JSON.parse(output)
+                // 稳健提取逻辑：寻找最后一个有效的 JSON 对象
+                const cleanOutput = output.trim()
+                const jsonStart = cleanOutput.lastIndexOf('{')
+                const jsonEnd = cleanOutput.lastIndexOf('}')
+                const jsonStr = jsonStart >= 0 && jsonEnd > jsonStart
+                    ? cleanOutput.substring(jsonStart, jsonEnd + 1)
+                    : cleanOutput
+
+                const report = JSON.parse(jsonStr)
                 // 找到指定组件的信息
                 const componentData = report.components?.find((c: any) => c.name.toLowerCase() === component.toLowerCase())
                 resolve({
@@ -1179,8 +1187,8 @@ ipcMain.handle('fix-env-component', async (_event, component: string) => {
 
                 const result = JSON.parse(jsonStr)
                 resolve({
-                    success: result.fixResult?.success || false,
-                    message: result.fixResult?.message || 'Unknown result',
+                    success: result.fixResult?.success || result.summary?.overallStatus === 'ok' || false,
+                    message: result.fixResult?.message || (result.summary?.overallStatus === 'ok' ? '修复成功' : '未知结果'),
                     exitCode: code,
                     output,
                     errorOutput

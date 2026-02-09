@@ -615,8 +615,16 @@ class LlamaBackendChecker(ComponentChecker):
             req.add_header('Content-Type', 'application/json')
             
             print_info("正在进行翻译测试...")
-            response = urllib.request.urlopen(req, timeout=30)
-            result = json.loads(response.read().decode())
+            try:
+                response = urllib.request.urlopen(req, timeout=30)
+                content = response.read().decode()
+                result = json.loads(content)
+            except (json.JSONDecodeError, UnicodeDecodeError, Exception) as e:
+                self.status = 'warning'
+                self.issues.append(f"返回数据解析失败: {str(e)}")
+                self.fixes.append("检查后端是否为兼容的 llama-server 接口")
+                print_error(f"解析响应失败: {e}")
+                return
             
             if 'choices' in result and len(result['choices']) > 0:
                 self.status = 'ok'

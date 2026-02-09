@@ -92,7 +92,7 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
                 description: 'NVIDIA GPU 加速',
                 optional: true,
                 fixActions: [
-                    { component: 'CUDA', label: '下载驱动', description: '跳转 NVIDIA 官网下载', type: 'link', url: 'https://www.nvidia.com/Download/index.aspx', primary: true }
+                    { component: 'CUDA', label: '下载驱动', description: '跳转 NVIDIA 官网下载，推荐下载CUDA Toolkit 12+版本', type: 'link', url: 'https://www.nvidia.com/Download/index.aspx', primary: true }
                 ]
             },
             {
@@ -103,7 +103,7 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
                 optional: true,
                 fixActions: [
                     { component: 'Vulkan', label: '一键安装', description: '自动下载安装 Vulkan Runtime (~50MB)', type: 'download', primary: true },
-                    { component: 'Vulkan', label: '手动下载', description: '跳转 LunarG 官网', type: 'link', url: 'https://vulkan.lunarg.com/sdk/home' }
+                    { component: 'Vulkan', label: '手动下载', description: '跳转 LunarG 官网，下载后解压放到\resources\middleware\bin', type: 'link', url: 'https://vulkan.lunarg.com/sdk/home' }
                 ]
             },
             {
@@ -112,7 +112,8 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
                 icon: Server,
                 description: '本地 LLM 推理',
                 fixActions: [
-                    { component: 'LlamaBackend', label: '启动服务', description: '启动 llama-server', type: 'auto', primary: true }
+                    { component: 'LlamaBackend', label: '启动服务', description: '启动 llama-server', type: 'auto', primary: true },
+                    { component: 'LlamaBackend', label: '手动下载', description: '跳转官网下载二进制文件 (~20MB)，下载后解压放到\resources\middleware\bin', type: 'link', url: 'https://github.com/ggerganov/llama.cpp/releases' }
                 ]
             },
             {
