@@ -216,8 +216,26 @@ const getPythonPath = (): { type: 'python' | 'bundle'; path: string } => {
 
 // Helper to find a script-capable Python runtime (used by utility scripts like env_fixer/get_specs)
 const getScriptPythonPath = (): string => {
+    const middlewarePath = getMiddlewarePath()
+    const middlewarePythonCandidates = process.platform === 'win32'
+        ? [
+            join(middlewarePath, '.venv', 'Scripts', 'python.exe'),
+            join(middlewarePath, 'python_env', 'python.exe')
+        ]
+        : [
+            join(middlewarePath, '.venv', 'bin', 'python3'),
+            join(middlewarePath, '.venv', 'bin', 'python'),
+            join(middlewarePath, 'python_env', 'bin', 'python3'),
+            join(middlewarePath, 'python_env', 'bin', 'python'),
+            join(middlewarePath, 'python_env', 'python3'),
+            join(middlewarePath, 'python_env', 'python')
+        ]
+
     if (is.dev) {
         if (process.env.ELECTRON_PYTHON_PATH) return process.env.ELECTRON_PYTHON_PATH
+        for (const candidate of middlewarePythonCandidates) {
+            if (fs.existsSync(candidate)) return candidate
+        }
         return process.platform === 'win32' ? 'python' : 'python3'
     }
 
@@ -227,10 +245,14 @@ const getScriptPythonPath = (): string => {
     }
 
     const candidates = [
+        ...middlewarePythonCandidates,
         join(process.resourcesPath, 'python_env', 'bin', 'python3'),
         join(process.resourcesPath, 'python_env', 'bin', 'python'),
         join(process.resourcesPath, 'python_env', 'python3'),
-        join(process.resourcesPath, 'python_env', 'python')
+        join(process.resourcesPath, 'python_env', 'python'),
+        '/usr/bin/python3',
+        '/usr/local/bin/python3',
+        '/opt/homebrew/bin/python3'
     ]
 
     for (const candidate of candidates) {
@@ -881,12 +903,36 @@ ipcMain.handle('get-system-diagnostics', async () => {
 
         if (process.platform === 'linux') {
             try {
+                const { stdout } = await execWithTimeout('nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader,nounits', 5000)
+                const first = stdout.split(/\r?\n/).map((line: string) => line.trim()).find((line: string) => Boolean(line))
+                if (first) {
+                    const parts = first.split(',').map((v: string) => v.trim())
+                    if (parts.length >= 3) {
+                        result.gpu = { name: parts[0], driver: parts[1], vram: `${parts[2]} MB` }
+                        return
+                    }
+                }
+            } catch { }
+
+            try {
                 const { stdout } = await execWithTimeout('lspci', 4000)
                 const line = stdout.split(/\r?\n/).find((entry: string) => /(VGA|3D|Display)/i.test(entry))
                 if (line) {
                     result.gpu = {
                         name: line.split(':').slice(2).join(':').trim() || line.trim(),
                         driver: 'Detected via lspci'
+                    }
+                    return
+                }
+            } catch { }
+
+            try {
+                const { stdout } = await execWithTimeout('glxinfo -B', 4000)
+                const line = stdout.split(/\r?\n/).find((entry: string) => /Device:\s*/i.test(entry))
+                if (line) {
+                    result.gpu = {
+                        name: line.replace(/.*Device:\s*/i, '').trim(),
+                        driver: 'Detected via glxinfo'
                     }
                 }
             } catch { }
@@ -936,6 +982,14 @@ ipcMain.handle('get-system-diagnostics', async () => {
                 result.cuda = { version: 'N/A', available: false }
             }
         } catch {
+            try {
+                const { stdout } = await execWithTimeout('nvidia-smi --query-gpu=driver_version --format=csv,noheader', 3000)
+                const first = stdout.split(/\r?\n/).map((line: string) => line.trim()).find((line: string) => Boolean(line))
+                if (first) {
+                    result.cuda = { version: `driver ${first}`, available: true }
+                    return
+                }
+            } catch { }
             result.cuda = { version: 'N/A', available: false }
         }
     })()
@@ -949,6 +1003,13 @@ ipcMain.handle('get-system-diagnostics', async () => {
             const version = versionMatch ? versionMatch[1] : undefined
             result.vulkan = { available: true, version }
         } catch {
+            try {
+                const { stdout, stderr } = await execWithTimeout('vulkaninfo', 5000)
+                const output = `${stdout}\n${stderr}`
+                const versionMatch = output.match(/Vulkan Instance Version:\s*(\d+\.\d+\.\d+)/i)
+                result.vulkan = { available: true, version: versionMatch ? versionMatch[1] : undefined }
+                return
+            } catch { }
             result.vulkan = { available: false }
         }
     })()
@@ -2559,7 +2620,8 @@ ipcMain.handle('hf-download-start', async (event, repoId: string, fileName: stri
             const trimmed = line.trim()
             if (!trimmed) continue
             try {
-                const msg = JSON.parse(trimmed)
+                const msg = extractLastJsonObject<any>(trimmed) || tryParseJson<any>(trimmed)
+                if (!msg) throw new Error('non-json output')
                 if (msg.type === 'progress') {
                     event.sender.send('hf-download-progress', msg)
                 } else if (msg.type === 'complete') {
@@ -2578,14 +2640,34 @@ ipcMain.handle('hf-download-start', async (event, repoId: string, fileName: stri
     })
 
     hfDownloadProcess.stderr?.on('data', (data: Buffer) => {
-        console.log('[HF Download] stderr:', data.toString())
+        const text = data.toString()
+        const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+        let handled = false
+        for (const line of lines) {
+            const msg = extractLastJsonObject<any>(line) || tryParseJson<any>(line)
+            if (!msg) continue
+            if (msg.type === 'progress') {
+                event.sender.send('hf-download-progress', msg)
+                handled = true
+            } else if (msg.type === 'complete') {
+                event.sender.send('hf-download-progress', { ...msg, status: 'complete', percent: 100 })
+                terminalSignalHandled = true
+                handled = true
+            } else if (msg.type === 'error') {
+                event.sender.send('hf-download-error', { message: msg.message })
+                terminalSignalHandled = true
+                handled = true
+            }
+        }
+        if (!handled) console.log('[HF Download] stderr:', text)
     })
 
     hfDownloadProcess.on('close', (code) => {
         const tail = stdoutBuffer.trim()
         if (tail) {
             try {
-                const msg = JSON.parse(tail)
+                const msg = extractLastJsonObject<any>(tail) || tryParseJson<any>(tail)
+                if (!msg) throw new Error('non-json tail')
                 if (msg.type === 'progress') {
                     event.sender.send('hf-download-progress', msg)
                 } else if (msg.type === 'complete') {

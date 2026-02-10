@@ -193,7 +193,7 @@ class TranslationWorker:
         return False
 
     async def start_server(self, gpu_layers: int = -1, ctx: int = 8192,
-                          flash_attn: bool = False, kv_cache_type: str = "q8_0"):
+                          flash_attn: bool = False, kv_cache_type: str = "f16"):
         """启动常驻 llama-server（模型常驻内存）"""
         if self.server_process and self.server_process.poll() is None:
             return  # 已在运行
@@ -572,7 +572,7 @@ if __name__ == "__main__":
             rules_post = None
             parallel = 1
             flash_attn = False
-            kv_cache_type = "q8_0"
+            kv_cache_type = "f16"
 
         task = TranslationTask(
             task_id="test001",

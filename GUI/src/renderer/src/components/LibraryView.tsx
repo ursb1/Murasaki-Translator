@@ -139,8 +139,8 @@ const texts = {
       short: "单句模式",
     },
     kvOptions: {
-      f16: "F16 (标准)",
-      q8_0: "Q8_0 (推荐)",
+      f16: "F16 (原生质量)",
+      q8_0: "Q8_0 (节约显存)",
       q5_1: "Q5_1 (高效型)",
       q4_0: "Q4_0 (省显存)",
     },
@@ -224,8 +224,8 @@ const texts = {
       short: "Short Mode",
     },
     kvOptions: {
-      f16: "F16 (Standard)",
-      q8_0: "Q8_0 (Recommended)",
+      f16: "F16 (Native Quality)",
+      q8_0: "Q8_0 (VRAM Saver)",
       q5_1: "Q5_1 (Efficient)",
       q4_0: "Q4_0 (Low VRAM)",
     },
@@ -310,8 +310,8 @@ const texts = {
       short: "短文モード",
     },
     kvOptions: {
-      f16: "F16 (高品質)",
-      q8_0: "Q8_0 (バランス)",
+      f16: "F16 (ネイティブ品質)",
+      q8_0: "Q8_0 (VRAM節約)",
       q5_1: "Q5_1 (効率的)",
       q4_0: "Q4_0 (低VRAM)",
     },
@@ -342,7 +342,7 @@ interface FileConfigModalProps {
   onClose: () => void;
 }
 
-function FileConfigModal({
+export function FileConfigModal({
   item,
   lang,
   onSave,
@@ -350,6 +350,7 @@ function FileConfigModal({
 }: FileConfigModalProps) {
   const t = texts[lang];
   const [config, setConfig] = useState<FileConfig>({ ...item.config });
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
 
   // Get global defaults for display
   const globalGlossary = localStorage.getItem("config_glossary_path") || "";
@@ -358,15 +359,32 @@ function FileConfigModal({
   const globalTemp = localStorage.getItem("config_temperature") || "0.7";
   const globalGpu = localStorage.getItem("config_gpu") || "-1";
   const globalPreset = localStorage.getItem("config_preset") || "novel";
+  const globalModel = localStorage.getItem("config_model") || "";
   const globalRepBase =
     localStorage.getItem("config_rep_penalty_base") || "1.0";
   const globalRepMax = localStorage.getItem("config_rep_penalty_max") || "1.5";
   const globalFlashAttn = localStorage.getItem("config_flash_attn") !== "false";
-  const globalKvCache = localStorage.getItem("config_kv_cache_type") || "q8_0";
+  const globalKvCache = localStorage.getItem("config_kv_cache_type") || "f16";
   const globalSeed = localStorage.getItem("config_seed") || "";
   const globalAlignmentMode =
     localStorage.getItem("config_alignment_mode") === "true";
   const globalSaveCot = localStorage.getItem("config_save_cot") === "true";
+
+  useEffect(() => {
+    let alive = true;
+    window.api?.getModels?.()
+      .then((models) => {
+        if (!alive || !Array.isArray(models)) return;
+        setAvailableModels(models);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setAvailableModels([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const handleSelectGlossary = async () => {
     if (config.useGlobalDefaults) return;
@@ -606,6 +624,51 @@ function FileConfigModal({
               <option value="script">{t.presetOptions.script}</option>
               <option value="short">{t.presetOptions.short}</option>
             </select>
+            <div className="space-y-1.5 pt-2">
+              <div className="flex items-center justify-between">
+                <label
+                  className={`text-xs font-medium flex items-center gap-1.5 ${config.useGlobalDefaults ? "text-muted-foreground" : "text-foreground"}`}
+                >
+                  <Cpu className="w-3.5 h-3.5 shrink-0 opacity-70" />
+                  {lang === "zh"
+                    ? "模型选择"
+                    : lang === "jp"
+                      ? "モデル上書き"
+                      : "Model Override"}
+                </label>
+                <span className="text-[10px] text-muted-foreground/50 tabular-nums">
+                  {t.currentGlobal}: {globalModel ? globalModel.split(/[/\\]/).pop() : t.notSet}
+                </span>
+              </div>
+              <select
+                value={!config.useGlobalDefaults && config.model ? config.model : ""}
+                disabled={config.useGlobalDefaults}
+                onChange={(e) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    model: e.target.value || undefined,
+                  }))
+                }
+                className={`
+                  w-full h-8 px-2.5 text-sm rounded-md border transition-all outline-none
+                  ${config.useGlobalDefaults
+                    ? "bg-secondary/30 border-transparent text-muted-foreground/50 cursor-not-allowed"
+                    : "bg-background/50 border-border focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
+                  }
+                `}
+              >
+                <option value="">
+                  {config.useGlobalDefaults
+                    ? (globalModel ? globalModel.split(/[/\\]/).pop() : t.notSet)
+                    : (lang === "zh" ? "跟随全局" : lang === "jp" ? "グローバルに従う" : "Use Global")}
+                </option>
+                {availableModels.map((model) => (
+                  <option key={model} value={model}>
+                    {model.replace(".gguf", "")}
+                  </option>
+                ))}
+              </select>
+            </div>
             {/* 短句模式警告 */}
             {!config.useGlobalDefaults && config.preset === "short" && (
               <div className="flex items-start gap-1.5 p-2 rounded bg-amber-500/10 border border-amber-500/20">

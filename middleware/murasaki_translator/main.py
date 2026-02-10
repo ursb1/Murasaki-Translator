@@ -523,7 +523,7 @@ def translate_single_block(args):
         n_ctx=args.ctx,
         no_spawn=getattr(args, 'no_server_spawn', False),
         flash_attn=getattr(args, 'flash_attn', False),
-        kv_cache_type=getattr(args, 'kv_cache_type', "q8_0"),
+        kv_cache_type=getattr(args, 'kv_cache_type', "f16"),
         use_large_batch=getattr(args, 'use_large_batch', False),
         batch_size=getattr(args, 'batch_size', None),
         seed=getattr(args, 'seed', None)
@@ -815,7 +815,7 @@ def main():
     # High-Fidelity Granular Settings
     parser.add_argument("--high-fidelity", action="store_true", help="Master Switch: Enable recommended High-Fidelity settings")
     parser.add_argument("--flash-attn", action="store_true", help="Enable Flash Attention")
-    parser.add_argument("--kv-cache-type", default="q8_0", choices=["f16", "q8_0", "q5_1", "q4_0"], help="KV Cache Quantization (default: q8_0)")
+    parser.add_argument("--kv-cache-type", default="f16", choices=["f16", "q8_0", "q5_1", "q4_0"], help="KV Cache Quantization (default: f16)")
     parser.add_argument("--use-large-batch", action="store_true", help="Use large batch sizes (b=ub=1024 for safety)")
     parser.add_argument("--batch-size", type=int, help="Manual physical batch size (overrides large-batch default)")
     parser.add_argument("--seed", type=int, help="Lock sampling seed (e.g. 42)")

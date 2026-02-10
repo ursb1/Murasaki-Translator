@@ -773,7 +773,11 @@ export function SettingsView({ lang }: { lang: Language }) {
                                         variant="outline"
                                         size="sm"
                                         className="h-7 text-[11px] gap-1.5 bg-background shadow-xs hover:bg-secondary transition-all"
-                                        onClick={() => window.api?.openPath(diagnostics?.python?.path?.replace(/\\[^\\]+$/, '') || '')}
+                                        onClick={() => {
+                                            const pythonPath = diagnostics?.python?.path || ''
+                                            const parentDir = pythonPath.replace(/[\\/][^\\/]+$/, '')
+                                            window.api?.openPath(parentDir || pythonPath)
+                                        }}
                                         disabled={!diagnostics?.python}
                                     >
                                         <FolderOpen className="w-3 h-3" />

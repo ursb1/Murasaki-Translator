@@ -223,20 +223,27 @@ class PythonChecker(ComponentChecker):
 
         # 构建 Python 可执行文件名
         python_exe = 'python.exe' if self.platform == 'Windows' else 'python'
+        python3_exe = None if self.platform == 'Windows' else 'python3'
         python_subdir = 'Scripts' if self.platform == 'Windows' else 'bin'
 
         # 多种可能路径，按优先级排序
         possible_paths = []
 
-        # 1. Release 环境: resources/python_env (优先级最高)
-        # middleware/在 resources/ 下时，python_env/ 是同级目录
-        python_env_path = script_dir / 'python_env' / python_exe
-        possible_paths.append(python_env_path)
+        # 1. Release 环境: resources/middleware/python_env/*
+        # middleware/在 resources/ 下时，python_env/ 可能在同级或带 bin 子目录
+        possible_paths.append(script_dir / 'python_env' / python_exe)
+        possible_paths.append(script_dir / 'python_env' / python_subdir / python_exe)
+        if python3_exe:
+            possible_paths.append(script_dir / 'python_env' / python3_exe)
+            possible_paths.append(script_dir / 'python_env' / python_subdir / python3_exe)
 
         # 2. Release 环境: 脚本在 middleware/ 下，python_env 在 resources/ 下
-        # 此时需要检查父目录（resources）的 python_env
-        resources_python_env = script_dir.parent / 'python_env' / python_exe
-        possible_paths.append(resources_python_env)
+        resources_python_env_root = script_dir.parent / 'python_env'
+        possible_paths.append(resources_python_env_root / python_exe)
+        possible_paths.append(resources_python_env_root / python_subdir / python_exe)
+        if python3_exe:
+            possible_paths.append(resources_python_env_root / python3_exe)
+            possible_paths.append(resources_python_env_root / python_subdir / python3_exe)
 
         # 3. 开发环境: 脚本所在目录的 .venv
         dev_venv1 = script_dir / '.venv' / python_subdir / python_exe
@@ -245,6 +252,12 @@ class PythonChecker(ComponentChecker):
         # 4. 开发环境: 父目录的 middleware/.venv
         dev_venv2 = script_dir.parent / 'middleware' / '.venv' / python_subdir / python_exe
         possible_paths.append(dev_venv2)
+
+        # 5. 系统 Python 兜底（主要用于 macOS/Linux）
+        if self.platform != 'Windows':
+            system_python = shutil.which('python3') or shutil.which('python')
+            if system_python:
+                possible_paths.append(Path(system_python))
 
         # 按优先级查找第一个存在的路径
         for path in possible_paths:
@@ -333,14 +346,30 @@ class PythonChecker(ComponentChecker):
         
         emit_progress("pip_install", 10, f"正在安装: {', '.join(install_packages)}")
         
-        # 使用 pip 安装缺失的包（使用清华镜像源加速）
-        pip_cmd = [
-            self.path, '-m', 'pip', 'install',
-            '-i', 'https://pypi.tuna.tsinghua.edu.cn/simple',
-            '--trusted-host', 'pypi.tuna.tsinghua.edu.cn'
-        ] + install_packages
-        success, output = run_command(pip_cmd, timeout=300)  # 5分钟超时
-        
+        # 使用多回退策略安装，避免单镜像源导致跨平台失败
+        install_attempts = [
+            [
+                self.path, '-m', 'pip', 'install',
+                '-i', 'https://pypi.tuna.tsinghua.edu.cn/simple',
+                '--trusted-host', 'pypi.tuna.tsinghua.edu.cn'
+            ] + install_packages,
+            [
+                self.path, '-m', 'pip', 'install',
+                '-i', 'https://pypi.org/simple',
+                '--trusted-host', 'pypi.org',
+                '--trusted-host', 'files.pythonhosted.org'
+            ] + install_packages,
+            [self.path, '-m', 'pip', 'install'] + install_packages
+        ]
+
+        success = False
+        output = ''
+        for idx, pip_cmd in enumerate(install_attempts, 1):
+            emit_progress("pip_install", 10 + idx * 20, f"尝试安装源 #{idx} ...")
+            success, output = run_command(pip_cmd, timeout=300)  # 5 分钟超时
+            if success:
+                break
+
         emit_progress("pip_install", 100, "安装完成" if success else "安装失败")
         
         if success:
@@ -429,9 +458,15 @@ class VulkanChecker(ComponentChecker):
                     print_info(f"  设备: {device_name}")
                 return
         
+        if self.platform == 'Darwin':
+            self.status = 'ok'
+            self.version = 'Metal Backend'
+            print_info("macOS 平台默认使用 Metal 后端（无需 Vulkan Runtime）")
+            return
+
         self.status = 'warning'
         self.issues.append("Vulkan 运行时未安装")
-        
+
         if self.platform == 'Windows':
             self.fixes.append("点击「一键安装 Vulkan」自动下载并安装")
             print_warning("Vulkan 运行时组件缺失 (通用 GPU 加速可能受限)")
@@ -929,12 +964,12 @@ def main():
     if args.fix:
         result = fixer.fix_component(args.fix)
         if args.json:
-            print(json.dumps({'fixResult': result}, indent=2, ensure_ascii=False))
+            print(json.dumps({'fixResult': result}, ensure_ascii=False))
         sys.exit(0 if result['success'] else 1)
     
     # 输出 JSON（如果指定）
     if args.json:
-        print(json.dumps(report, indent=2, ensure_ascii=False))
+        print(json.dumps(report, ensure_ascii=False))
         sys.exit(0 if report['summary']['totalErrors'] == 0 else 1)
     
     # 正常退出

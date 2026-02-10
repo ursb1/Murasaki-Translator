@@ -313,11 +313,13 @@ function RecordDetailContent({
           </div>
           <div>
             <p className="text-muted-foreground text-xs">{t.historyView.stats.lines}</p>
-            <p className="font-medium">{fullRecord.totalLines || 0}</p>
+            <p className="font-medium">{fullRecord.sourceLines || 0}/{fullRecord.totalLines || 0}</p>
           </div>
           <div>
             <p className="text-muted-foreground text-xs">{t.historyView.stats.chars}</p>
-            <p className="font-medium">{fullRecord.totalChars?.toLocaleString() || 0}</p>
+            <p className="font-medium">
+              {(fullRecord.sourceChars || 0).toLocaleString()}/{(fullRecord.totalChars || 0).toLocaleString()}
+            </p>
           </div>
           <div>
             <p className="text-muted-foreground text-xs">{t.historyView.stats.speed}</p>
@@ -339,7 +341,7 @@ function RecordDetailContent({
                   tr.type === "empty_retry" ||
                   tr.type === "line_mismatch" ||
                   tr.type === "rep_penalty_increase" ||
-                  tr.type === "parse_fallback"
+                  tr.type === "glossary_missed"
               ).length}
             </p>
           </div>

@@ -3,7 +3,7 @@
  * 采用双栏联动布局 (Split View) + 内联编辑 (In-Place Edit)
  */
 
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { Button, Tooltip } from './ui/core'
 import {
     FolderOpen,
@@ -72,6 +72,7 @@ import { ResultChecker } from './ResultChecker'
 import { findHighSimilarityLines } from '../lib/quality-check'
 import { AlertModal } from './ui/AlertModal'
 import { useAlertModal } from '../hooks/useAlertModal'
+import { stripSystemMarkersForDisplay } from '../lib/displayText'
 
 // ...
 
@@ -514,7 +515,7 @@ export default function ProofreadView({ t, lang, onUnsavedChangesChange }: Proof
                 rulesPost: JSON.parse(localStorage.getItem("config_rules_post") || "[]"),
                 strictMode: localStorage.getItem("config_strict_mode") || "off", // Default to off for manual retry unless set
                 flashAttn: localStorage.getItem("config_flash_attn") !== "false", // Most models support it now
-                kvCacheType: localStorage.getItem("config_kv_cache_type") || "q8_0",
+                kvCacheType: localStorage.getItem("config_kv_cache_type") || "f16",
             }
 
             const result = await window.api?.retranslateBlock({
@@ -663,23 +664,27 @@ export default function ProofreadView({ t, lang, onUnsavedChangesChange }: Proof
 
     // --- Filtering & Pagination ---
 
-    const filteredBlocks = cacheData?.blocks.filter(block => {
-        if (searchKeyword) {
-            const kw = searchKeyword.toLowerCase()
-            if (!block.src.toLowerCase().includes(kw) &&
-                !block.dst.toLowerCase().includes(kw)) {
-                return false
+
+    const filteredBlocks = useMemo(() => {
+        if (!cacheData?.blocks) return []
+        return cacheData.blocks.filter(block => {
+            if (searchKeyword) {
+                const kw = searchKeyword.toLowerCase()
+                if (!block.src.toLowerCase().includes(kw) &&
+                    !block.dst.toLowerCase().includes(kw)) {
+                    return false
+                }
             }
-        }
-        if (filterWarnings && block.warnings.length === 0) return false
-        return true
-    }) || []
+            if (filterWarnings && block.warnings.length === 0) return false
+            return true
+        })
+    }, [cacheData?.blocks, searchKeyword, filterWarnings])
 
     const totalPages = Math.ceil(filteredBlocks.length / pageSize)
-    const paginatedBlocks = filteredBlocks.slice(
+    const paginatedBlocks = useMemo(() => filteredBlocks.slice(
         (currentPage - 1) * pageSize,
         currentPage * pageSize
-    )
+    ), [filteredBlocks, currentPage, pageSize])
 
     // --- Helper UI ---
 
@@ -1127,7 +1132,8 @@ export default function ProofreadView({ t, lang, onUnsavedChangesChange }: Proof
                             const simSet = new Set(simLines)
 
                             // In line mode, render line-by-line with synchronized heights
-                            const srcLinesRaw = trimLeadingEmptyLines(block.src).split('\n')
+                            const displaySrc = stripSystemMarkersForDisplay(trimLeadingEmptyLines(block.src))
+                            const srcLinesRaw = displaySrc.split('\n')
                             const dstText = editingBlockId === block.index ? editingText : trimLeadingEmptyLines(block.dst)
                             const dstLinesRaw = dstText.split('\n')
 
@@ -1172,44 +1178,56 @@ export default function ProofreadView({ t, lang, onUnsavedChangesChange }: Proof
                                     {lineMode ? (
                                         // Line Mode: per-row grid for height sync, overlay textarea for editing
                                         <div className="relative">
-                                            {/* Display layer: per-row grid */}
-                                            <div
-                                                className="grid"
-                                                style={{ gridTemplateColumns: gridTemplate }}
-                                                onClick={() => {
-                                                    if (editingBlockId !== block.index) {
-                                                        setEditingBlockId(block.index)
-                                                        setEditingText(dstText)
-                                                    }
-                                                }}
-                                            >
-                                                {srcLines.map((srcLine, lineIdx) => {
-                                                    const dstLine = dstLines[lineIdx] || ''
-                                                    const isWarning = simSet.has(lineIdx + 1)
-                                                    const cellStyle: React.CSSProperties = {
-                                                        minHeight: '20px',
-                                                        paddingLeft: '44px',
-                                                        paddingRight: '12px',
-                                                        lineHeight: '20px',
-                                                        fontFamily: '"Cascadia Mono", Consolas, "Meiryo", "MS Gothic", "SimSun", "Courier New", monospace',
-                                                        fontSize: '13px',
-                                                        wordBreak: 'break-all',
-                                                    }
-                                                    return (
-                                                        <React.Fragment key={lineIdx}>
-                                                            {/* Source cell */}
-                                                            <div className={`relative border-r border-border/20 ${isWarning ? 'bg-amber-500/20' : ''}`} style={cellStyle}>
+                                            {/* Display layer: two independent text flows to avoid cross-column copy linkage */}
+                                            <div className="grid" style={{ gridTemplateColumns: gridTemplate }}>
+                                                <div className="border-r border-border/20">
+                                                    {srcLines.map((srcLine, lineIdx) => {
+                                                        const isWarning = simSet.has(lineIdx + 1)
+                                                        const cellStyle: React.CSSProperties = {
+                                                            minHeight: '20px',
+                                                            paddingLeft: '44px',
+                                                            paddingRight: '12px',
+                                                            lineHeight: '20px',
+                                                            fontFamily: '"Cascadia Mono", Consolas, "Meiryo", "MS Gothic", "SimSun", "Courier New", monospace',
+                                                            fontSize: '13px',
+                                                            wordBreak: 'break-all',
+                                                        }
+                                                        return (
+                                                            <div key={`src-${lineIdx}`} className={`relative ${isWarning ? 'bg-amber-500/20' : ''}`} style={cellStyle}>
                                                                 <span style={{ position: 'absolute', left: '12px', width: '24px', textAlign: 'right', fontSize: '10px', color: 'hsl(var(--muted-foreground)/0.5)', userSelect: 'none', lineHeight: '20px' }}>{lineIdx + 1}</span>
                                                                 <span className="whitespace-pre-wrap text-foreground select-text">{srcLine || '\u00A0'}</span>
                                                             </div>
-                                                            {/* Translation cell */}
-                                                            <div className={`relative cursor-text ${isWarning ? 'bg-amber-500/20' : ''}`} style={cellStyle}>
+                                                        )
+                                                    })}
+                                                </div>
+                                                <div
+                                                    className="cursor-text"
+                                                    onClick={() => {
+                                                        if (editingBlockId !== block.index) {
+                                                            setEditingBlockId(block.index)
+                                                            setEditingText(dstText)
+                                                        }
+                                                    }}
+                                                >
+                                                    {dstLines.map((dstLine, lineIdx) => {
+                                                        const isWarning = simSet.has(lineIdx + 1)
+                                                        const cellStyle: React.CSSProperties = {
+                                                            minHeight: '20px',
+                                                            paddingLeft: '44px',
+                                                            paddingRight: '12px',
+                                                            lineHeight: '20px',
+                                                            fontFamily: '"Cascadia Mono", Consolas, "Meiryo", "MS Gothic", "SimSun", "Courier New", monospace',
+                                                            fontSize: '13px',
+                                                            wordBreak: 'break-all',
+                                                        }
+                                                        return (
+                                                            <div key={`dst-${lineIdx}`} className={`relative ${isWarning ? 'bg-amber-500/20' : ''}`} style={cellStyle}>
                                                                 <span style={{ position: 'absolute', left: '12px', width: '24px', textAlign: 'right', fontSize: '10px', color: 'hsl(var(--muted-foreground)/0.5)', userSelect: 'none', lineHeight: '20px' }}>{lineIdx + 1}</span>
                                                                 <span className={`whitespace-pre-wrap text-foreground select-text ${editingBlockId === block.index ? 'opacity-0' : ''}`}>{dstLine || '\u00A0'}</span>
                                                             </div>
-                                                        </React.Fragment>
-                                                    )
-                                                })}
+                                                        )
+                                                    })}
+                                                </div>
                                             </div>
                                             {/* Editing overlay: full-block textarea */}
                                             {editingBlockId === block.index && (
@@ -1266,7 +1284,7 @@ export default function ProofreadView({ t, lang, onUnsavedChangesChange }: Proof
                                         // Block Mode: Original layout
                                         <div className="grid relative" style={{ gridTemplateColumns: gridTemplate }}>
                                             <div className="px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap text-foreground select-text overflow-x-auto border-r border-border/20">
-                                                <HighlightText text={trimLeadingEmptyLines(block.src)} keyword={searchKeyword} warningLines={simSet} showLineNumbers={false} />
+                                                <HighlightText text={displaySrc} keyword={searchKeyword} warningLines={simSet} showLineNumbers={false} />
                                             </div>
                                             <div className="relative px-3 py-2 text-sm leading-relaxed overflow-x-auto cursor-text">
                                                 <HighlightText

@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback, forwardRef, useImperativeHandle } from "react"
-import { Play, X, FolderOpen, FileText, BookOpen, Clock, Zap, Layers, Terminal, ChevronDown, Plus, FolderPlus, Trash2, ArrowRight, AlertTriangle, GripVertical, RefreshCw, AlignLeft } from "lucide-react"
+import { Play, X, FolderOpen, FileText, BookOpen, Clock, Zap, Layers, Terminal, ChevronDown, Plus, FolderPlus, Trash2, ArrowRight, AlertTriangle, GripVertical, RefreshCw, AlignLeft, Settings, Bot } from "lucide-react"
 import { Button, Card, Tooltip as UITooltip } from "./ui/core"
 import { translations, Language } from "../lib/i18n"
 import { getVariants } from "../lib/utils"
@@ -11,7 +11,9 @@ import { HardwareMonitorBar, MonitorData } from "./HardwareMonitorBar"
 import { AlertModal } from "./ui/AlertModal"
 import { useAlertModal } from "../hooks/useAlertModal"
 import { FileIcon } from "./ui/FileIcon"
-import { QueueItem, generateId, getFileType } from "../types/common"
+import { QueueItem, FileConfig, generateId, getFileType } from "../types/common"
+import { FileConfigModal } from "./LibraryView"
+import { stripSystemMarkersForDisplay } from "../lib/displayText"
 
 // Window.api type is defined in src/types/api.d.ts
 
@@ -83,6 +85,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(({ lang, active, onRunn
     const [monitorData, setMonitorData] = useState<MonitorData | null>(null)
 
     const [modelPath, setModelPath] = useState<string>("")
+    const [promptPreset, setPromptPreset] = useState<string>(() => localStorage.getItem("config_preset") || "novel")
     const [glossaryPath, setGlossaryPath] = useState<string>("")
     const [models, setModels] = useState<string[]>([])
     const [modelsInfoMap, setModelsInfoMap] = useState<Record<string, { paramsB?: number, sizeGB?: number }>>({})
@@ -112,6 +115,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(({ lang, active, onRunn
     useEffect(() => {
         if (active) {
             fetchData()
+            setPromptPreset(localStorage.getItem("config_preset") || "novel")
             const path = localStorage.getItem("config_model")
             if (path) {
                 const name = path.split(/[/\\]/).pop() || path
@@ -146,7 +150,24 @@ export const Dashboard = forwardRef<any, DashboardProps>(({ lang, active, onRunn
     }, [isRunning, onRunningChange])
 
     const [isReordering, setIsReordering] = useState(false)
+    const [configItem, setConfigItem] = useState<QueueItem | null>(null)
     const [logs, setLogs] = useState<string[]>([])
+
+    const presetOptionLabel = (value: "novel" | "script" | "short") => {
+        if (lang === "zh") {
+            if (value === "novel") return "轻小说模式(默认)"
+            if (value === "script") return "剧本模式"
+            return "短句模式"
+        }
+        if (lang === "jp") {
+            if (value === "novel") return "小説モード"
+            if (value === "script") return "スクリプトモード"
+            return "短文モード"
+        }
+        if (value === "novel") return "Novel"
+        if (value === "script") return "Script"
+        return "Short"
+    }
 
 
     // Collapsible Panels
@@ -169,6 +190,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(({ lang, active, onRunn
     const progressDataRef = useRef<{ total: number, current: number, lines: number, chars: number, sourceLines: number, sourceChars: number, outputPath: string, speeds: number[] }>({
         total: 0, current: 0, lines: 0, chars: 0, sourceLines: 0, sourceChars: 0, outputPath: '', speeds: []
     })
+    const finalStatsRef = useRef<{ totalTime?: number; avgSpeed?: number } | null>(null)
 
     // Ref to hold the fresh checkAndStart function (avoids closure stale state in handleProcessExit)
     const checkAndStartRef = useRef<(inputPath: string, index: number) => Promise<void>>(() => Promise.resolve())
@@ -255,12 +277,15 @@ export const Dashboard = forwardRef<any, DashboardProps>(({ lang, active, onRunn
         if (currentRecordIdRef.current) {
             const startTime = new Date(parseInt(currentRecordIdRef.current))
             const duration = (Date.now() - startTime.getTime()) / 1000
-            const avgSpeed = progressDataRef.current.speeds.length > 0
-                ? Math.round(progressDataRef.current.speeds.reduce((a, b) => a + b, 0) / progressDataRef.current.speeds.length)
-                : 0
+            const effectiveDuration = finalStatsRef.current?.totalTime ?? duration
+            const avgSpeed = finalStatsRef.current?.avgSpeed ?? (
+                effectiveDuration > 0
+                    ? Math.round(progressDataRef.current.chars / effectiveDuration)
+                    : 0
+            )
             updateRecord(currentRecordIdRef.current, {
                 endTime: new Date().toISOString(),
-                duration: Math.round(duration),
+                duration: Math.round(effectiveDuration),
                 status: success ? 'completed' : 'interrupted',
                 totalBlocks: progressDataRef.current.total,
                 completedBlocks: progressDataRef.current.current,
@@ -275,6 +300,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(({ lang, active, onRunn
             })
             currentRecordIdRef.current = null
             progressDataRef.current = { total: 0, current: 0, lines: 0, chars: 0, sourceLines: 0, sourceChars: 0, outputPath: '', speeds: [] }
+            finalStatsRef.current = null
         }
 
         // Don't clear preview - keep showing last translation result
@@ -487,6 +513,10 @@ export const Dashboard = forwardRef<any, DashboardProps>(({ lang, active, onRunn
                     // Final stats from backend
                     try {
                         const data = JSON.parse(log.substring("JSON_FINAL:".length))
+                        finalStatsRef.current = {
+                            totalTime: Number(data.totalTime ?? 0),
+                            avgSpeed: Number(data.avgSpeed ?? 0),
+                        }
 
                         // Update progressDataRef so handleProcessExit uses these final values
                         // instead of overwriting them with stale data
@@ -711,6 +741,17 @@ export const Dashboard = forwardRef<any, DashboardProps>(({ lang, active, onRunn
             }
         })
     }
+
+    const handlePromptPresetChange = (value: string) => {
+        setPromptPreset(value)
+        localStorage.setItem("config_preset", value)
+    }
+
+    const handleSaveFileConfig = (itemId: string, config: FileConfig) => {
+        setQueue(prev => prev.map(item => item.id === itemId ? { ...item, config } : item))
+        setConfigItem(null)
+    }
+
     const handleClearQueue = useCallback(() => {
         showConfirm({
             title: t.dashboard.clear,
@@ -809,15 +850,12 @@ export const Dashboard = forwardRef<any, DashboardProps>(({ lang, active, onRunn
         setPreviewBlocks({})
         localStorage.removeItem("last_preview_blocks") // Clear persisted preview
 
-        // Load Library Queue for Custom Config Overrides
-        let customConfig: any = {}
-        try {
-            const libQueue = JSON.parse(localStorage.getItem("library_queue") || "[]")
-            const item = libQueue.find((q: any) => q.path === inputPath)
-            if (item && item.config && !item.config.useGlobalDefaults) {
-                customConfig = item.config
-            }
-        } catch (e) { console.error("Failed to load library config:", e) }
+        // Prefer in-memory queue config so modal edits apply immediately
+        let customConfig: FileConfig = {}
+        const item = queueRef.current.find((q) => q.path === inputPath)
+        if (item?.config && !item.config.useGlobalDefaults) {
+            customConfig = item.config
+        }
 
         // 根据 ctx 自动计算 chunk-size
         const ctxValue = customConfig.contextSize || parseInt(localStorage.getItem("config_ctx") || "4096")
@@ -826,9 +864,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(({ lang, active, onRunn
         //   - 其余与原公式相同，保持经验验证的参数
         const calculatedChunkSize = Math.max(200, Math.min(3072, Math.floor(((ctxValue * 0.9 - 500) / 3.5) * 1.3)))
 
-        // Get Model Path
-        const modelPath = localStorage.getItem("config_model")
-        if (!modelPath) {
+        const effectiveModelPath = (customConfig.model || localStorage.getItem("config_model") || modelPath || "").trim()
+        if (!effectiveModelPath) {
             // Use custom AlertModal
             showAlert({ title: "Error", description: "Please select a model in the Model Management page first.", variant: 'destructive' })
             window.api?.showNotification("Error", "Please select a model in the Model Management page first.")
@@ -843,7 +880,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(({ lang, active, onRunn
             serverUrl: localStorage.getItem("config_server"),
             outputDir: customConfig.outputDir || localStorage.getItem("config_output_dir"),
             glossaryPath: glossaryOverride !== undefined ? glossaryOverride : (customConfig.glossaryPath || glossaryPath),
-            preset: customConfig.preset || localStorage.getItem("config_preset") || "novel",
+            preset: customConfig.preset || promptPreset || "novel",
             rulesPre: JSON.parse(localStorage.getItem("config_rules_pre") || "[]"),
             rulesPost: JSON.parse(localStorage.getItem("config_rules_post") || "[]"),
 
@@ -891,7 +928,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(({ lang, active, onRunn
             // Concurrency
             concurrency: customConfig.concurrency ?? parseInt(localStorage.getItem("config_concurrency") || "1"),
             flashAttn: customConfig.flashAttn !== undefined ? customConfig.flashAttn : (localStorage.getItem("config_flash_attn") === "true"),
-            kvCacheType: customConfig.kvCacheType || localStorage.getItem("config_kv_cache_type") || "q8_0",
+            kvCacheType: customConfig.kvCacheType || localStorage.getItem("config_kv_cache_type") || "f16",
             useLargeBatch: localStorage.getItem("config_use_large_batch") === "true",
             physicalBatchSize: parseInt(localStorage.getItem("config_physical_batch_size") || "1024"),
             seed: customConfig.seed !== undefined ? customConfig.seed : (localStorage.getItem("config_seed") ? parseInt(localStorage.getItem("config_seed")!) : undefined),
@@ -903,7 +940,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(({ lang, active, onRunn
 
             // Feature Flags
             alignmentMode: customConfig.alignmentMode !== undefined ? customConfig.alignmentMode : (localStorage.getItem("config_alignment_mode") === "true"),
-            saveCot: customConfig.saveCot !== undefined ? customConfig.saveCot : (localStorage.getItem("config_save_cot") === "true")
+            saveCot: customConfig.saveCot !== undefined ? customConfig.saveCot : (localStorage.getItem("config_save_cot") === "true"),
+            modelPath: effectiveModelPath
         }
 
         // Create history record
@@ -916,7 +954,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(({ lang, active, onRunn
             id: recordId,
             fileName: inputPath.split(/[/\\]/).pop() || inputPath,
             filePath: inputPath,
-            modelName: modelPath.split(/[/\\]/).pop() || modelPath,
+            modelName: effectiveModelPath.split(/[/\\]/).pop() || effectiveModelPath,
             startTime: new Date().toISOString(),
             status: 'running',
             totalBlocks: 0,
@@ -971,13 +1009,14 @@ export const Dashboard = forwardRef<any, DashboardProps>(({ lang, active, onRunn
         // ... (Duplicate config logic? Or refactor?)
         // Refactoring is cleaner. 
         // But to minimize changes, I will implement a lightweight check using the same config loading.
-
-
+        const queueItem = queueRef.current[index]
+        const customConfig = queueItem?.config && !queueItem.config.useGlobalDefaults ? queueItem.config : undefined
+        const effectiveModelPath = (customConfig?.model || modelPath || localStorage.getItem("config_model") || "").trim()
 
         const config = {
             // Minimal config needed for checkOutputFileExists
-            outputDir: localStorage.getItem("config_output_dir"),
-            modelPath: modelPath, // 传递模型路径用于生成输出文件名
+            outputDir: customConfig?.outputDir || localStorage.getItem("config_output_dir"),
+            modelPath: effectiveModelPath, // 传递模型路径用于生成输出文件名
         }
 
 
@@ -1151,8 +1190,10 @@ export const Dashboard = forwardRef<any, DashboardProps>(({ lang, active, onRunn
         let totalSrcLines = 0
         let totalOutLines = 0
         blocks.forEach(([_, data]) => {
-            totalSrcLines += (data.src || '').split(/\r?\n/).filter(l => l.trim()).length
-            totalOutLines += (data.output || '').split(/\r?\n/).filter(l => l.trim()).length
+            const srcDisplay = stripSystemMarkersForDisplay(data.src || '')
+            const outDisplay = stripSystemMarkersForDisplay(data.output || '')
+            totalSrcLines += srcDisplay.split(/\r?\n/).filter(l => l.trim()).length
+            totalOutLines += outDisplay.split(/\r?\n/).filter(l => l.trim()).length
         })
         const lineCountMismatch = totalSrcLines !== totalOutLines && totalOutLines > 0
 
@@ -1187,8 +1228,10 @@ export const Dashboard = forwardRef<any, DashboardProps>(({ lang, active, onRunn
                 >
                     {blocks.map(([blockId, data]) => {
                         // 使用单换行分割，因为 raw text 这里的换行就是行分隔
-                        const sLines = (data.src || '').split(/\r?\n/).filter(l => l.trim())
-                        const oLines = (data.output || '').split(/\r?\n/).filter(l => l.trim())
+                        const srcDisplay = stripSystemMarkersForDisplay(data.src || '')
+                        const outDisplay = stripSystemMarkersForDisplay(data.output || '')
+                        const sLines = srcDisplay.split(/\r?\n/).filter(l => l.trim())
+                        const oLines = outDisplay.split(/\r?\n/).filter(l => l.trim())
                         const maxL = Math.max(sLines.length, oLines.length)
 
                         return (
@@ -1365,6 +1408,18 @@ export const Dashboard = forwardRef<any, DashboardProps>(({ lang, active, onRunn
                                                 className="w-6 h-6 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
                                                 onClick={(e) => {
                                                     e.stopPropagation()
+                                                    setConfigItem(item)
+                                                }}
+                                                disabled={isRunning}
+                                            >
+                                                <Settings className={`w-3 h-3 ${isRunning ? 'text-muted-foreground/50' : 'text-muted-foreground hover:text-primary'}`} />
+                                            </Button>
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                className="w-6 h-6 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                onClick={(e) => {
+                                                    e.stopPropagation()
                                                     handleRemoveFile(i)
                                                 }}
                                                 disabled={isRunning}
@@ -1409,10 +1464,10 @@ export const Dashboard = forwardRef<any, DashboardProps>(({ lang, active, onRunn
                     )}
 
                     {/* Config Row - Compact Property Bar Style */}
-                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-2 shrink-0">
+                    <div className="grid grid-cols-1 xl:grid-cols-3 gap-2 shrink-0">
                         <div className={`bg-card/80 hover:bg-card px-3 py-2 rounded-lg border flex items-center gap-3 transition-all cursor-pointer ${!modelPath && models.length > 0 ? 'border-amber-500/50 ring-1 ring-amber-500/20' : 'border-border/50 hover:border-border'}`}>
                             <div className="w-7 h-7 shrink-0 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white">
-                                <FileText className="w-3.5 h-3.5" />
+                                <Bot className="w-3.5 h-3.5" />
                             </div>
                             <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2">
@@ -1445,6 +1500,24 @@ export const Dashboard = forwardRef<any, DashboardProps>(({ lang, active, onRunn
                             </div>
                             <div title={t.modelView.refresh || "Refresh"} onClick={(e) => { e.stopPropagation(); fetchData() }} className="p-1 hover:bg-muted rounded-full cursor-pointer transition-colors z-10 mr-1 group/refresh">
                                 <RefreshCw className="w-3.5 h-3.5 text-muted-foreground group-hover/refresh:text-primary transition-colors" />
+                            </div>
+                            <ChevronDown className="w-3 h-3 text-muted-foreground shrink-0 opacity-40" />
+                        </div>
+                        <div className="bg-card/80 hover:bg-card px-3 py-2 rounded-lg border border-border/50 hover:border-border flex items-center gap-3 transition-all cursor-pointer">
+                            <div className="w-7 h-7 shrink-0 rounded-lg bg-gradient-to-br from-violet-500 to-violet-600 flex items-center justify-center text-white">
+                                <FileText className="w-3.5 h-3.5" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <span className="text-[9px] text-muted-foreground font-medium uppercase tracking-wider">Prompt Preset</span>
+                                <select
+                                    className="w-full bg-transparent text-sm font-medium text-foreground outline-none cursor-pointer truncate -ml-0.5"
+                                    value={promptPreset}
+                                    onChange={(e) => handlePromptPresetChange(e.target.value)}
+                                >
+                                    <option value="novel">{presetOptionLabel("novel")}</option>
+                                    <option value="script">{presetOptionLabel("script")}</option>
+                                    <option value="short">{presetOptionLabel("short")}</option>
+                                </select>
                             </div>
                             <ChevronDown className="w-3 h-3 text-muted-foreground shrink-0 opacity-40" />
                         </div>
@@ -1773,6 +1846,15 @@ export const Dashboard = forwardRef<any, DashboardProps>(({ lang, active, onRunn
                     </div>
                 )
             }
+
+            {configItem && (
+                <FileConfigModal
+                    item={configItem}
+                    lang={lang}
+                    onSave={(config) => handleSaveFileConfig(configItem.id, config)}
+                    onClose={() => setConfigItem(null)}
+                />
+            )}
 
             <AlertModal {...alertProps} />
         </div >

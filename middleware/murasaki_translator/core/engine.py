@@ -23,7 +23,7 @@ class InferenceEngine:
                  n_gpu_layers: int = -1, n_ctx: int = 8192, n_parallel: int = 1, no_spawn: bool = False,
                  # Granular High-Fidelity Options
                  flash_attn: bool = False,
-                 kv_cache_type: str = "q8_0",
+                 kv_cache_type: str = "f16",
                  use_large_batch: bool = False,
                  batch_size: Optional[int] = None,
                  seed: Optional[int] = None):
@@ -84,7 +84,7 @@ class InferenceEngine:
         if self.flash_attn:
             cmd.extend(["-fa", "on"])
             
-        # 2. KV Cache Selection (Default Q8_0)
+        # 2. KV Cache Selection (Default F16)
         if self.kv_cache_type:
             cmd.extend(["--cache-type-k", self.kv_cache_type, "--cache-type-v", self.kv_cache_type])
             
@@ -103,7 +103,7 @@ class InferenceEngine:
         # Logging active features
         features = []
         if self.flash_attn: features.append("FlashAttn")
-        if self.kv_cache_type != "q8_0": features.append(f"KV:{self.kv_cache_type}")
+        if self.kv_cache_type != "f16": features.append(f"KV:{self.kv_cache_type}")
         if self.batch_size: features.append(f"Batch:{self.batch_size}")
         elif self.use_large_batch: features.append("BigBatch(1024)")
         if self.seed is not None: features.append(f"Seed={self.seed}")

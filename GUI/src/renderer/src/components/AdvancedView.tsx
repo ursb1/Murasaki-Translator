@@ -32,7 +32,7 @@ export function AdvancedView({ lang }: { lang: Language }) {
   const [concurrency, setConcurrency] = useState(1); // Parallel Slots (1-4)
   // Granular High-Fidelity
   const [flashAttn, setFlashAttn] = useState(true);
-  const [kvCacheType, setKvCacheType] = useState("q8_0");
+  const [kvCacheType, setKvCacheType] = useState("f16");
   const [autoKvSwitch, setAutoKvSwitch] = useState(true);
   const [useLargeBatch, setUseLargeBatch] = useState(true);
   const [physicalBatchSize, setPhysicalBatchSize] = useState(1024);
@@ -43,7 +43,6 @@ export function AdvancedView({ lang }: { lang: Language }) {
   const [isLoaded, setIsLoaded] = useState(false);
 
    const [serverUrl, setServerUrl] = useState("");
-   const [promptPreset, setPromptPreset] = useState("novel");
 
    // Remote Server Config (修复：添加 state 避免直接读取 localStorage 导致重渲染)
    const [apiKey, setApiKey] = useState(() => localStorage.getItem("config_api_key") || "");
@@ -136,7 +135,7 @@ export function AdvancedView({ lang }: { lang: Language }) {
     setConcurrency(parseInt(localStorage.getItem("config_concurrency") || "1"));
 
     setFlashAttn(localStorage.getItem("config_flash_attn") !== "false");
-    setKvCacheType(localStorage.getItem("config_kv_cache_type") || "q8_0");
+    setKvCacheType(localStorage.getItem("config_kv_cache_type") || "f16");
     setAutoKvSwitch(localStorage.getItem("config_auto_kv_switch") !== "false");
     setUseLargeBatch(
       localStorage.getItem("config_use_large_batch") !== "false",
@@ -150,7 +149,6 @@ export function AdvancedView({ lang }: { lang: Language }) {
     setSeed(localStorage.getItem("config_seed") || "");
 
     setServerUrl(localStorage.getItem("config_server") || "");
-    setPromptPreset(localStorage.getItem("config_preset") || "novel");
 
     // Load Device Config
     setDeviceMode(
@@ -252,8 +250,8 @@ export function AdvancedView({ lang }: { lang: Language }) {
   useEffect(() => {
     if (!isLoaded) return; // Don't run before initial load completes
     if (autoKvSwitch) {
-      // Auto KV Strategy: np=1 -> f16 (Extreme Qual), np>1 -> q8_0 (Balanced)
-      setKvCacheType(concurrency > 1 ? "q8_0" : "f16");
+      // Auto KV Strategy: default to f16 for all concurrency levels
+      setKvCacheType("f16");
     }
   }, [concurrency, autoKvSwitch, isLoaded]);
 
@@ -306,7 +304,6 @@ export function AdvancedView({ lang }: { lang: Language }) {
     localStorage.setItem("config_seed", seed);
 
      localStorage.setItem("config_server", serverUrl);
-     localStorage.setItem("config_preset", promptPreset);
      localStorage.setItem("config_api_key", apiKey); // Save from state
 
     // Save Device Config
@@ -1007,9 +1004,7 @@ export function AdvancedView({ lang }: { lang: Language }) {
                             setConcurrency(val);
                             // Auto KV Switch logic
                             if (autoKvSwitch) {
-                              if (val > 1 && kvCacheType === "f16") {
-                                setKvCacheType("q8_0");
-                              } else if (val === 1 && kvCacheType === "q8_0") {
+                              if (val >= 1) {
                                 setKvCacheType("f16");
                               }
                             }
@@ -1257,25 +1252,6 @@ export function AdvancedView({ lang }: { lang: Language }) {
                   </div>
                 </div>
 
-                {/* --- 提示词预设 --- */}
-                <div className="space-y-2">
-                  <div className="text-sm font-semibold border-b pb-2">
-                    {t.config.promptPreset} (Prompt Preset)
-                  </div>
-                  <select
-                    className="w-full border border-border p-2 rounded bg-secondary text-foreground text-sm"
-                    value={promptPreset}
-                    onChange={(e) => setPromptPreset(e.target.value)}
-                  >
-                    <option value="novel">Novel Mode (Default)</option>
-                    <option value="script">Script Mode (Galgame)</option>
-                    <option value="short">Short Mode</option>
-                  </select>
-                  <p className="text-xs text-muted-foreground">
-                    {t.advancedView.promptPresetDesc ||
-                      "推荐使用轻小说模式"}
-                  </p>
-                </div>
               </CardContent>
             </Card>
 
@@ -1638,7 +1614,7 @@ export function AdvancedView({ lang }: { lang: Language }) {
                       <div className="space-y-0.5">
                         <Label className="text-sm">KV Cache 精度选择</Label>
                         <p className="text-[10px] text-muted-foreground">
-                          多线程建议开启 Q8_0 以保证显存
+                          F16 为原生质量；Q8_0 用于节约显存
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
@@ -1659,13 +1635,13 @@ export function AdvancedView({ lang }: { lang: Language }) {
                           id: "f16",
                           label: "F16",
                           sub: "原生质量",
-                          hint: "单线程首选",
+                          hint: "默认推荐",
                         },
                         {
                           id: "q8_0",
                           label: "Q8_0",
-                          sub: "平衡型",
-                          hint: "多线程推荐",
+                          sub: "节约显存",
+                          hint: "显存受限可选",
                         },
                         {
                           id: "q5_1",
