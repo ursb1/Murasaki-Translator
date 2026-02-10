@@ -1,6 +1,6 @@
 /**
  * Remote Translation Client
- * 用于连接远程翻译服务器，提供与本地翻译完全相同的 API
+ * 鐢ㄤ簬杩炴帴杩滅▼缈昏瘧鏈嶅姟鍣紝鎻愪緵涓庢湰鍦扮炕璇戝畬鍏ㄧ浉鍚岀殑 API
  */
 
 export interface RemoteServerConfig {
@@ -58,7 +58,7 @@ export class RemoteClient {
     }
 
     /**
-     * 测试连接
+     * 娴嬭瘯杩炴帴
      */
     async testConnection(): Promise<{ ok: boolean; message: string; version?: string }> {
         try {
@@ -73,8 +73,7 @@ export class RemoteClient {
     }
 
     /**
-     * 获取服务器状态
-     */
+     * 鑾峰彇鏈嶅姟鍣ㄧ姸鎬?     */
     async getStatus(): Promise<{
         status: string
         modelLoaded: boolean
@@ -85,21 +84,20 @@ export class RemoteClient {
     }
 
     /**
-     * 获取可用模型列表
+     * 鑾峰彇鍙敤妯″瀷鍒楄〃
      */
     async listModels(): Promise<ModelInfo[]> {
         return this.fetch('/api/v1/models')
     }
 
     /**
-     * 获取可用术语表列表
-     */
+     * 鑾峰彇鍙敤鏈琛ㄥ垪琛?     */
     async listGlossaries(): Promise<{ name: string; path: string }[]> {
         return this.fetch('/api/v1/glossaries')
     }
 
     /**
-     * 创建翻译任务
+     * 鍒涘缓缈昏瘧浠诲姟
      */
     async createTranslation(options: TranslateOptions): Promise<{ taskId: string; status: string }> {
         const body = {
@@ -120,7 +118,7 @@ export class RemoteClient {
             rules_post: options.rulesPost,
             parallel: options.parallel ?? 1,
             flash_attn: options.flashAttn ?? false,
-            kv_cache_type: options.kvCacheType || 'q8_0'
+            kv_cache_type: options.kvCacheType || 'f16'
         }
 
         const response = await this.fetch('/api/v1/translate', {
@@ -135,8 +133,7 @@ export class RemoteClient {
     }
 
     /**
-     * 获取任务状态
-     */
+     * 鑾峰彇浠诲姟鐘舵€?     */
     async getTaskStatus(taskId: string): Promise<TranslateTask> {
         const response = await this.fetch(`/api/v1/translate/${taskId}`)
         return {
@@ -152,14 +149,14 @@ export class RemoteClient {
     }
 
     /**
-     * 取消任务
+     * 鍙栨秷浠诲姟
      */
     async cancelTask(taskId: string): Promise<{ message: string }> {
         return this.fetch(`/api/v1/translate/${taskId}`, { method: 'DELETE' })
     }
 
     /**
-     * 上传文件
+     * 涓婁紶鏂囦欢
      */
     async uploadFile(filePath: string): Promise<{ fileId: string; serverPath: string }> {
         const fs = require('fs')
@@ -177,7 +174,7 @@ export class RemoteClient {
     }
 
     /**
-     * 下载翻译结果
+     * 涓嬭浇缈昏瘧缁撴灉
      */
     async downloadResult(taskId: string, savePath: string): Promise<void> {
         const fs = require('fs')
@@ -186,8 +183,7 @@ export class RemoteClient {
     }
 
     /**
-     * WebSocket 连接，获取实时日志
-     */
+     * WebSocket 杩炴帴锛岃幏鍙栧疄鏃舵棩蹇?     */
     connectWebSocket(
         taskId: string,
         callbacks: {
@@ -229,17 +225,16 @@ export class RemoteClient {
     }
 
     /**
-     * 执行完整翻译流程（阻塞等待结果）
+     * 鎵ц瀹屾暣缈昏瘧娴佺▼锛堥樆濉炵瓑寰呯粨鏋滐級
      */
     async translateAndWait(
         options: TranslateOptions,
         onProgress?: (progress: number, log: string) => void
     ): Promise<string> {
-        // 创建任务
+        // 鍒涘缓浠诲姟
         const { taskId } = await this.createTranslation(options)
 
-        // 轮询状态
-        while (true) {
+        // 杞鐘舵€?        while (true) {
             const status = await this.getTaskStatus(taskId)
 
             if (onProgress) {
@@ -259,8 +254,7 @@ export class RemoteClient {
                 throw new Error('Translation cancelled')
             }
 
-            // 等待 500ms 再查询
-            await new Promise((resolve) => setTimeout(resolve, 500))
+            // 绛夊緟 500ms 鍐嶆煡璇?            await new Promise((resolve) => setTimeout(resolve, 500))
         }
     }
 
@@ -279,8 +273,7 @@ export class RemoteClient {
             headers['Authorization'] = `Bearer ${this.config.apiKey}`
         }
 
-        // 使用 AbortController 实现超时控制（原生 fetch 不支持 timeout 选项）
-        const controller = new AbortController()
+        // 浣跨敤 AbortController 瀹炵幇瓒呮椂鎺у埗锛堝師鐢?fetch 涓嶆敮鎸?timeout 閫夐」锛?        const controller = new AbortController()
         const timeoutId = setTimeout(() => controller.abort(), this.config.timeout || 300000)
 
         try {
@@ -349,8 +342,7 @@ export class RemoteClient {
 }
 
 /**
- * 创建远程客户端单例
- */
+ * 鍒涘缓杩滅▼瀹㈡埛绔崟渚? */
 let remoteClientInstance: RemoteClient | null = null
 
 export function getRemoteClient(config?: RemoteServerConfig): RemoteClient | null {

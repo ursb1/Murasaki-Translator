@@ -36,7 +36,7 @@ const api = {
     openPath: (filePath: string) => ipcRenderer.invoke('open-path', filePath),
     openFolder: (folderPath: string) => ipcRenderer.invoke('open-folder', folderPath),
 
-    // 校对界面相关 API
+    // 鏍″鐣岄潰鐩稿叧 API
     loadCache: (cachePath: string) => ipcRenderer.invoke('load-cache', cachePath),
     saveCache: (cachePath: string, data: any) => ipcRenderer.invoke('save-cache', cachePath, data),
     rebuildDoc: (options: { cachePath: string; outputPath?: string }) => ipcRenderer.invoke('rebuild-doc', options),
@@ -56,8 +56,8 @@ const api = {
 
     // System Diagnostics
     getSystemDiagnostics: () => ipcRenderer.invoke('get-system-diagnostics'),
-    checkEnvComponent: (component: 'Python' | 'CUDA' | 'Vulkan' | 'Middleware' | 'Permissions') => ipcRenderer.invoke('check-env-component', component),
-    fixEnvComponent: (component: 'Python' | 'CUDA' | 'Vulkan' | 'Middleware' | 'Permissions') => ipcRenderer.invoke('fix-env-component', component),
+    checkEnvComponent: (component: 'Python' | 'CUDA' | 'Vulkan' | 'LlamaBackend' | 'Middleware' | 'Permissions') => ipcRenderer.invoke('check-env-component', component),
+    fixEnvComponent: (component: 'Python' | 'CUDA' | 'Vulkan' | 'LlamaBackend' | 'Middleware' | 'Permissions') => ipcRenderer.invoke('fix-env-component', component),
 
     // Env Fix Progress
     onEnvFixProgress: (callback: (data: { component: string, stage: string, progress: number, message: string, totalBytes?: number, downloadedBytes?: number }) => void) =>

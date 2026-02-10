@@ -72,8 +72,7 @@ export class ServerManager {
         const middlewareDir = getMiddlewarePath()
         const userDataPath = getUserDataPath()
 
-        // 使用跨平台检测获取正确的二进制路径
-        let serverExePath: string
+        // 浣跨敤璺ㄥ钩鍙版娴嬭幏鍙栨纭殑浜岃繘鍒惰矾寰?        let serverExePath: string
         try {
             const platformInfo = detectPlatform()
             console.log(`[ServerManager] Platform: ${platformInfo.os}/${platformInfo.arch}, Backend: ${platformInfo.backend}`)
@@ -141,10 +140,10 @@ export class ServerManager {
 
         // KV Cache Selection
         if (config.kvCacheType || config.highFidelity) {
-            // Priority: explicit kvCacheType > highFidelity smart fallback
+            // Priority: explicit kvCacheType > highFidelity fallback
             let kvType = config.kvCacheType
             if (!kvType && config.highFidelity) {
-                kvType = config.concurrency > 1 ? 'q8_0' : 'f16'
+                kvType = 'f16'
             }
             if (kvType) {
                 args.push('--cache-type-k', kvType)

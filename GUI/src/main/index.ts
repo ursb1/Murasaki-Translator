@@ -11,11 +11,10 @@ import { TranslateOptions } from './remoteClient'
 let pythonProcess: ChildProcess | null = null
 let mainWindow: BrowserWindow | null = null
 
-// 主进程日志缓冲区 - 用于调试工具箱查看完整终端日志
-const mainProcessLogs: string[] = []
+// 涓昏繘绋嬫棩蹇楃紦鍐插尯 - 鐢ㄤ簬璋冭瘯宸ュ叿绠辨煡鐪嬪畬鏁寸粓绔棩蹇?const mainProcessLogs: string[] = []
 const MAX_MAIN_LOGS = 1000
 
-// 拦截 console 方法收集日志
+// 鎷︽埅 console 鏂规硶鏀堕泦鏃ュ織
 const originalConsoleLog = console.log
 const originalConsoleWarn = console.warn
 const originalConsoleError = console.error
@@ -33,15 +32,14 @@ console.log = (...args) => { addMainLog('LOG', ...args); originalConsoleLog(...a
 console.warn = (...args) => { addMainLog('WARN', ...args); originalConsoleWarn(...args) }
 console.error = (...args) => { addMainLog('ERROR', ...args); originalConsoleError(...args) }
 
-// 单实例锁 - 防止重复启动
+// 鍗曞疄渚嬮攣 - 闃叉閲嶅鍚姩
 const gotTheLock = app.requestSingleInstanceLock()
 
 if (!gotTheLock) {
-    // 如果无法获取锁，说明已有实例在运行，退出
-    console.log('[App] Another instance is already running. Exiting...')
+    // 濡傛灉鏃犳硶鑾峰彇閿侊紝璇存槑宸叉湁瀹炰緥鍦ㄨ繍琛岋紝閫€鍑?    console.log('[App] Another instance is already running. Exiting...')
     app.quit()
 } else {
-    // 当第二个实例启动时，聚焦到主窗口
+    // 褰撶浜屼釜瀹炰緥鍚姩鏃讹紝鑱氱劍鍒颁富绐楀彛
     app.on('second-instance', () => {
         if (mainWindow) {
             if (mainWindow.isMinimized()) mainWindow.restore()
@@ -97,12 +95,12 @@ function createWindow(): void {
 }
 
 /**
- * 清理所有子进程
+ * 娓呯悊鎵€鏈夊瓙杩涚▼
  */
 function cleanupProcesses(): void {
     console.log('[App] Cleaning up processes...')
 
-    // 停止翻译进程
+    // 鍋滄缈昏瘧杩涚▼
     if (pythonProcess) {
         try {
             pythonProcess.kill()
@@ -115,7 +113,7 @@ function cleanupProcesses(): void {
         pythonProcess = null
     }
 
-    // 停止 ServerManager 管理的 llama-server
+    // 鍋滄 ServerManager 绠＄悊鐨?llama-server
     try {
         ServerManager.getInstance().stop()
     } catch (e) {
@@ -124,7 +122,7 @@ function cleanupProcesses(): void {
 }
 
 /**
- * 清理临时文件目录 (启动时调用，防止残留)
+ * 娓呯悊涓存椂鏂囦欢鐩綍 (鍚姩鏃惰皟鐢紝闃叉娈嬬暀)
  */
 function cleanupTempDirectory(): void {
     try {
@@ -167,7 +165,7 @@ app.whenReady().then(() => {
     })
 })
 
-// 应用退出前清理
+// 搴旂敤閫€鍑哄墠娓呯悊
 app.on('before-quit', () => {
     cleanupProcesses()
 })
@@ -215,6 +213,105 @@ const getPythonPath = (): { type: 'python' | 'bundle'; path: string } => {
     }
 }
 
+// Helper to find a script-capable Python runtime (used by utility scripts like env_fixer/get_specs)
+const getScriptPythonPath = (): string => {
+    if (is.dev) {
+        if (process.env.ELECTRON_PYTHON_PATH) return process.env.ELECTRON_PYTHON_PATH
+        return process.platform === 'win32' ? 'python' : 'python3'
+    }
+
+    if (process.platform === 'win32') {
+        const embeddedPath = join(process.resourcesPath, 'python_env', 'python.exe')
+        return fs.existsSync(embeddedPath) ? embeddedPath : 'python'
+    }
+
+    const candidates = [
+        join(process.resourcesPath, 'python_env', 'bin', 'python3'),
+        join(process.resourcesPath, 'python_env', 'bin', 'python'),
+        join(process.resourcesPath, 'python_env', 'python3'),
+        join(process.resourcesPath, 'python_env', 'python')
+    ]
+
+    for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) return candidate
+    }
+
+    return 'python3'
+}
+
+const getScriptPythonInfo = (): { type: 'python'; path: string } => ({
+    type: 'python',
+    path: getScriptPythonPath()
+})
+
+const tryParseJson = <T = any>(raw: string): T | null => {
+    try {
+        return JSON.parse(raw) as T
+    } catch {
+        return null
+    }
+}
+
+const extractLastJsonObject = <T = any>(raw: string): T | null => {
+    const text = raw.trim()
+    if (!text) return null
+
+    const direct = tryParseJson<T>(text)
+    if (direct !== null) return direct
+
+    const objects: string[] = []
+    let depth = 0
+    let start = -1
+    let inString = false
+    let escaped = false
+
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i]
+
+        if (escaped) {
+            escaped = false
+            continue
+        }
+
+        if (inString && ch === '\\') {
+            escaped = true
+            continue
+        }
+
+        if (ch === '"') {
+            inString = !inString
+            continue
+        }
+
+        if (inString) continue
+
+        if (ch === '{') {
+            if (depth === 0) start = i
+            depth += 1
+        } else if (ch === '}') {
+            if (depth === 0) continue
+            depth -= 1
+            if (depth === 0 && start >= 0) {
+                objects.push(text.slice(start, i + 1))
+                start = -1
+            }
+        }
+    }
+
+    for (let i = objects.length - 1; i >= 0; i--) {
+        const parsed = tryParseJson<T>(objects[i])
+        if (parsed !== null) return parsed
+    }
+
+    const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+    for (let i = lines.length - 1; i >= 0; i--) {
+        const parsed = tryParseJson<T>(lines[i])
+        if (parsed !== null) return parsed
+    }
+
+    return null
+}
+
 // Helper to spawn Python process with sanitized environment
 // Supports both Python mode (python script.py) and Bundle mode (./murasaki-engine --script=main)
 const spawnPythonProcess = (
@@ -238,11 +335,10 @@ const spawnPythonProcess = (
 
     if (pythonInfo.type === 'bundle') {
         // Bundle mode: directly execute the bundle with args
-        // PyInstaller bundle 已内置入口点，需移除脚本路径
+        // PyInstaller bundle 宸插唴缃叆鍙ｇ偣锛岄渶绉婚櫎鑴氭湰璺緞
         // args = ['path/to/main.py', '--file', ...] -> ['--file', ...]
         cmd = pythonInfo.path
-        // 移除第一个元素（脚本路径），只保留实际参数
-        finalArgs = args.slice(1)
+        // 绉婚櫎绗竴涓厓绱狅紙鑴氭湰璺緞锛夛紝鍙繚鐣欏疄闄呭弬鏁?        finalArgs = args.slice(1)
         console.log(`[Spawn Bundle] ${cmd} ${finalArgs.join(' ')}`)
     } else {
         // Python mode: python script.py args
@@ -305,7 +401,7 @@ ipcMain.handle('select-directory', async () => {
 // Select folder for cache file browsing
 ipcMain.handle('select-folder', async (_event, options?: { title?: string }) => {
     const { canceled, filePaths } = await dialog.showOpenDialog({
-        title: options?.title || '选择文件夹',
+        title: options?.title || '閫夋嫨鏂囦欢澶?,
         properties: ['openDirectory']
     })
     if (canceled) return null
@@ -626,7 +722,7 @@ ipcMain.handle('check-update', async () => {
 
 // --- Main Process Logs IPC ---
 ipcMain.handle('get-main-process-logs', () => {
-    return mainProcessLogs.slice() // 返回副本
+    return mainProcessLogs.slice() // 杩斿洖鍓湰
 })
 
 // --- System Diagnostics IPC ---
@@ -659,52 +755,182 @@ ipcMain.handle('get-system-diagnostics', async () => {
         llamaServer: { status: 'unknown' }
     }
 
-    // 辅助函数：带超时的异步执行
-    const execWithTimeout = async (cmd: string, timeout: number): Promise<string> => {
+    const shellQuote = (value: string) => {
+        if (!value.includes(' ') && !value.includes('"')) return value
+        return `"${value.replace(/"/g, '\\"')}"`
+    }
+
+    // 杈呭姪鍑芥暟锛氬甫瓒呮椂鐨勫紓姝ユ墽琛?    const execWithTimeout = async (cmd: string, timeout: number): Promise<{ stdout: string, stderr: string }> => {
         const controller = new AbortController()
         const timeoutId = setTimeout(() => controller.abort(), timeout)
         try {
-            const { stdout } = await execAsync(cmd, { signal: controller.signal })
-            return stdout
+            const { stdout, stderr } = await execAsync(cmd, { signal: controller.signal, windowsHide: true })
+            return { stdout, stderr }
         } finally {
             clearTimeout(timeoutId)
         }
     }
 
-    // GPU Detection (NVIDIA) - 并行执行
+    const resolveCommandPath = async (command: string): Promise<string | null> => {
+        if (!command) return null
+
+        const looksLikePath = command.includes('/') || command.includes('\\')
+        if (looksLikePath) {
+            return fs.existsSync(command) ? command : null
+        }
+
+        const lookupCommand = process.platform === 'win32'
+            ? `where ${command}`
+            : `command -v ${command}`
+
+        try {
+            const { stdout } = await execWithTimeout(lookupCommand, 2000)
+            const first = stdout
+                .split(/\r?\n/)
+                .map((line: string) => line.trim())
+                .find((line: string) => Boolean(line))
+            return first || null
+        } catch {
+            return null
+        }
+    }
+
+    const parsePythonVersion = (output: string): string | null => {
+        const match = output.match(/Python\s+(\d+\.\d+\.\d+)/i)
+        return match ? match[1] : null
+    }
+
+    // GPU Detection (NVIDIA) - 骞惰鎵ц
     const gpuPromise = (async () => {
         try {
-            const cmd = process.platform === 'win32'
-                ? 'nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader,nounits'
-                : 'nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader,nounits 2>/dev/null'
-            const output = await execWithTimeout(cmd, 5000)
-            const parts = output.trim().split(', ')
-            if (parts.length >= 3) {
-                result.gpu = { name: parts[0], driver: parts[1], vram: `${parts[2]} MB` }
+            const scriptPath = join(getMiddlewarePath(), 'get_specs.py')
+            if (fs.existsSync(scriptPath)) {
+                const py = getScriptPythonPath()
+                const { stdout, stderr } = await execWithTimeout(`${shellQuote(py)} ${shellQuote(scriptPath)}`, 8000)
+                const merged = `${stdout}\n${stderr}`
+                const marker = merged.match(/__HW_SPEC_JSON_START__(.*?)__HW_SPEC_JSON_END__/s)
+                if (marker) {
+                    const specs = tryParseJson<any>(marker[1])
+                    if (specs?.gpu_name && !/unknown/i.test(String(specs.gpu_name))) {
+                        result.gpu = {
+                            name: String(specs.gpu_name),
+                            driver: specs.gpu_backend ? String(specs.gpu_backend).toUpperCase() : undefined,
+                            vram: typeof specs.vram_gb === 'number' ? `${specs.vram_gb} GB` : undefined
+                        }
+                        return
+                    }
+                }
             }
-        } catch { /* No NVIDIA GPU or nvidia-smi not available */ }
+        } catch { }
+
+        try {
+            const { stdout } = await execWithTimeout('nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader,nounits', 5000)
+            const first = stdout.split(/\r?\n/).map((line: string) => line.trim()).find((line: string) => Boolean(line))
+            if (first) {
+                const parts = first.split(',').map((v: string) => v.trim())
+                if (parts.length >= 3) {
+                    result.gpu = { name: parts[0], driver: parts[1], vram: `${parts[2]} MB` }
+                    return
+                }
+            }
+        } catch { }
+
+        if (process.platform === 'win32') {
+            try {
+                const { stdout } = await execWithTimeout('wmic path win32_VideoController get Name,DriverVersion,AdapterRAM /format:csv', 5000)
+                const lines = stdout
+                    .split(/\r?\n/)
+                    .map((line: string) => line.trim())
+                    .filter((line: string) => line && !line.startsWith('Node'))
+                for (const line of lines) {
+                    const parts = line.split(',').map((v: string) => v.trim())
+                    if (parts.length < 4) continue
+                    const adapterRam = Number(parts[1])
+                    const name = parts[2]
+                    const driver = parts[3]
+                    if (!name || /microsoft|basic/i.test(name)) continue
+                    const vram = Number.isFinite(adapterRam) && adapterRam > 0
+                        ? `${Math.round((adapterRam / (1024 ** 3)) * 10) / 10} GB`
+                        : undefined
+                    result.gpu = { name, driver: driver || undefined, vram }
+                    return
+                }
+            } catch { }
+        }
+
+        if (process.platform === 'darwin') {
+            try {
+                const { stdout } = await execWithTimeout('system_profiler SPDisplaysDataType -json', 8000)
+                const payload = tryParseJson<any>(stdout)
+                const display = payload?.SPDisplaysDataType?.[0]
+                if (display) {
+                    const name = display.sppci_model || display._name || display.spdisplays_vendor || 'Apple GPU'
+                    const rawVram = display.spdisplays_vram || display.sppci_vram || ''
+                    const vramMatch = String(rawVram).match(/(\d+)\s*(GB|MB)/i)
+                    const vram = vramMatch
+                        ? `${vramMatch[1]} ${String(vramMatch[2]).toUpperCase()}`
+                        : `${Math.round(os.totalmem() / (1024 * 1024 * 1024))} GB (shared)`
+                    result.gpu = { name: String(name), driver: 'METAL', vram }
+                    return
+                }
+            } catch { }
+        }
+
+        if (process.platform === 'linux') {
+            try {
+                const { stdout } = await execWithTimeout('lspci', 4000)
+                const line = stdout.split(/\r?\n/).find((entry: string) => /(VGA|3D|Display)/i.test(entry))
+                if (line) {
+                    result.gpu = {
+                        name: line.split(':').slice(2).join(':').trim() || line.trim(),
+                        driver: 'Detected via lspci'
+                    }
+                }
+            } catch { }
+        }
     })()
 
-    // Python Detection - Use embedded Python path
+    // Python Detection - prioritize script runtime, fallback to bundled engine
     const pythonPromise = (async () => {
-        try {
-            const pythonInfo = getPythonPath()
-            const output = await execWithTimeout(`"${pythonInfo.path}" --version`, 3000)
-            result.python = {
-                version: output.trim().replace('Python ', ''),
-                path: pythonInfo.type === 'bundle' ? 'Bundle Mode' : pythonInfo.path
-            }
-        } catch { /* Python not found */ }
+        const primary = getPythonPath()
+        const candidates: string[] = []
+
+        if (primary.type === 'python') candidates.push(primary.path)
+
+        const scriptPython = getScriptPythonPath()
+        if (!candidates.includes(scriptPython)) candidates.push(scriptPython)
+        if (!candidates.includes('python3')) candidates.push('python3')
+        if (!candidates.includes('python')) candidates.push('python')
+
+        for (const candidate of candidates) {
+            try {
+                const resolved = await resolveCommandPath(candidate)
+                const executable = resolved || candidate
+                const { stdout, stderr } = await execWithTimeout(`${shellQuote(executable)} --version`, 3000)
+                const combined = `${stdout}\n${stderr}`.trim()
+                const version = parsePythonVersion(combined)
+                if (version) {
+                    result.python = { version, path: executable }
+                    return
+                }
+            } catch { }
+        }
+
+        if (primary.type === 'bundle' && fs.existsSync(primary.path)) {
+            result.python = { version: 'Bundled Engine', path: primary.path }
+        }
     })()
 
     // CUDA Detection
     const cudaPromise = (async () => {
         try {
-            const cmd = process.platform === 'win32' ? 'nvcc --version' : 'nvcc --version 2>/dev/null'
-            const output = await execWithTimeout(cmd, 3000)
+            const { stdout, stderr } = await execWithTimeout('nvcc --version', 3000)
+            const output = `${stdout}\n${stderr}`
             const match = output.match(/release (\d+\.\d+)/)
             if (match) {
                 result.cuda = { version: match[1], available: true }
+            } else {
+                result.cuda = { version: 'N/A', available: false }
             }
         } catch {
             result.cuda = { version: 'N/A', available: false }
@@ -714,7 +940,8 @@ ipcMain.handle('get-system-diagnostics', async () => {
     // Vulkan Detection
     const vulkanPromise = (async () => {
         try {
-            const output = await execWithTimeout('vulkaninfo --summary', 5000)
+            const { stdout, stderr } = await execWithTimeout('vulkaninfo --summary', 5000)
+            const output = `${stdout}\n${stderr}`
             const versionMatch = output.match(/Vulkan Instance Version:\s*(\d+\.\d+\.\d+)/i)
             const version = versionMatch ? versionMatch[1] : undefined
             result.vulkan = { available: true, version }
@@ -723,8 +950,7 @@ ipcMain.handle('get-system-diagnostics', async () => {
         }
     })()
 
-    // 并行等待所有检测完成
-    await Promise.all([gpuPromise, pythonPromise, cudaPromise, vulkanPromise])
+    // 骞惰绛夊緟鎵€鏈夋娴嬪畬鎴?    await Promise.all([gpuPromise, pythonPromise, cudaPromise, vulkanPromise])
 
     // llama-server Status Check (Use ServerManager's actual port)
     const checkPort = (port: number): Promise<boolean> => {
@@ -800,7 +1026,7 @@ ipcMain.on('set-theme', (_event, theme: 'dark' | 'light') => {
     nativeTheme.themeSource = theme
 })
 
-// Read server.log for debug export - 使用流式读取避免大文件OOM
+// Read server.log for debug export - 浣跨敤娴佸紡璇诲彇閬垮厤澶ф枃浠禣OM
 ipcMain.handle('read-server-log', async () => {
     try {
         const middlewareDir = getMiddlewarePath()
@@ -810,11 +1036,10 @@ ipcMain.handle('read-server-log', async () => {
         }
 
         const stats = fs.statSync(logPath)
-        const maxBytes = 512 * 1024 // 最多读取 512KB (约 10000 行)
+        const maxBytes = 512 * 1024 // 鏈€澶氳鍙?512KB (绾?10000 琛?
         const lineCount = 500
 
-        // 如果文件较小，直接读取
-        if (stats.size <= maxBytes) {
+        // 濡傛灉鏂囦欢杈冨皬锛岀洿鎺ヨ鍙?        if (stats.size <= maxBytes) {
             const content = fs.readFileSync(logPath, 'utf-8')
             const lines = content.split('\n')
             return {
@@ -825,8 +1050,7 @@ ipcMain.handle('read-server-log', async () => {
             }
         }
 
-        // 大文件：只读取末尾部分
-        return new Promise((resolve) => {
+        // 澶ф枃浠讹細鍙鍙栨湯灏鹃儴鍒?        return new Promise((resolve) => {
             const chunks: string[] = []
             const startPos = Math.max(0, stats.size - maxBytes)
             const stream = fs.createReadStream(logPath, {
@@ -837,7 +1061,7 @@ ipcMain.handle('read-server-log', async () => {
             stream.on('data', (chunk: string) => chunks.push(chunk))
             stream.on('end', () => {
                 const content = chunks.join('')
-                // 跳过第一行（可能不完整）
+                // 璺宠繃绗竴琛岋紙鍙兘涓嶅畬鏁达級
                 const lines = content.split('\n').slice(1)
                 resolve({
                     exists: true,
@@ -906,7 +1130,7 @@ ipcMain.handle('get-model-info', async (_event, modelName: string) => {
     const paramsB = paramsMatch ? parseFloat(paramsMatch[1]) : null
 
     // Extract quant (e.g., IQ4_XS, IQ3_M, Q4_K_M, Q5_K, Q8_0, F16)
-    // IQ 系列优先匹配，然后是 Q 系列
+    // IQ 绯诲垪浼樺厛鍖归厤锛岀劧鍚庢槸 Q 绯诲垪
     const quantMatch = modelName.match(
         /IQ[1-4]_?(XXS|XS|S|M|NL)|Q[2-8]_?[Kk]?_?[MmSsLl]?|[Ff]16|BF16/i
     )
@@ -927,7 +1151,7 @@ ipcMain.handle('get-model-info', async (_event, modelName: string) => {
 ipcMain.handle('get-hardware-specs', async () => {
     const middlewareDir = getMiddlewarePath()
     const scriptPath = join(middlewareDir, 'get_specs.py')
-    const pythonCmd = getPythonPath()
+    const pythonCmd = getScriptPythonInfo()
 
     console.log("[HardwareSpecs] Middleware Dir:", middlewareDir)
     console.log("[HardwareSpecs] Python Cmd:", pythonCmd)
@@ -1017,7 +1241,7 @@ ipcMain.handle('get-hardware-specs', async () => {
     })
 })
 
-// 刷新 GPU 检测（清除缓存并重新检测）
+// 鍒锋柊 GPU 妫€娴嬶紙娓呴櫎缂撳瓨骞堕噸鏂版娴嬶級
 ipcMain.handle('refresh-gpu-detection', async () => {
     clearGpuCache()
     const platformInfo = detectPlatform()
@@ -1033,7 +1257,7 @@ ipcMain.handle('refresh-gpu-detection', async () => {
 ipcMain.handle('check-env-component', async (_event, component: string) => {
     const middlewareDir = getMiddlewarePath()
     const scriptPath = join(middlewareDir, 'env_fixer.py')
-    const pythonCmd = getPythonPath()
+    const pythonCmd = getScriptPythonInfo()
 
     console.log(`[EnvFixer] Checking component: ${component}`)
 
@@ -1078,17 +1302,14 @@ ipcMain.handle('check-env-component', async (_event, component: string) => {
             clearTimeout(timeout)
 
             try {
-                // 稳健提取逻辑：寻找最后一个有效的 JSON 对象
-                const cleanOutput = output.trim()
-                const jsonStart = cleanOutput.lastIndexOf('{')
-                const jsonEnd = cleanOutput.lastIndexOf('}')
-                const jsonStr = jsonStart >= 0 && jsonEnd > jsonStart
-                    ? cleanOutput.substring(jsonStart, jsonEnd + 1)
-                    : cleanOutput
-
-                const report = JSON.parse(jsonStr)
-                // 找到指定组件的信息
-                const componentData = report.components?.find((c: any) => c.name.toLowerCase() === component.toLowerCase())
+                // 绋冲仴鎻愬彇閫昏緫锛氬鎵炬渶鍚庝竴涓湁鏁堢殑 JSON 瀵硅薄
+                const mergedOutput = [output, errorOutput].filter(Boolean).join('\n')
+                const report = extractLastJsonObject<any>(mergedOutput)
+                if (!report) {
+                    resolve({ success: false, error: 'Failed to parse report: no JSON object found', output, errorOutput })
+                    return
+                }
+                // 鎵惧埌鎸囧畾缁勪欢鐨勪俊鎭?                const componentData = report.components?.find((c: any) => c.name.toLowerCase() === component.toLowerCase())
                 resolve({
                     success: true,
                     report,
@@ -1104,7 +1325,7 @@ ipcMain.handle('check-env-component', async (_event, component: string) => {
 ipcMain.handle('fix-env-component', async (_event, component: string) => {
     const middlewareDir = getMiddlewarePath()
     const scriptPath = join(middlewareDir, 'env_fixer.py')
-    const pythonCmd = getPythonPath()
+    const pythonCmd = getScriptPythonInfo()
 
     console.log(`[EnvFixer] Fixing component: ${component}`)
 
@@ -1121,18 +1342,18 @@ ipcMain.handle('fix-env-component', async (_event, component: string) => {
         let output = ''
         let errorOutput = ''
         let resolved = false
+        let stdoutBuffer = ''
         const timeout = setTimeout(() => {
             if (resolved) return
             resolved = true
             proc.kill()
             resolve({ success: false, error: 'Fix timed out (10 minutes)' })
-        }, 600000) // 10分钟超时
+        }, 600000) // 10鍒嗛挓瓒呮椂
         if (proc.stdout) {
             proc.stdout.on('data', (d) => {
-                const str = d.toString()
-
-                // 解析进度信息并发送到前端
-                const lines = str.split('\n')
+                stdoutBuffer += d.toString()
+                // 瑙ｆ瀽杩涘害淇℃伅骞跺彂閫佸埌鍓嶇锛堝甫鍒嗙墖鎷兼帴锛岄伩鍏嶈法 chunk JSON 鏂锛?                const lines = stdoutBuffer.split(/\r?\n/)
+                stdoutBuffer = lines.pop() || ''
                 for (const line of lines) {
                     const trimmedLine = line.trim()
                     if (!trimmedLine) continue
@@ -1141,7 +1362,7 @@ ipcMain.handle('fix-env-component', async (_event, component: string) => {
                         try {
                             const progressData = JSON.parse(trimmedLine.substring('__PROGRESS__:'.length))
                             console.log(`[EnvFixer] Progress: ${progressData.stage} ${progressData.progress}%`)
-                            // 发送进度事件到前端
+                            // 鍙戦€佽繘搴︿簨浠跺埌鍓嶇
                             if (mainWindow && !mainWindow.isDestroyed()) {
                                 mainWindow.webContents.send('env-fix-progress', {
                                     component,
@@ -1152,7 +1373,7 @@ ipcMain.handle('fix-env-component', async (_event, component: string) => {
                             console.error('[EnvFixer] Failed to parse progress:', e)
                         }
                     } else if (trimmedLine.startsWith('{') && trimmedLine.endsWith('}')) {
-                        // 尝试把可能是结果的 JSON 行收集起来，或者只是普通 log
+                        // 灏濊瘯鎶婂彲鑳芥槸缁撴灉鐨?JSON 琛屾敹闆嗚捣鏉ワ紝鎴栬€呭彧鏄櫘閫?log
                         output += line + '\n'
                     } else {
                         output += line + '\n'
@@ -1175,20 +1396,21 @@ ipcMain.handle('fix-env-component', async (_event, component: string) => {
             if (resolved) return
             resolved = true
             clearTimeout(timeout)
+            if (stdoutBuffer.trim()) {
+                output += stdoutBuffer + '\n'
+            }
 
             try {
-                // 清理 output 中可能残留的非 JSON 内容
-                const cleanOutput = output.trim()
-                const jsonStart = cleanOutput.lastIndexOf('{')
-                const jsonEnd = cleanOutput.lastIndexOf('}')
-                const jsonStr = jsonStart >= 0 && jsonEnd > jsonStart
-                    ? cleanOutput.substring(jsonStart, jsonEnd + 1)
-                    : cleanOutput
-
-                const result = JSON.parse(jsonStr)
+                // 娓呯悊 output 涓彲鑳芥畫鐣欑殑闈?JSON 鍐呭
+                const mergedOutput = [output, errorOutput].filter(Boolean).join('\n')
+                const result = extractLastJsonObject<any>(mergedOutput)
+                if (!result) {
+                    resolve({ success: false, error: 'Failed to parse result: no JSON object found', output, errorOutput })
+                    return
+                }
                 resolve({
                     success: result.fixResult?.success || result.summary?.overallStatus === 'ok' || false,
-                    message: result.fixResult?.message || (result.summary?.overallStatus === 'ok' ? '修复成功' : '未知结果'),
+                    message: result.fixResult?.message || (result.summary?.overallStatus === 'ok' ? '淇鎴愬姛' : '鏈煡缁撴灉'),
                     exitCode: code,
                     output,
                     errorOutput
@@ -1356,7 +1578,7 @@ ipcMain.handle('read-file', async (_event, path: string) => {
     return null
 })
 
-// 写入文件（用于导出译文）
+// 鍐欏叆鏂囦欢锛堢敤浜庡鍑鸿瘧鏂囷級
 ipcMain.handle('write-file', async (_event, path: string, content: string) => {
     try {
         fs.writeFileSync(path, content, 'utf-8')
@@ -1367,7 +1589,7 @@ ipcMain.handle('write-file', async (_event, path: string, content: string) => {
     }
 })
 
-// 加载翻译缓存（用于校对界面）
+// 鍔犺浇缈昏瘧缂撳瓨锛堢敤浜庢牎瀵圭晫闈級
 ipcMain.handle('load-cache', async (_event, cachePath: string) => {
     try {
         if (fs.existsSync(cachePath)) {
@@ -1380,7 +1602,7 @@ ipcMain.handle('load-cache', async (_event, cachePath: string) => {
     return null
 })
 
-// 保存翻译缓存（用于校对界面）
+// 淇濆瓨缈昏瘧缂撳瓨锛堢敤浜庢牎瀵圭晫闈級
 ipcMain.handle('save-cache', async (_event, cachePath: string, data: Record<string, unknown>) => {
     try {
         fs.writeFileSync(cachePath, JSON.stringify(data, null, 2), 'utf-8')
@@ -1391,8 +1613,7 @@ ipcMain.handle('save-cache', async (_event, cachePath: string, data: Record<stri
     }
 })
 
-// 重建文档（从缓存）
-ipcMain.handle('rebuild-doc', async (_event, { cachePath, outputPath }) => {
+// 閲嶅缓鏂囨。锛堜粠缂撳瓨锛?ipcMain.handle('rebuild-doc', async (_event, { cachePath, outputPath }) => {
     try {
         const middlewareDir = getMiddlewarePath()
         const scriptPath = join(middlewareDir, 'murasaki_translator', 'main.py')
@@ -1435,7 +1656,7 @@ ipcMain.handle('rebuild-doc', async (_event, { cachePath, outputPath }) => {
     }
 })
 
-// 单块重翻（用于校对界面）
+// 鍗曞潡閲嶇炕锛堢敤浜庢牎瀵圭晫闈級
 ipcMain.handle('retranslate-block', async (event, { src, index, modelPath, config }) => {
     const middlewareDir = getMiddlewarePath()
     const scriptPath = join(middlewareDir, 'murasaki_translator', 'main.py')
@@ -1478,8 +1699,7 @@ ipcMain.handle('retranslate-block', async (event, { src, index, modelPath, confi
         if (config.deviceMode === 'cpu') {
             args.push('--gpu-layers', '0')
         } else {
-            // 默认使用 -1 (全部加载到 GPU)，如果用户指定了值则使用用户值
-            const gpuLayers = config.gpuLayers !== undefined ? config.gpuLayers : -1
+            // 榛樿浣跨敤 -1 (鍏ㄩ儴鍔犺浇鍒?GPU)锛屽鏋滅敤鎴锋寚瀹氫簡鍊煎垯浣跨敤鐢ㄦ埛鍊?            const gpuLayers = config.gpuLayers !== undefined ? config.gpuLayers : -1
             args.push('--gpu-layers', gpuLayers.toString())
         }
 
@@ -1518,9 +1738,9 @@ ipcMain.handle('retranslate-block', async (event, { src, index, modelPath, confi
 
     // Server Handling: Assume server is already running or provided
     // For single block, we might want to attach to existing server if possible?
-    // main.py creates InferenceEngine which tries to find server. 
+    // main.py creates InferenceEngine which tries to find server.
     // If not running, it spawns one. Optimally, we want to reuse the one from Dashboard.
-    // Dashboard typically starts one if daemon mode. 
+    // Dashboard typically starts one if daemon mode.
     // Let's check if ServerManager has a running instance.
     const sm = ServerManager.getInstance()
     const status = sm.getStatus()
@@ -1609,8 +1829,7 @@ ipcMain.handle('retranslate-block', async (event, { src, index, modelPath, confi
     })
 })
 
-// 保存文件对话框
-ipcMain.handle('save-file', async (_event, options: { title?: string; defaultPath?: string; filters?: Electron.FileFilter[] }) => {
+// 淇濆瓨鏂囦欢瀵硅瘽妗?ipcMain.handle('save-file', async (_event, options: { title?: string; defaultPath?: string; filters?: Electron.FileFilter[] }) => {
     const result = await dialog.showSaveDialog({
         title: options?.title || 'Save File',
         defaultPath: options?.defaultPath,
@@ -1619,7 +1838,7 @@ ipcMain.handle('save-file', async (_event, options: { title?: string; defaultPat
     return result.canceled ? null : result.filePath
 })
 
-// 打开文件（使用系统默认程序）
+// 鎵撳紑鏂囦欢锛堜娇鐢ㄧ郴缁熼粯璁ょ▼搴忥級
 ipcMain.handle('open-path', async (_event, filePath: string) => {
     if (fs.existsSync(filePath)) {
         return await shell.openPath(filePath)
@@ -1627,9 +1846,7 @@ ipcMain.handle('open-path', async (_event, filePath: string) => {
     return 'File not found'
 })
 
-// 在文件管理器中显示文件
-// 在文件管理器中显示文件/文件夹
-ipcMain.handle('open-folder', async (_event, filePath: string) => {
+// 鍦ㄦ枃浠剁鐞嗗櫒涓樉绀烘枃浠?// 鍦ㄦ枃浠剁鐞嗗櫒涓樉绀烘枃浠?鏂囦欢澶?ipcMain.handle('open-folder', async (_event, filePath: string) => {
     // Resolve relative path if it starts with 'middleware'
     if (filePath.startsWith('middleware')) {
         let relativePart = filePath.replace(/^middleware[\\/]/, '')
@@ -1694,17 +1911,14 @@ ipcMain.handle('check-output-file-exists', async (_event, { inputFile, config })
             const outFilename = `${baseName}_translated.${ext}`
             outPath = join(config.outputDir, outFilename)
         } else {
-            // Default logic from main.py - 动态获取模型名称
-            // output_path = f"{base}_{model_name}{ext}"
+            // Default logic from main.py - 鍔ㄦ€佽幏鍙栨ā鍨嬪悕绉?            // output_path = f"{base}_{model_name}{ext}"
             const ext = extname(inputFile)
             const base = inputFile.substring(0, inputFile.length - ext.length)
 
-            // 从模型路径提取模型名称（去掉扩展名）
-            // ⚠️ 健壮性处理：兼容 Windows/POSIX 路径分隔符
-            let modelName = 'unknown'
+            // 浠庢ā鍨嬭矾寰勬彁鍙栨ā鍨嬪悕绉帮紙鍘绘帀鎵╁睍鍚嶏級
+            // 鈿狅笍 鍋ュ．鎬у鐞嗭細鍏煎 Windows/POSIX 璺緞鍒嗛殧绗?            let modelName = 'unknown'
             if (config.modelPath && typeof config.modelPath === 'string' && config.modelPath.trim()) {
-                // 统一处理 Windows (\) 和 POSIX (/) 分隔符
-                const normalizedPath = config.modelPath.replace(/\\/g, '/')
+                // 缁熶竴澶勭悊 Windows (\) 鍜?POSIX (/) 鍒嗛殧绗?                const normalizedPath = config.modelPath.replace(/\\/g, '/')
                 const fileName = normalizedPath.split('/').pop() || ''
                 modelName = fileName.replace(/\.gguf$/i, '') || 'unknown'
             }
@@ -1721,14 +1935,13 @@ ipcMain.handle('check-output-file-exists', async (_event, { inputFile, config })
             return { exists: true, path: outPath }
         }
 
-        // 检测临时进度文件（翻译中断后的主要缓存）
-        const tempPath = outPath + '.temp.jsonl'
+        // 妫€娴嬩复鏃惰繘搴︽枃浠讹紙缈昏瘧涓柇鍚庣殑涓昏缂撳瓨锛?        const tempPath = outPath + '.temp.jsonl'
         if (fs.existsSync(tempPath)) {
             console.log("Detected existing temp progress:", tempPath)
             return { exists: true, path: tempPath, isCache: true }
         }
 
-        // 兼容旧版缓存文件
+        // 鍏煎鏃х増缂撳瓨鏂囦欢
         const cachePath = outPath + '.cache.json'
         if (fs.existsSync(cachePath)) {
             console.log("Detected existing cache:", cachePath)
@@ -1757,8 +1970,7 @@ ipcMain.on('start-translation', (event, { inputFile, modelPath, config }) => {
     const pythonCmd = getPythonPath()
     console.log("Using Python:", pythonCmd)
 
-    // 使用跨平台检测获取正确的二进制路径
-    let serverExePath: string
+    // 浣跨敤璺ㄥ钩鍙版娴嬭幏鍙栨纭殑浜岃繘鍒惰矾寰?    let serverExePath: string
     try {
         const platformInfo = detectPlatform()
         event.reply('log-update', `System: Platform ${platformInfo.os}/${platformInfo.arch}, Backend: ${platformInfo.backend}`)
@@ -1804,8 +2016,7 @@ ipcMain.on('start-translation', (event, { inputFile, modelPath, config }) => {
 
     console.log('[start-translation] Model check passed, building args...')
 
-    // serverExePath 已在上面的 try-catch 中验证
-
+    // serverExePath 宸插湪涓婇潰鐨?try-catch 涓獙璇?
     // Build args for murasaki_translator/main.py
     const args = [
         join('murasaki_translator', 'main.py'),
@@ -1817,7 +2028,7 @@ ipcMain.on('start-translation', (event, { inputFile, modelPath, config }) => {
         const sm = ServerManager.getInstance()
         const status = sm.getStatus()
 
-        // Auto-start logic handled by frontend? 
+        // Auto-start logic handled by frontend?
         // Here we assume if daemonMode is checked, server should be ready.
         // Or we can try to start it here if not running?
         // For now, simpler: assume frontend started it via 'server-start'.
@@ -1847,8 +2058,7 @@ ipcMain.on('start-translation', (event, { inputFile, modelPath, config }) => {
             args.push('--gpu-layers', '0')
             console.log("Mode: CPU Only (Forced gpu-layers 0)")
         } else {
-            // 默认使用 -1 (全部加载到 GPU)，如果用户指定了值则使用用户值
-            const gpuLayers = config.gpuLayers !== undefined ? config.gpuLayers : -1
+            // 榛樿浣跨敤 -1 (鍏ㄩ儴鍔犺浇鍒?GPU)锛屽鏋滅敤鎴锋寚瀹氫簡鍊煎垯浣跨敤鐢ㄦ埛鍊?            const gpuLayers = config.gpuLayers !== undefined ? config.gpuLayers : -1
             args.push('--gpu-layers', gpuLayers.toString())
             console.log(`Mode: GPU with ${gpuLayers} layers`)
         }
@@ -1964,21 +2174,21 @@ ipcMain.on('start-translation', (event, { inputFile, modelPath, config }) => {
             args.push('--max-retries', config.maxRetries.toString())
         }
 
-        // Glossary Coverage Check (术语表覆盖率检测)
+        // Glossary Coverage Check (鏈琛ㄨ鐩栫巼妫€娴?
         if (config.coverageCheck) {
             args.push('--output-hit-threshold', (config.outputHitThreshold || 60).toString())
             args.push('--cot-coverage-threshold', (config.cotCoverageThreshold || 80).toString())
             args.push('--coverage-retries', (config.coverageRetries || 3).toString())
         }
 
-        // Incremental Translation (增量翻译)
+        // Incremental Translation (澧為噺缈昏瘧)
         if (config.resume) {
             args.push('--resume')
         }
 
-        // Text Protection (文本保护)
+        // Text Protection (鏂囨湰淇濇姢)
 
-        // Dynamic Retry Strategy (动态重试策略)
+        // Dynamic Retry Strategy (鍔ㄦ€侀噸璇曠瓥鐣?
         if (config.retryTempBoost !== undefined) {
             args.push('--retry-temp-boost', config.retryTempBoost.toString())
         }
@@ -1986,7 +2196,7 @@ ipcMain.on('start-translation', (event, { inputFile, modelPath, config }) => {
             args.push('--retry-prompt-feedback')
         }
 
-        // Save Cache (默认启用，用于校对界面)
+        // Save Cache (榛樿鍚敤锛岀敤浜庢牎瀵圭晫闈?
         if (config.saveCache !== false) {
             args.push('--save-cache')
             // Cache Directory
@@ -1999,7 +2209,7 @@ ipcMain.on('start-translation', (event, { inputFile, modelPath, config }) => {
     console.log('Spawning:', pythonCmd, args.join(' '), 'in', middlewareDir)
     event.reply('log-update', `System: CMD: ${pythonCmd} ${args.join(' ')}`)
     event.reply('log-update', `System: CWD: ${middlewareDir}`)
-    event.reply('log-update', `System: Config - CTX: ${config?.ctxSize || '4096'}, Concurrency: ${config?.concurrency || '1'}, KV: ${config?.kvCacheType || 'q8_0'}`)
+    event.reply('log-update', `System: Config - CTX: ${config?.ctxSize || '4096'}, Concurrency: ${config?.concurrency || '1'}, KV: ${config?.kvCacheType || 'f16'}`)
 
 
     // Set GPU ID if specified and not in CPU mode
@@ -2099,7 +2309,7 @@ ipcMain.on('stop-translation', () => {
 // --- Term Extraction ---
 ipcMain.handle('extract-terms', async (_event, options: { filePath?: string, text?: string, topK?: number }) => {
     const middlewarePath = getMiddlewarePath()
-    const pythonPath = getPythonPath()
+    const pythonInfo = getScriptPythonInfo()
     const scriptPath = join(middlewarePath, 'term_extractor.py')
 
     // Check script exists
@@ -2132,10 +2342,10 @@ ipcMain.handle('extract-terms', async (_event, options: { filePath?: string, tex
             '-k', String(options.topK || 500)
         ]
 
-        console.log(`[TermExtract] Running: ${pythonPath} ${args.join(' ')}`)
+        console.log(`[TermExtract] Running: ${pythonInfo.path} ${args.join(' ')}`)
 
         return new Promise((resolve) => {
-            const proc = spawnPythonProcess(pythonPath, args, {
+            const proc = spawnPythonProcess(pythonInfo, args, {
                 cwd: middlewarePath,
                 stdio: ['pipe', 'pipe', 'pipe']
             })
@@ -2193,7 +2403,7 @@ let hfDownloadProcess: ReturnType<typeof spawn> | null = null
 
 ipcMain.handle('hf-list-repos', async (_event, orgName: string) => {
     const middlewarePath = getMiddlewarePath()
-    const pythonPath = getPythonPath()
+    const pythonInfo = getScriptPythonInfo()
     const scriptPath = join(middlewarePath, 'hf_downloader.py')
 
     if (!fs.existsSync(scriptPath)) {
@@ -2201,7 +2411,7 @@ ipcMain.handle('hf-list-repos', async (_event, orgName: string) => {
     }
 
     return new Promise((resolve) => {
-        const proc = spawnPythonProcess(pythonPath, [scriptPath, 'repos', orgName], {
+        const proc = spawnPythonProcess(pythonInfo, [scriptPath, 'repos', orgName], {
             cwd: middlewarePath,
             stdio: ['pipe', 'pipe', 'pipe']
         })
@@ -2220,8 +2430,9 @@ ipcMain.handle('hf-list-repos', async (_event, orgName: string) => {
         proc.on('close', (code) => {
             if (code === 0) {
                 try {
-                    const result = JSON.parse(stdout.trim())
-                    resolve(result)
+                    const result = extractLastJsonObject<any>(stdout) || extractLastJsonObject<any>(stderr)
+                    if (result) resolve(result)
+                    else resolve({ error: 'Failed to parse response', raw: stdout })
                 } catch {
                     resolve({ error: 'Failed to parse response', raw: stdout })
                 }
@@ -2238,7 +2449,7 @@ ipcMain.handle('hf-list-repos', async (_event, orgName: string) => {
 
 ipcMain.handle('hf-list-files', async (_event, repoId: string) => {
     const middlewarePath = getMiddlewarePath()
-    const pythonPath = getPythonPath()
+    const pythonInfo = getScriptPythonInfo()
     const scriptPath = join(middlewarePath, 'hf_downloader.py')
 
     if (!fs.existsSync(scriptPath)) {
@@ -2246,7 +2457,7 @@ ipcMain.handle('hf-list-files', async (_event, repoId: string) => {
     }
 
     return new Promise((resolve) => {
-        const proc = spawnPythonProcess(pythonPath, [scriptPath, 'list', repoId], {
+        const proc = spawnPythonProcess(pythonInfo, [scriptPath, 'list', repoId], {
             cwd: middlewarePath,
             stdio: ['pipe', 'pipe', 'pipe']
         })
@@ -2265,8 +2476,9 @@ ipcMain.handle('hf-list-files', async (_event, repoId: string) => {
         proc.on('close', (code) => {
             if (code === 0) {
                 try {
-                    const result = JSON.parse(stdout.trim())
-                    resolve(result)
+                    const result = extractLastJsonObject<any>(stdout) || extractLastJsonObject<any>(stderr)
+                    if (result) resolve(result)
+                    else resolve({ error: 'Failed to parse response', raw: stdout })
                 } catch {
                     resolve({ error: 'Failed to parse response', raw: stdout })
                 }
@@ -2289,7 +2501,7 @@ ipcMain.handle('get-models-path', async () => {
 
 ipcMain.handle('hf-download-start', async (event, repoId: string, fileName: string, mirror: string = 'direct') => {
     const middlewarePath = getMiddlewarePath()
-    const pythonPath = getPythonPath()
+    const pythonInfo = getScriptPythonInfo()
     const scriptPath = join(middlewarePath, 'hf_downloader.py')
     const modelsPath = join(middlewarePath, 'models')
 
@@ -2298,10 +2510,9 @@ ipcMain.handle('hf-download-start', async (event, repoId: string, fileName: stri
         return { success: false }
     }
 
-    // 单例保护：防止并发下载导致孤儿进程
-    if (hfDownloadProcess !== null) {
+    // 鍗曚緥淇濇姢锛氶槻姝㈠苟鍙戜笅杞藉鑷村鍎胯繘绋?    if (hfDownloadProcess !== null) {
         console.warn('[HF Download] Download already in progress, rejecting new request')
-        event.sender.send('hf-download-error', { message: '已有下载任务进行中，请等待完成或取消后再试' })
+        event.sender.send('hf-download-error', { message: '宸叉湁涓嬭浇浠诲姟杩涜涓紝璇风瓑寰呭畬鎴愭垨鍙栨秷鍚庡啀璇? })
         return { success: false, error: 'Download already in progress' }
     }
 
@@ -2312,7 +2523,7 @@ ipcMain.handle('hf-download-start', async (event, repoId: string, fileName: stri
 
     console.log(`[HF Download] Starting download: ${repoId}/${fileName} (mirror: ${mirror})`)
 
-    hfDownloadProcess = spawnPythonProcess(pythonPath, [
+    hfDownloadProcess = spawnPythonProcess(pythonInfo, [
         scriptPath, 'download', repoId, fileName, modelsPath, mirror
     ], {
 
@@ -2320,22 +2531,30 @@ ipcMain.handle('hf-download-start', async (event, repoId: string, fileName: stri
         stdio: ['pipe', 'pipe', 'pipe']
     })
 
+    let stdoutBuffer = ''
+    let terminalSignalHandled = false
     hfDownloadProcess.stdout?.on('data', (data: Buffer) => {
-        const lines = data.toString().split('\n').filter(Boolean)
+        stdoutBuffer += data.toString()
+        const lines = stdoutBuffer.split(/\r?\n/)
+        stdoutBuffer = lines.pop() || ''
         for (const line of lines) {
+            const trimmed = line.trim()
+            if (!trimmed) continue
             try {
-                const msg = JSON.parse(line)
+                const msg = JSON.parse(trimmed)
                 if (msg.type === 'progress') {
                     event.sender.send('hf-download-progress', msg)
                 } else if (msg.type === 'complete') {
                     event.sender.send('hf-download-progress', { ...msg, status: 'complete', percent: 100 })
+                    terminalSignalHandled = true
                     hfDownloadProcess = null
                 } else if (msg.type === 'error') {
                     event.sender.send('hf-download-error', { message: msg.message })
+                    terminalSignalHandled = true
                     hfDownloadProcess = null
                 }
             } catch {
-                console.log('[HF Download] stdout:', line)
+                console.log('[HF Download] stdout:', trimmed)
             }
         }
     })
@@ -2345,8 +2564,25 @@ ipcMain.handle('hf-download-start', async (event, repoId: string, fileName: stri
     })
 
     hfDownloadProcess.on('close', (code) => {
+        const tail = stdoutBuffer.trim()
+        if (tail) {
+            try {
+                const msg = JSON.parse(tail)
+                if (msg.type === 'progress') {
+                    event.sender.send('hf-download-progress', msg)
+                } else if (msg.type === 'complete') {
+                    event.sender.send('hf-download-progress', { ...msg, status: 'complete', percent: 100 })
+                    terminalSignalHandled = true
+                } else if (msg.type === 'error') {
+                    event.sender.send('hf-download-error', { message: msg.message })
+                    terminalSignalHandled = true
+                }
+            } catch {
+                // ignore tail parse failure
+            }
+        }
         console.log(`[HF Download] Process exited with code ${code}`)
-        if (code !== 0) {
+        if (code !== 0 && !terminalSignalHandled) {
             event.sender.send('hf-download-error', { message: `Download process exited with code ${code}` })
         }
         hfDownloadProcess = null
@@ -2363,7 +2599,16 @@ ipcMain.handle('hf-download-start', async (event, repoId: string, fileName: stri
 ipcMain.handle('hf-download-cancel', async () => {
     if (hfDownloadProcess) {
         console.log('[HF Download] Cancelling download...')
-        hfDownloadProcess.kill('SIGTERM')
+        const pid = hfDownloadProcess.pid
+        if (process.platform === 'win32' && pid) {
+            try {
+                spawn('taskkill', ['/pid', pid.toString(), '/f', '/t'])
+            } catch {
+                try { hfDownloadProcess.kill() } catch { }
+            }
+        } else {
+            hfDownloadProcess.kill('SIGTERM')
+        }
         hfDownloadProcess = null
         return { success: true }
     }
@@ -2373,13 +2618,17 @@ ipcMain.handle('hf-download-cancel', async () => {
 // Verify model integrity against HuggingFace
 ipcMain.handle('hf-verify-model', async (_event, orgName: string, filePath: string) => {
     const middlewarePath = getMiddlewarePath()
-    const pythonPath = getPythonPath()
+    const pythonInfo = getScriptPythonInfo()
     const scriptPath = join(middlewarePath, 'hf_downloader.py')
 
     console.log(`[HF Verify] Verifying ${filePath} against ${orgName}...`)
 
+    if (!fs.existsSync(scriptPath)) {
+        return { error: 'hf_downloader.py not found' }
+    }
+
     return new Promise((resolve) => {
-        const proc = spawnPythonProcess(pythonPath, [
+        const proc = spawnPythonProcess(pythonInfo, [
             scriptPath, 'verify', orgName, filePath
         ], {
             cwd: middlewarePath,
@@ -2426,7 +2675,7 @@ ipcMain.handle('hf-verify-model', async (_event, orgName: string, filePath: stri
 // Check network connectivity to HuggingFace
 ipcMain.handle('hf-check-network', async () => {
     const middlewarePath = getMiddlewarePath()
-    const pythonPath = getPythonPath()
+    const pythonInfo = getScriptPythonInfo()
     const scriptPath = join(middlewarePath, 'hf_downloader.py')
 
     if (!fs.existsSync(scriptPath)) {
@@ -2434,7 +2683,7 @@ ipcMain.handle('hf-check-network', async () => {
     }
 
     return new Promise((resolve) => {
-        const proc = spawnPythonProcess(pythonPath, [scriptPath, 'network'], {
+        const proc = spawnPythonProcess(pythonInfo, [scriptPath, 'network'], {
             cwd: middlewarePath,
             stdio: ['pipe', 'pipe', 'pipe']
         })
@@ -2453,8 +2702,9 @@ ipcMain.handle('hf-check-network', async () => {
         proc.on('close', (code) => {
             if (code === 0) {
                 try {
-                    const result = JSON.parse(stdout.trim())
-                    resolve(result)
+                    const result = extractLastJsonObject<any>(stdout) || extractLastJsonObject<any>(stderr)
+                    if (result) resolve(result)
+                    else resolve({ status: 'error', message: 'Failed to parse response' })
                 } catch {
                     resolve({ status: 'error', message: 'Failed to parse response' })
                 }

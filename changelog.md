@@ -1,5 +1,45 @@
 # Murasaki Translator - Changelog
 
+## [1.6.2] - 2026-02-10
+
+### 新增功能 (Features)
+
+*   **仪表盘队列新增单文件设置入口 (`Dashboard.tsx`)**：在队列项操作区新增“设置”按钮，支持在 Dashboard 内直接弹出单文件配置，不再依赖页面跳转。
+
+*   **单文件配置新增模型覆盖 (`LibraryView.tsx`)**：`FileConfigModal` 新增每文件模型选择器，并支持读取本地模型列表，形成 `customConfig.model` 覆盖链路。
+
+*   **复用组件导出 (`LibraryView.tsx`)**：`FileConfigModal` 改为可导出组件，供 Dashboard 与 Library 复用同一套单文件配置逻辑。
+
+### 变更调整 (Changed)
+
+*   **Prompt Preset 迁移至 Dashboard (`Dashboard.tsx`, `AdvancedView.tsx`)**：全局预设下拉从高级页面迁移到首页仪表盘，`config_preset` 写入入口同步迁移，避免“必须先保存高级设置”才生效。
+
+*   **首页配置卡片顺序与图标优化 (`Dashboard.tsx`)**：顶部三项调整为“模型 → Prompt Preset → 术语表”的逻辑顺序。
+
+*   **提交参数优先级统一 (`Dashboard.tsx`)**：翻译启动与重名检测统一采用 `customConfig > dashboard global` 优先级，模型、预设等参数在提交前按最终有效值计算。
+
+### 问题修复 (Fixed)
+
+*   **Proofread 行模式原文不可单独复制 (`ProofreadView.tsx`)**：修复点击交互冲突，原文列可独立选择与复制，且不再误触发译文编辑态。
+
+*   **辅助对齐标记显示噪音 (`ProofreadView.tsx`)**：开启辅助对齐时，左侧原文显示层自动隐藏 `@id=...@`、`[id=...]`、`{id=...}`、`<id=...>` 等标记（支持行首/行尾），仅影响显示不改动原始数据。
+
+*   **单文件设置后立即提交不生效 (`Dashboard.tsx`)**：提交流程改为读取 Dashboard 内存队列（`queueRef.current`）而非重新从 `localStorage` 回读，确保刚保存的单文件参数立即生效。
+
+*   **输出重名检测模型错位 (`Dashboard.tsx`)**：`checkOutputFileExists` 使用与启动翻译一致的 `effectiveModelPath`，避免单文件模型覆盖时检测路径与实际输出不一致。
+
+*   **重试统计口径严格化 (`HistoryView.tsx`)**：历史页“重试次数”仅统计实际重试事件（`empty_retry` / `line_mismatch` / `rep_penalty_increase` / `glossary_missed`），不再混入 `parse_fallback` 等非重试事件。
+
+*   **`glossary_missed` 仅在真实重试时计入 (`main.py`, `Dashboard.tsx`, `HistoryView.tsx`)**：仅当后端发出 `JSON_RETRY(type=glossary)` 才记录为重试；`warning_glossary_missed` 仅作警告展示，不计入重试次数。
+
+*   **运行环境诊断与自动修复稳定性修复 (`index.ts`, `preload/index.ts`, `SettingsView.tsx`)**：增强 macOS/Linux/Windows 的 GPU/Python 探测回退链路，改进 env-fix 结果 JSON 提取鲁棒性，并修复“打开运行目录”的跨平台路径处理。
+
+### 性能优化 (Performance)
+
+*   **Proofread 渲染缓存优化 (`ProofreadView.tsx`)**：为筛选分页与显示层原文处理引入 `useMemo` 缓存，并将对齐标记正则提升到模块级复用，降低大文本重绘开销与输入卡顿概率。
+
+---
+
 ## [1.6.1] - 2026-02-08
 
 ### 中间件核心 (Middleware Core)
@@ -236,7 +276,7 @@
 ### 代码审计与交互修复 (Refactor & UX)
 - **图表闭包优化**: 重构了 Dashboard 的日志监听逻辑，通过 `useRef` 状态同步机制解决了高频更新下的闭包陷阱问题。
 - **进程生命周期**: 清理了停止翻译时多余的 `process-exit` IPC 信号，使进程退出过程更加自然且符合状态机规范。
-- **布局微调**: 
+- **布局微调**:
     - 优化了图表容器的高度自适应逻辑，彻底消除了 `ResponsiveContainer` 在某些分辨率下可能出现的 0 尺寸报错。
     - 控制栏与日志抽屉代码结构优化，增强了 UI 组件的嵌套健壮性。
 
@@ -380,16 +420,16 @@
 - **智能元数据分块**: `Chunker` 现在能够携带元数据，并根据文档类型自动调整切分策略（如结构化文档自动禁用尾部平衡）。
 
 ###  新增功能 (Features)
-- **Python 驱动规则沙盒**: 
+- **Python 驱动规则沙盒**:
     - 弃用前端 JS 模拟正则，改由真实的 Python 后端驱动测试。
     - **阶梯式追踪**: 可视化展示每一条规则对文本产生的增量修改，确保“所见即所得”。
-- **可视化规则编辑器**: 
+- **可视化规则编辑器**:
     - 移除分散的配置项，整合为统一的拖拽式编辑器。
     - 新增 10+ 种内置算法预设（内置处理器），涵盖排版优化、字符修复及实验性假名清理。
 - **动态保护系统**: `TextProtector` 现在支持多规则聚合，可根据用户定义的规则自动激活多个不变量保护标签。
 
 ###  修复与优化 (Fixes & Optimization)
-- **Windows 兼容性强化**: 
+- **Windows 兼容性强化**:
     - 为所有 Python 子进程强制开启 `PYTHONIOENCODING=utf-8`。
     - 解决了 Windows 环境下非 ASCII 路径和字符导致的进程崩溃。
 - **断点续传 (Resume) 增强**:
