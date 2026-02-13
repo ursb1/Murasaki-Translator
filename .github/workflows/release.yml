@@ -586,8 +586,29 @@ jobs:
           test "$TASK_STATUS_CODE" = "200"
           python3 -c "import json; payload=json.load(open('/tmp/task_status.json', encoding='utf-8')); required=['task_id','status','next_log_index','log_total','logs_truncated']; missing=[k for k in required if k not in payload]; assert not missing, f'missing field: {missing}'"
 
-          # WebSocket contract test
-          node -e "const fs=require('fs'); const taskId=fs.readFileSync('/tmp/task_id.txt','utf8').trim(); const ws=new WebSocket(`ws://127.0.0.1:18080/api/v1/ws/${taskId}?token=smoke-test-key`); const timer=setTimeout(()=>{console.error('ws timeout'); process.exit(1);},10000); ws.onmessage=(event)=>{try{const payload=JSON.parse(String(event.data)); if(!payload.type){throw new Error('websocket payload missing type');} clearTimeout(timer); ws.close(); process.exit(0);}catch(err){console.error(err); process.exit(1);}}; ws.onerror=(err)=>{clearTimeout(timer); console.error(err); process.exit(1);};"
+          # WebSocket contract test (use python websockets to avoid Node global WebSocket issues)
+          .venv/bin/python - <<'PY'
+import asyncio
+import json
+import sys
+import websockets
+
+task_id = open('/tmp/task_id.txt', encoding='utf-8').read().strip()
+url = f"ws://127.0.0.1:18080/api/v1/ws/{task_id}?token=smoke-test-key"
+
+async def main():
+    try:
+        async with websockets.connect(url, open_timeout=5) as ws:
+            msg = await asyncio.wait_for(ws.recv(), timeout=10)
+            payload = json.loads(msg)
+            if not isinstance(payload, dict) or "type" not in payload:
+                raise RuntimeError("websocket payload missing type")
+    except Exception as exc:
+        print(exc)
+        sys.exit(1)
+
+asyncio.run(main())
+PY
 
           CANCEL_CODE=$(curl -sS -o /tmp/cancel_task.json -w "%{http_code}" \
             -X DELETE \
