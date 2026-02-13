@@ -60,7 +60,7 @@ class TranslationTask:
 
     # 日志（限制最大条数防止内存泄漏）
     logs: List[str] = field(default_factory=list)
-    MAX_LOG_LINES: int = field(default=500, repr=False)  # 最多保留 500 条日志
+    MAX_LOG_LINES: int = field(default=20000, repr=False)  # 最多保留 20000 条日志
 
     # 控制
     cancel_requested: bool = False
@@ -271,6 +271,10 @@ class TranslationWorker:
         if batch_size is not None and int(batch_size) <= 0:
             batch_size = None
 
+        # Ensure per-slot context equals requested ctx when parallel > 1.
+        # llama-server splits total ctx across slots, so we scale by parallel here.
+        ctx_total = int(ctx) * parallel
+
         server_path = self._find_llama_server()
 
         cmd = [
@@ -279,8 +283,8 @@ class TranslationWorker:
             "--host", self.server_host,
             "--port", str(self.server_port),
             "-ngl", str(gpu_layers),
-            "-c", str(ctx),
-            "--ctx-size", str(ctx),
+            "-c", str(ctx_total),
+            "--ctx-size", str(ctx_total),
             "--parallel", str(parallel),
             "--reasoning-format", "deepseek-legacy",
             "--metrics"
@@ -712,6 +716,9 @@ class TranslationWorker:
 
                 line_text = line.decode('utf-8', errors='ignore').strip()
                 if line_text:
+                    # Skip think-stream deltas to avoid log flooding in remote mode
+                    if line_text.startswith("JSON_THINK_DELTA:"):
+                        continue
                     task.add_log(line_text)
 
                     # 解析进度

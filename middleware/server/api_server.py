@@ -249,6 +249,17 @@ _tasks_lock = threading.Lock()
 TERMINAL_TASK_STATUSES = {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED}
 
 
+@app.on_event("shutdown")
+def on_shutdown():
+    """Ensure llama-server is stopped when API server exits."""
+    global worker
+    try:
+        if worker is not None:
+            worker.stop_server()
+    except Exception:
+        pass
+
+
 def _set_task(task: TranslationTask) -> None:
     with _tasks_lock:
         tasks[task.task_id] = task

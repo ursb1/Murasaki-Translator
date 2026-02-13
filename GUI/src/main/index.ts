@@ -163,7 +163,7 @@ function createWindow(): void {
 /**
  * 清理所有子进程
  */
-function cleanupProcesses(): void {
+async function cleanupProcesses(): Promise<void> {
   console.log("[App] Cleaning up processes...");
 
   // 停止翻译进程
@@ -181,7 +181,7 @@ function cleanupProcesses(): void {
 
   // 停止 ServerManager 管理的 llama-server
   try {
-    ServerManager.getInstance().stop();
+    await ServerManager.getInstance().stop();
   } catch (e) {
     console.error("[App] Error stopping server:", e);
   }
@@ -255,17 +255,26 @@ app.whenReady().then(() => {
 });
 
 // 应用退出前清理资源
-app.on("before-quit", () => {
-  cleanupProcesses();
+let shutdownInProgress = false;
+const handleAppShutdown = async (): Promise<void> => {
+  if (shutdownInProgress) return;
+  shutdownInProgress = true;
+  await cleanupProcesses();
+  app.exit(0);
+};
+
+app.on("before-quit", (event) => {
+  event.preventDefault();
+  void handleAppShutdown();
 });
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.
-app.on("window-all-closed", () => {
-  cleanupProcesses();
+app.on("window-all-closed", (event) => {
   if (process.platform !== "darwin") {
-    app.quit();
+    event.preventDefault();
+    void handleAppShutdown();
   }
 });
 
