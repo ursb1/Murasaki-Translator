@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { Button, Card, CardContent, CardHeader, CardTitle } from "./ui/core";
 import { AlertModal } from "./ui/AlertModal";
-import { Language } from "../lib/i18n";
+import { translations, Language } from "../lib/i18n";
 
 interface TermItem {
   src: string;
@@ -38,6 +38,8 @@ export function TermExtractModal({
   onImport,
   queueFiles = [],
 }: TermExtractModalProps) {
+  const t = translations[lang];
+  const tt = t.termExtract;
   // State
   const [sourceType, setSourceType] = useState<"upload" | "queue">("upload");
   const [selectedFile, setSelectedFile] = useState<string>("");
@@ -49,6 +51,7 @@ export function TermExtractModal({
   const [hasExtracted, setHasExtracted] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [isDragging, setIsDragging] = useState(false);
+  const [queueLoadError, setQueueLoadError] = useState<string | null>(null);
 
   // Queue files from localStorage (or props as fallback)
   const [libraryQueue, setLibraryQueue] = useState<string[]>(queueFiles);
@@ -66,6 +69,7 @@ export function TermExtractModal({
       }
     } catch (e) {
       console.error("Failed to load queue from localStorage:", e);
+      setQueueLoadError(tt.queueLoadFail);
     }
   }, []);
 
@@ -104,11 +108,8 @@ export function TermExtractModal({
           setSourceType("upload");
         }
       } else {
-        setError(
-          lang === "zh"
-            ? "只支持 TXT, EPUB, ASS 或 SRT 文件"
-            : "Only TXT, EPUB, ASS or SRT files are supported",
-        );
+        setError(tt.unsupportedFormat);
+        setShowAlert(true);
       }
     }
   };
@@ -129,10 +130,10 @@ export function TermExtractModal({
     try {
       // @ts-ignore
       const result = await window.api.selectFile({
-        title: lang === "zh" ? "选择要分析的文件" : "Select file to analyze",
+        title: tt.selectFileTitle,
         filters: [
           {
-            name: "Text/Subtitle Files",
+            name: tt.fileFilterName,
             extensions: ["txt", "epub", "ass", "srt"],
           },
         ],
@@ -143,6 +144,8 @@ export function TermExtractModal({
       }
     } catch (e) {
       console.error(e);
+      setError(tt.selectFileFail);
+      setShowAlert(true);
     }
   };
 
@@ -272,12 +275,10 @@ export function TermExtractModal({
             </div>
             <div>
               <CardTitle className="text-lg font-bold">
-                {lang === "zh" ? "术语表智能提取" : "Smart Term Extraction"}
+                {tt.title}
               </CardTitle>
               <p className="text-xs text-muted-foreground mt-0.5">
-                {lang === "zh"
-                  ? "基于 PMI + 信息熵算法自动识别专有名词"
-                  : "PMI + Entropy based proper noun recognition"}
+                {tt.subtitle}
               </p>
             </div>
           </div>
@@ -311,7 +312,7 @@ export function TermExtractModal({
                   <p
                     className={`text-sm font-bold ${sourceType === "upload" ? "text-foreground" : "text-muted-foreground"}`}
                   >
-                    {lang === "zh" ? "上传文件" : "Upload File"}
+                    {tt.uploadFile}
                   </p>
                 </button>
                 <button
@@ -329,12 +330,12 @@ export function TermExtractModal({
                   <p
                     className={`text-sm font-bold ${sourceType === "queue" ? "text-foreground" : "text-muted-foreground"}`}
                   >
-                    {lang === "zh" ? "从队列选择" : "From Queue"}
+                    {tt.fromQueue}
                   </p>
                   {libraryQueue.length > 0 && (
                     <span className="text-[10px] text-muted-foreground">
                       ({libraryQueue.length}{" "}
-                      {lang === "zh" ? "个文件" : "files"})
+                      {tt.files})
                     </span>
                   )}
                 </button>
@@ -370,7 +371,7 @@ export function TermExtractModal({
                           setSelectedFile("");
                         }}
                         className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-                        title={lang === "zh" ? "移除文件" : "Remove file"}
+                        title={tt.removeFile}
                       >
                         <X className="w-4 h-4" />
                       </button>
@@ -382,12 +383,8 @@ export function TermExtractModal({
                       />
                       <p className="text-sm text-muted-foreground">
                         {isDragging
-                          ? lang === "zh"
-                            ? "松开以上传文件"
-                            : "Drop to upload"
-                          : lang === "zh"
-                            ? "点击选择或拖拽上传文件"
-                            : "Click or drag TXT/EPUB/ASS/SRT file"}
+                          ? tt.dropRelease
+                          : tt.dropHint}
                       </p>
                     </>
                   )}
@@ -418,35 +415,33 @@ export function TermExtractModal({
                   ))}
                 </div>
               )}
+              {sourceType === "queue" && queueLoadError && (
+                <div className="flex items-center gap-2 text-[11px] text-amber-500 mt-2">
+                  <AlertTriangle className="w-3 h-3" />
+                  <span>{queueLoadError}</span>
+                </div>
+              )}
 
               {/* Algorithm Info */}
               <div className="p-4 bg-secondary/30 rounded-xl border border-border/50 text-xs text-muted-foreground space-y-2">
                 <p className="font-bold text-foreground flex items-center gap-2">
                   <Sparkles className="w-3 h-3" />
-                  {lang === "zh" ? "算法说明" : "Algorithm"}
+                  {tt.algorithmTitle}
                 </p>
                 <ul className="list-disc list-inside space-y-1 pl-2">
                   <li>
-                    {lang === "zh"
-                      ? "固有名詞: 识别人名/地名/组织名"
-                      : "PoS: Detect proper nouns"}
+                    {tt.algorithmProper}
                   </li>
                   <li>
-                    {lang === "zh"
-                      ? "片假名: 智能提取带中点的完整人名"
-                      : "Katakana: Extract full names with dots"}
+                    {tt.algorithmKatakana}
                   </li>
                   <li>
-                    {lang === "zh"
-                      ? "去重: 自动合并子串与碎片"
-                      : "Dedup: Auto-merge substrings/fragments"}
+                    {tt.algorithmDedup}
                   </li>
                 </ul>
                 <p className="text-amber-500/80 mt-2 text-[11px]">
-                  提示:{" "}
-                  {lang === "zh"
-                    ? "本功能为实验性功能，提取结果可能不准确，请手动检查并删除误判项"
-                    : "Experimental feature. Results may be inaccurate. Please review and remove false positives."}
+                  {tt.tipLabel}{" "}
+                  {tt.tipDesc}
                 </p>
               </div>
 
@@ -459,7 +454,7 @@ export function TermExtractModal({
                 className="w-full h-12 text-base gap-2"
               >
                 <Sparkles className="w-5 h-5" />
-                {lang === "zh" ? "开始提取" : "Start Extraction"}
+                {tt.start}
               </Button>
             </div>
           )}
@@ -484,16 +479,10 @@ export function TermExtractModal({
                 </div>
                 <p className="text-sm text-muted-foreground text-center mt-3">
                   {progress < 0.15
-                    ? lang === "zh"
-                      ? "正在提取片假名人名..."
-                      : "Extracting katakana names..."
+                    ? tt.progressKatakana
                     : progress < 0.85
-                      ? lang === "zh"
-                        ? "正在分析固有名詞..."
-                        : "Analyzing proper nouns..."
-                      : lang === "zh"
-                        ? "正在生成结果..."
-                        : "Generating results..."}
+                      ? tt.progressProper
+                      : tt.progressFinalizing}
                 </p>
               </div>
             </div>
@@ -507,17 +496,15 @@ export function TermExtractModal({
               </div>
               <div className="space-y-2">
                 <p className="font-bold text-lg">
-                  {lang === "zh" ? "未找到提取项" : "No Terms Found"}
+                  {tt.emptyTitle}
                 </p>
                 <p className="text-sm text-muted-foreground max-w-xs mx-auto">
-                  {lang === "zh"
-                    ? "当前文本中似乎没有符合条件的术语。可以尝试更换文件或检查内容是否包含足够多的文本。"
-                    : "We couldn't find any significant terms in the selected file. Try a different file or ensure there is enough text content."}
+                  {tt.emptyDesc}
                 </p>
               </div>
               <Button variant="outline" onClick={handleReset} className="mt-4">
                 <RotateCcw className="w-4 h-4 mr-2" />
-                {lang === "zh" ? "重新选择文件" : "Try Another File"}
+                {tt.tryAnother}
               </Button>
             </div>
           )}
@@ -530,10 +517,10 @@ export function TermExtractModal({
                 <div className="flex items-center gap-3">
                   <CheckCircle className="w-5 h-5 text-green-500" />
                   <span className="font-bold">
-                    {lang === "zh" ? "提取完成" : "Extraction Complete"}
+                    {tt.complete}
                   </span>
                   <span className="text-sm text-muted-foreground">
-                    ({results.length} {lang === "zh" ? "个术语" : "terms"})
+                    ({results.length} {tt.terms})
                   </span>
                   <Button
                     variant="ghost"
@@ -542,7 +529,7 @@ export function TermExtractModal({
                     className="ml-2 h-7 px-2 text-muted-foreground hover:text-foreground"
                   >
                     <RotateCcw className="w-3.5 h-3.5 mr-1" />
-                    {lang === "zh" ? "重新提取" : "Reset"}
+                    {tt.reset}
                   </Button>
                 </div>
                 <div className="relative">
@@ -551,7 +538,7 @@ export function TermExtractModal({
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder={lang === "zh" ? "搜索..." : "Search..."}
+                    placeholder={tt.searchPlaceholder}
                     className="pl-9 pr-3 py-1.5 text-sm bg-secondary border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-violet-500"
                   />
                 </div>
@@ -560,10 +547,10 @@ export function TermExtractModal({
               {/* Results Table */}
               <div className="flex-1 overflow-hidden border border-border/50 rounded-xl bg-background">
                 <div className="grid grid-cols-[1fr_1fr_80px] bg-muted/50 px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground border-b border-border/50">
-                  <div>{lang === "zh" ? "日文原文" : "Japanese"}</div>
-                  <div>{lang === "zh" ? "译文" : "Translation"}</div>
+                  <div>{tt.colSource}</div>
+                  <div>{tt.colTarget}</div>
                   <div className="text-center">
-                    {lang === "zh" ? "操作" : "Actions"}
+                    {tt.colActions}
                   </div>
                 </div>
                 <div className="overflow-y-auto max-h-[300px] divide-y divide-border/30">
@@ -592,9 +579,7 @@ export function TermExtractModal({
                               value={editDst}
                               onChange={(e) => setEditDst(e.target.value)}
                               placeholder={
-                                lang === "zh"
-                                  ? "输入译文..."
-                                  : "Enter translation..."
+                                tt.inputTranslationPlaceholder
                               }
                               className="text-sm px-2 py-1 border border-border rounded bg-background focus:outline-none focus:border-violet-500"
                               onKeyDown={(e) => {
@@ -635,7 +620,7 @@ export function TermExtractModal({
                               onClick={() => startEdit(realIdx)}
                             >
                               {item.dst ||
-                                (lang === "zh" ? "点击编辑" : "Click to edit")}
+                                tt.clickToEdit}
                             </div>
                             <div className="flex items-center justify-center">
                               <Button
@@ -659,9 +644,7 @@ export function TermExtractModal({
               <div className="mt-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs text-amber-700 dark:text-amber-400 flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
                 <span>
-                  {lang === "zh"
-                    ? "点击行可编辑术语和译文。导出后请手动填写剩余译文，或使用 LLM 补充。"
-                    : "Click rows to edit. Please fill in remaining translations manually or use LLM."}
+                  {tt.editHint}
                 </span>
               </div>
 
@@ -673,14 +656,14 @@ export function TermExtractModal({
                   className="flex-1 gap-2"
                 >
                   <Download className="w-4 h-4" />
-                  {lang === "zh" ? "导出为 JSON" : "Export JSON"}
+                  {tt.exportJson}
                 </Button>
                 <Button
                   onClick={handleImportToGlossary}
                   className="flex-1 gap-2"
                 >
                   <Plus className="w-4 h-4" />
-                  {lang === "zh" ? "添加到术语表" : "Add to Glossary"}
+                  {tt.addToGlossary}
                 </Button>
               </div>
             </div>
@@ -692,9 +675,9 @@ export function TermExtractModal({
         open={showAlert}
         onOpenChange={setShowAlert}
         variant="destructive"
-        title={lang === "zh" ? "术语提取失败" : "Extraction Failed"}
+        title={tt.failTitle}
         description={error || ""}
-        confirmText={lang === "zh" ? "知道了" : "Got it"}
+        confirmText={tt.gotIt}
       />
     </div>
   );

@@ -166,15 +166,33 @@ class TranslationWorker:
         """查找 llama-server 二进制（带 NVIDIA GPU 检测）"""
         middleware_dir = Path(__file__).parent.parent
 
+        force_cpu = os.environ.get("MURASAKI_FORCE_CPU", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
         if sys.platform == 'linux':
-            # 修复：使用 which 检测而非硬编码路径
-            has_nvidia = self._check_nvidia_gpu()
-            if has_nvidia:
-                candidate = middleware_dir / 'bin' / 'linux-cuda' / 'llama-server'
-                if not candidate.exists():
-                    candidate = middleware_dir / 'bin' / 'linux-vulkan' / 'llama-server'
+            if force_cpu:
+                logging.info("MURASAKI_FORCE_CPU=1, using linux-cpu backend")
+                candidate = middleware_dir / 'bin' / 'linux-cpu' / 'llama-server'
             else:
-                candidate = middleware_dir / 'bin' / 'linux-vulkan' / 'llama-server'
+                # 修复：使用 which 检测而非硬编码路径
+                has_nvidia = self._check_nvidia_gpu()
+                if has_nvidia:
+                    candidate = middleware_dir / 'bin' / 'linux-cuda' / 'llama-server'
+                    if not candidate.exists():
+                        candidate = middleware_dir / 'bin' / 'linux-vulkan' / 'llama-server'
+                else:
+                    candidate = middleware_dir / 'bin' / 'linux-vulkan' / 'llama-server'
+
+            # 最终回退到 CPU（避免无 GPU/Vulkan 环境直接报错）
+            if not candidate.exists() and not force_cpu:
+                cpu_candidate = middleware_dir / 'bin' / 'linux-cpu' / 'llama-server'
+                if cpu_candidate.exists():
+                    logging.info("Backend binary missing, fallback to linux-cpu")
+                    candidate = cpu_candidate
         elif sys.platform == 'darwin':
             import platform
             if 'arm' in platform.machine().lower():

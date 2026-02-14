@@ -73,6 +73,34 @@ class EpubDocument(BaseDocument):
                     if attr_lower in child.attrs:
                         child.attrs[attr_correct] = child.attrs.pop(attr_lower)
 
+    def _normalize_anchor_stream(self, text: str) -> str:
+        """Normalize potentially mangled @id/@end anchors (full-width, spaces, newlines)."""
+        if not text:
+            return text
+
+        def _normalize_digits(s: str) -> str:
+            return s.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
+
+        # Normalize @id= and @end= tokens with tolerance for full-width and spaces.
+        def _fix_id(m: re.Match) -> str:
+            return f"@id={_normalize_digits(m.group(1))}@"
+
+        def _fix_end(m: re.Match) -> str:
+            return f"@end={_normalize_digits(m.group(1))}@"
+
+        # Match both half/full-width @ and =, with optional whitespace/newlines.
+        text = re.sub(
+            r"[@＠]\s*[iｉIＩ]\s*[dｄDＤ]\s*[=＝]\s*([0-9０-９]+)\s*[@＠]",
+            _fix_id,
+            text
+        )
+        text = re.sub(
+            r"[@＠]\s*[eｅEＥ]\s*[nｎNＮ]\s*[dｄDＤ]\s*[=＝]\s*([0-9０-９]+)\s*[@＠]",
+            _fix_end,
+            text
+        )
+        return text
+
     def load(self) -> List[Dict[str, Any]]:
         """Extract topmost containers while preserving inner HTML for tag protection."""
         items = []
@@ -128,12 +156,46 @@ class EpubDocument(BaseDocument):
         """Point-to-Point Container Mapping."""
         id_to_text = {}
         anchor_re = re.compile(r"@id=(\d+)@([\s\S]*?)@end=\1@", re.MULTILINE)
-        
-        for block in blocks:
-            content = getattr(block, 'prompt_text', '') or ''
-            for uid_str, tag_content in anchor_re.findall(content):
-                try: id_to_text[int(uid_str)] = tag_content.strip()
-                except: pass
+        # NOTE: Anchors may straddle block boundaries or be slightly mangled.
+        # Parse on the concatenated output to recover split @id/@end pairs.
+        combined = "".join((getattr(block, 'prompt_text', '') or '') for block in blocks)
+        if combined:
+            normalized = self._normalize_anchor_stream(combined)
+            for uid_str, tag_content in anchor_re.findall(normalized):
+                try:
+                    id_to_text[int(uid_str)] = tag_content.strip()
+                except:
+                    pass
+
+            # Fallback: tolerate missing @end or spacing issues by segmenting on @id= markers.
+            # Only fill IDs that were not captured by strict pairing.
+            expected_uids = []
+            for block in blocks:
+                meta_list = getattr(block, 'metadata', None) or []
+                if isinstance(meta_list, list):
+                    for meta in meta_list:
+                        if isinstance(meta, dict) and 'uid' in meta:
+                            expected_uids.append(meta['uid'])
+            expected_last_uid = expected_uids[-1] if expected_uids else None
+
+            loose_re = re.compile(
+                r"@id=(\d+)@([\s\S]*?)(@end=\1@|(?=@id=\d+@)|\Z)",
+                re.MULTILINE
+            )
+            for match in loose_re.finditer(normalized):
+                try:
+                    uid = int(match.group(1))
+                except:
+                    continue
+                if uid in id_to_text:
+                    continue
+                terminator = match.group(3) or ""
+                is_end_tag = terminator.startswith("@end=")
+                is_end_of_stream = (match.end() >= len(normalized))
+                if is_end_of_stream and not is_end_tag and expected_last_uid is not None and uid != expected_last_uid:
+                    # Avoid swallowing the tail if this isn't the final expected UID.
+                    continue
+                id_to_text[uid] = (match.group(2) or "").strip()
 
         try:
             with zipfile.ZipFile(self.path, 'r') as in_zip, \

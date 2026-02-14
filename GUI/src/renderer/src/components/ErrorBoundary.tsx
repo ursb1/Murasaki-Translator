@@ -5,6 +5,7 @@
 
 import { Component, ReactNode } from "react";
 import { AlertTriangle, RefreshCw, ChevronDown, ChevronUp } from "lucide-react";
+import { translations, Language } from "../lib/i18n";
 
 interface Props {
   children: ReactNode;
@@ -54,6 +55,42 @@ export class ErrorBoundary extends Component<Props, State> {
     });
   };
 
+  handleCopy = async () => {
+    const { error, errorInfo } = this.state;
+    const payload = [
+      error?.message ? `Error: ${error.message}` : "",
+      errorInfo ? `Stack:\n${errorInfo}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
+    const resolveLang = (): Language => {
+      const stored = localStorage.getItem("app_lang");
+      if (stored === "zh" || stored === "en" || stored === "jp") {
+        return stored;
+      }
+      const nav = (navigator?.language || "").toLowerCase();
+      if (nav.startsWith("ja")) return "jp";
+      if (nav.startsWith("en")) return "en";
+      return "zh";
+    };
+
+    const lang = resolveLang();
+    const t = translations[lang].errorBoundary;
+
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(payload);
+      } else {
+        window.prompt(t.copyPrompt, payload);
+      }
+      const { emitToast } = await import("../lib/toast");
+      emitToast({ message: t.copyToast, variant: "success" });
+    } catch {
+      window.prompt(t.copyPrompt, payload);
+    }
+  };
+
   toggleDetails = () => {
     this.setState((prev) => ({ showDetails: !prev.showDetails }));
   };
@@ -63,6 +100,18 @@ export class ErrorBoundary extends Component<Props, State> {
       if (this.props.fallback) {
         return this.props.fallback;
       }
+      const resolveLang = (): Language => {
+        const stored = localStorage.getItem("app_lang");
+        if (stored === "zh" || stored === "en" || stored === "jp") {
+          return stored;
+        }
+        const nav = (navigator?.language || "").toLowerCase();
+        if (nav.startsWith("ja")) return "jp";
+        if (nav.startsWith("en")) return "en";
+        return "zh";
+      };
+
+      const t = translations[resolveLang()].errorBoundary;
 
       return (
         <div className="flex items-center justify-center min-h-screen bg-background p-8">
@@ -76,10 +125,10 @@ export class ErrorBoundary extends Component<Props, State> {
 
             {/* 错误标题 */}
             <h2 className="text-xl font-semibold text-center text-foreground mb-2">
-              出现了一些问题
+              {t.title}
             </h2>
             <p className="text-muted-foreground text-center mb-6">
-              应用遇到了意外错误，请尝试重试或刷新页面
+              {t.description}
             </p>
 
             {/* 错误信息 */}
@@ -98,30 +147,38 @@ export class ErrorBoundary extends Component<Props, State> {
                 className="flex-1 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg font-medium hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
               >
                 <RefreshCw className="w-4 h-4" />
-                重试
+                {t.retry}
               </button>
               <button
                 onClick={this.handleReload}
                 className="flex-1 px-4 py-2.5 bg-secondary text-secondary-foreground rounded-lg font-medium hover:opacity-90 transition-opacity"
               >
-                刷新页面
+                {t.reload}
               </button>
             </div>
 
             {/* 详细信息折叠 */}
             {this.state.errorInfo && (
               <div className="border-t border-border pt-4">
-                <button
-                  onClick={this.toggleDetails}
-                  className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors w-full"
-                >
-                  {this.state.showDetails ? (
-                    <ChevronUp className="w-4 h-4" />
-                  ) : (
-                    <ChevronDown className="w-4 h-4" />
-                  )}
-                  {this.state.showDetails ? "收起" : "查看"}详细信息
-                </button>
+                <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
+                  <button
+                    onClick={this.toggleDetails}
+                    className="flex items-center gap-2 hover:text-foreground transition-colors"
+                  >
+                    {this.state.showDetails ? (
+                      <ChevronUp className="w-4 h-4" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4" />
+                    )}
+                    {this.state.showDetails ? t.detailsHide : t.detailsShow}
+                  </button>
+                  <button
+                    onClick={this.handleCopy}
+                    className="text-xs hover:text-foreground transition-colors"
+                  >
+                    {t.copy}
+                  </button>
+                </div>
                 {this.state.showDetails && (
                   <pre className="mt-3 p-3 bg-muted rounded-lg text-xs text-muted-foreground overflow-auto max-h-40 font-mono">
                     {this.state.errorInfo}
@@ -137,5 +194,3 @@ export class ErrorBoundary extends Component<Props, State> {
     return this.props.children;
   }
 }
-
-export default ErrorBoundary;

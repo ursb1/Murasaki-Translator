@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   BookOpen,
   FileJson,
@@ -46,6 +46,22 @@ export function GlossaryView({ lang }: { lang: Language }) {
   } | null>(null);
   const [showExtractor, setShowExtractor] = useState(false);
   const { alertProps, showAlert, showConfirm } = useAlertModal();
+  const [notice, setNotice] = useState<{
+    type: "info" | "warning" | "error";
+    message: string;
+  } | null>(null);
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const pushNotice = (
+    type: "info" | "warning" | "error",
+    message: string,
+  ) => {
+    setNotice({ type, message });
+    if (noticeTimerRef.current) {
+      clearTimeout(noticeTimerRef.current);
+    }
+    noticeTimerRef.current = setTimeout(() => setNotice(null), 5200);
+  };
 
   const fetchGlossaries = async () => {
     setLoading(true);
@@ -55,13 +71,25 @@ export function GlossaryView({ lang }: { lang: Language }) {
       setGlossaries(files || []);
     } catch (e) {
       console.error(e);
+      pushNotice(
+        "error",
+        `${t.glossaryView.loadFail}${e ? `：${String(e)}` : ""}`,
+      );
     }
     setLoading(false);
   };
 
   const openFolder = async () => {
     // @ts-ignore
-    await window.api.openGlossaryFolder();
+    try {
+      await window.api.openGlossaryFolder();
+    } catch (e) {
+      console.error(e);
+      pushNotice(
+        "error",
+        `${t.glossaryView.openFolderFail}${e ? `：${String(e)}` : ""}`,
+      );
+    }
   };
 
   const handleSelect = async (file: string) => {
@@ -69,7 +97,6 @@ export function GlossaryView({ lang }: { lang: Language }) {
 
     setSelectedGlossary(file);
     setIsEditing(false);
-    setLoadingContent(true);
     setLoadingContent(true);
     try {
       // @ts-ignore
@@ -104,13 +131,23 @@ export function GlossaryView({ lang }: { lang: Language }) {
       setContent(txt || "");
     } catch (e) {
       console.error(e);
-      setContent("Error reading file.");
+      setContent("");
+      pushNotice(
+        "error",
+        (t.glossaryView.readFail || "").replace("{name}", file),
+      );
     }
     setLoadingContent(false);
   };
 
   useEffect(() => {
     fetchGlossaries();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    };
   }, []);
 
   const handleSave = async () => {
@@ -132,8 +169,8 @@ export function GlossaryView({ lang }: { lang: Language }) {
         setContent(finalContent); // Sync back to content
       } catch (e) {
         showAlert({
-          title: "转换失败",
-          description: "无法将表格数据转换为 JSON",
+          title: t.glossaryView.convertFailTitle,
+          description: t.glossaryView.convertFailDesc,
           variant: "destructive",
         });
         return;
@@ -147,11 +184,14 @@ export function GlossaryView({ lang }: { lang: Language }) {
         content: finalContent,
       });
       setIsEditing(false);
-      window.api?.showNotification("Murasaki Translator", "保存成功");
+      window.api?.showNotification(
+        "Murasaki Translator",
+        t.glossaryView.saveSuccess,
+      );
     } catch (e) {
       console.error(e);
       showAlert({
-        title: "保存失败",
+        title: t.glossaryView.saveFailTitle,
         description: t.glossaryView.saveFail,
         variant: "destructive",
       });
@@ -162,7 +202,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
     if (!selectedGlossary) return;
 
     showConfirm({
-      title: "确认删除",
+      title: t.glossaryView.deleteConfirmTitle,
       description: t.glossaryView.deleteConfirm.replace(
         "{name}",
         selectedGlossary,
@@ -178,7 +218,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
         } catch (e) {
           console.error(e);
           showAlert({
-            title: "删除失败",
+            title: t.glossaryView.deleteFailTitle,
             description: t.glossaryView.deleteFail,
             variant: "destructive",
           });
@@ -208,7 +248,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
       // setTimeout(() => handleSelect(finalName), 500)
     } catch (e: any) {
       showAlert({
-        title: "创建失败",
+        title: t.glossaryView.createFailTitle,
         description: e.message || t.glossaryView.createFail,
         variant: "destructive",
       });
@@ -255,6 +295,12 @@ export function GlossaryView({ lang }: { lang: Language }) {
         console.error("JSON Parse Error when entering edit mode", e);
         // Fallback to empty entries if corrupted, or maybe just let raw mode handle it
         setEditableEntries([]);
+        setViewMode("raw");
+        showAlert({
+          title: t.glossaryView.jsonCorrupted,
+          description: t.glossaryView.jsonCorruptedDesc,
+          variant: "warning",
+        });
       }
     }
     setIsEditing(true);
@@ -299,10 +345,24 @@ export function GlossaryView({ lang }: { lang: Language }) {
         );
         fetchGlossaries();
       } else {
-        alert("Rename Failed: " + res.error);
+        showAlert({
+          title: t.glossaryView.renameFailTitle,
+          description: (t.glossaryView.renameFailDesc || "").replace(
+            "{error}",
+            res.error || "",
+          ),
+          variant: "destructive",
+        });
       }
     } catch (e: any) {
-      alert("Rename Error: " + e.message);
+      showAlert({
+        title: t.glossaryView.renameFailTitle,
+        description: (t.glossaryView.renameFailDesc || "").replace(
+          "{error}",
+          e.message || "",
+        ),
+        variant: "destructive",
+      });
     }
   };
 
@@ -412,7 +472,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
                   const importRes = await window.api.importGlossary(result);
                   if (importRes.success) {
                     showAlert({
-                      title: "导入成功",
+                      title: t.glossaryView.importSuccessTitle,
                       description: (t.glossaryView.importSuccess || "").replace(
                         "{path}",
                         importRes.path || "",
@@ -422,7 +482,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
                     fetchGlossaries();
                   } else {
                     showAlert({
-                      title: "导入失败",
+                      title: t.glossaryView.importFailTitle,
                       description: (t.glossaryView.importFail || "").replace(
                         "{error}",
                         importRes.error || "",
@@ -433,7 +493,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
                 }
               } catch (e: any) {
                 showAlert({
-                  title: "导入错误",
+                  title: t.glossaryView.importErrorTitle,
                   description: (t.glossaryView.importError || "").replace(
                     "{message}",
                     e.message || "",
@@ -454,7 +514,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
             className="gap-2 h-9"
           >
             <RefreshCw className="w-4 h-4 text-muted-foreground" />
-            {t.glossaryConverter?.title || "格式转换"}
+            {t.glossaryView.formatConvert}
           </Button>
           <Button
             variant="outline"
@@ -463,7 +523,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
             className="gap-2 h-9"
           >
             <Wand2 className="w-4 h-4 text-muted-foreground" />
-            {lang === "zh" ? "智能提取" : "Smart Extract"}
+            {t.glossaryView.smartExtract}
           </Button>
           <Button
             onClick={() => setCreatingNew(true)}
@@ -474,6 +534,39 @@ export function GlossaryView({ lang }: { lang: Language }) {
           </Button>
         </div>
       </div>
+
+      {notice && (() => {
+        const noticeConfig = {
+          info: {
+            className: "bg-blue-500/10 border-blue-500/30 text-blue-600",
+            icon: Sparkles,
+          },
+          warning: {
+            className: "bg-amber-500/10 border-amber-500/30 text-amber-600",
+            icon: AlertTriangle,
+          },
+          error: {
+            className: "bg-red-500/10 border-red-500/30 text-red-600",
+            icon: AlertTriangle,
+          },
+        }[notice.type];
+        const NoticeIcon = noticeConfig.icon;
+        return (
+          <div
+            className={`mb-4 rounded-lg border px-3 py-2 text-xs flex items-start gap-2 ${noticeConfig.className}`}
+          >
+            <NoticeIcon className="w-3.5 h-3.5 mt-0.5" />
+            <span className="flex-1 leading-relaxed">{notice.message}</span>
+            <button
+              type="button"
+              onClick={() => setNotice(null)}
+              className="ml-auto text-current/70 hover:text-current"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        );
+      })()}
 
       {/* Format Description */}
       <div className="mb-4 p-4 bg-card border border-border/60 rounded-2xl shadow-sm text-xs overflow-hidden shrink-0">
@@ -495,8 +588,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
                 <div className="flex items-start gap-2 text-[10px] text-muted-foreground/80 bg-primary/5 p-2 rounded-lg border border-primary/10">
                   <Sparkles className="w-3 h-3 text-primary mt-0.5 shrink-0" />
                   <span>
-                    <strong>智能适配</strong>
-                    ：支持通过转换工具导入几乎所有第三方导出的术语表。
+                    <strong>{t.glossaryView.smartAdaptTitle}</strong>: {t.glossaryView.smartAdaptDesc}
                   </span>
                 </div>
               </div>
@@ -510,10 +602,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
                 </span>
                 <div className="w-1 h-1 rounded-full bg-primary/40" />
               </div>
-              <pre className="flex-1 bg-secondary/30 p-2.5 rounded-xl border border-border/50 font-mono text-[9px] text-primary/80 overflow-y-auto max-h-[70px] scrollbar-none">{`{
-  "谭雅": "Tanya",
-  "维夏": "Visha"
-}`}</pre>
+              <pre className="flex-1 bg-secondary/30 p-2.5 rounded-xl border border-border/50 font-mono text-[9px] text-primary/80 overflow-y-auto max-h-[70px] scrollbar-none">{t.glossaryView.exampleDict}</pre>
             </div>
             <div className="space-y-1.5 flex flex-col min-w-0">
               <div className="flex items-center justify-between px-1">
@@ -522,10 +611,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
                 </span>
                 <div className="w-1 h-1 rounded-full bg-primary/40" />
               </div>
-              <pre className="flex-1 bg-secondary/30 p-2.5 rounded-xl border border-border/50 font-mono text-[9px] text-primary/80 overflow-y-auto max-h-[70px] scrollbar-none">{`[
-  {"src": "谭雅", "dst": "Tanya"},
-  {"src": "维夏", "dst": "Visha"}
-]`}</pre>
+              <pre className="flex-1 bg-secondary/30 p-2.5 rounded-xl border border-border/50 font-mono text-[9px] text-primary/80 overflow-y-auto max-h-[70px] scrollbar-none">{t.glossaryView.exampleList}</pre>
             </div>
           </div>
         </div>
@@ -581,7 +667,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
       {renamingFile && (
         <div className="mb-6 p-4 bg-amber-500/10 border border-amber-500/20 rounded-lg flex items-center gap-4 animate-in fade-in slide-in-from-top-2">
           <span className="text-sm font-bold text-amber-600 flex items-center gap-2">
-            <Pen className="w-4 h-4" /> Rename:
+            <Pen className="w-4 h-4" /> {t.glossaryView.renameTitle}
           </span>
           <input
             className="bg-background border p-1 px-3 rounded text-sm w-64 focus:outline-none focus:ring-1 focus:ring-amber-500"
@@ -595,7 +681,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
               onClick={handleRename}
               className="bg-amber-500 hover:bg-amber-600 text-white"
             >
-              Save
+              {t.glossaryView.save}
             </Button>
             <Button
               size="sm"
@@ -605,7 +691,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
                 setRenameNewName("");
               }}
             >
-              Cancel
+              {t.glossaryView.cancel}
             </Button>
           </div>
         </div>
@@ -689,7 +775,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
                       onClick={() => setViewMode("table")}
                       className={`px-3 py-1 text-[9px] font-bold rounded-md transition-all ${viewMode === "table" ? "bg-background text-primary shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
                     >
-                      表格
+                      {t.glossaryView.viewModeTable}
                     </button>
                     <button
                       onClick={() => setViewMode("raw")}
@@ -903,6 +989,12 @@ export function GlossaryView({ lang }: { lang: Language }) {
                           {t.glossaryView.legacyFormatDesc}
                         </div>
                       )}
+                      {!loadingContent && content.trim().length === 0 && (
+                        <div className="p-3 border-b border-border/30 text-[10px] text-muted-foreground flex items-center gap-2 bg-muted/10">
+                          <AlertTriangle className="w-3 h-3 text-muted-foreground/70" />
+                          {t.glossaryView.noContent}
+                        </div>
+                      )}
                       <textarea
                         className={`w-full h-full p-6 font-mono text-xs leading-relaxed bg-transparent text-foreground/90 resize-none focus:outline-none scrollbar-thin ${isEditing ? "bg-background/80" : "opacity-80"}`}
                         value={content}
@@ -948,13 +1040,15 @@ export function GlossaryView({ lang }: { lang: Language }) {
               await window.api.createGlossaryFile({ filename, content });
               fetchGlossaries();
               showAlert({
-                title: lang === "zh" ? "导入成功" : "Import Success",
-                description: `${terms.length} ${lang === "zh" ? "个术语已添加到" : "terms added to"} ${filename}`,
+                title: t.glossaryView.importSuccessTitle,
+                description: t.glossaryView.importExtractedDesc
+                  .replace("{count}", String(terms.length))
+                  .replace("{name}", filename),
                 variant: "success",
               });
             } catch (e: any) {
               showAlert({
-                title: lang === "zh" ? "导入失败" : "Import Failed",
+                title: t.glossaryView.importFailTitle,
                 description: e.message,
                 variant: "destructive",
               });

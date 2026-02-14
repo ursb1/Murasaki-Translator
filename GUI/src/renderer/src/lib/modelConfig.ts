@@ -4,7 +4,7 @@
  * 注意：preset 由全局配置决定，不在模型配置中预设
  */
 
-export interface ModelConfig {
+interface ModelConfig {
   name: string; // 官方代号
   displayName: string; // 显示名称
   params: string; // 参数量
@@ -127,48 +127,4 @@ export function identifyModel(modelPath: string): ModelConfig | null {
     gpuLayers: -1,
     description,
   };
-}
-
-/**
- * 获取模型显示名称
- */
-export function getModelDisplayName(modelPath: string): string {
-  const config = identifyModel(modelPath);
-  if (config) return config.displayName;
-
-  // 默认返回文件名
-  const parts = modelPath.replace(/\\/g, "/").split("/");
-  return parts[parts.length - 1] || modelPath;
-}
-
-/**
- * 获取推荐配置
- * 注意：不设置 preset，由全局配置决定
- */
-export function getRecommendedConfig(modelPath: string): {
-  ctxSize: number;
-  gpuLayers: number;
-} {
-  const config = identifyModel(modelPath);
-  if (config) {
-    return {
-      ctxSize: config.ctxRecommended,
-      gpuLayers: config.gpuLayers,
-    };
-  }
-
-  // 默认配置
-  return {
-    ctxSize: 8192,
-    gpuLayers: -1,
-  };
-}
-
-/**
- * 检查是否为官方模型
- */
-export function isOfficialModel(modelPath: string): boolean {
-  if (!modelPath) return false;
-  const filename = modelPath.toLowerCase();
-  return filename.includes("murasaki");
 }

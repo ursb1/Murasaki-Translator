@@ -12,7 +12,7 @@ const getUserDataPath = () => getMiddlewarePath();
 const DEFAULT_HOST = "127.0.0.1";
 const LOCAL_ACCESS_HOST = "127.0.0.1";
 
-export interface ServerStatus {
+interface ServerStatus {
   running: boolean;
   pid: number | null;
   port: number;
@@ -29,7 +29,7 @@ export interface ServerStatus {
   logs: string[];
 }
 
-export interface ServerStartResult {
+interface ServerStartResult {
   success: boolean;
   error?: string;
   selectedPort?: number;
@@ -42,7 +42,7 @@ export interface ServerStartResult {
   apiKey?: string;
 }
 
-export interface ServerConnectionInfo {
+interface ServerConnectionInfo {
   url: string;
   apiKey?: string;
   host: string;

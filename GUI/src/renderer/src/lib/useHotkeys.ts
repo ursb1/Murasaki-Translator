@@ -20,7 +20,7 @@ interface HotkeyConfig {
  * 全局快捷键 Hook
  * @param hotkeys 快捷键配置数组
  */
-export function useHotkeys(hotkeys: HotkeyConfig[]) {
+function useHotkeys(hotkeys: HotkeyConfig[]) {
   const hotkeysRef = useRef(hotkeys);
   hotkeysRef.current = hotkeys;
 
@@ -66,7 +66,7 @@ export function useHotkeys(hotkeys: HotkeyConfig[]) {
 /**
  * 预定义的应用快捷键
  */
-export interface AppHotkeyHandlers {
+interface AppHotkeyHandlers {
   onStartTranslation?: () => void;
   onStopTranslation?: () => void;
   onSaveConfig?: () => void;
@@ -150,5 +150,3 @@ export function useAppHotkeys({
 
   useHotkeys(hotkeys);
 }
-
-export default useHotkeys;

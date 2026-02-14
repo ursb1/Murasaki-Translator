@@ -3,7 +3,7 @@
  * Connects to a remote translation service and exposes an API compatible with local workflow.
  */
 
-export interface RemoteServerConfig {
+interface RemoteServerConfig {
   url: string;
   apiKey?: string;
   timeout?: number;
@@ -62,7 +62,7 @@ export interface TranslateOptions {
   gpuDeviceId?: string;
 }
 
-export interface TranslateTask {
+interface TranslateTask {
   taskId: string;
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
   progress: number;
@@ -76,13 +76,13 @@ export interface TranslateTask {
   error?: string;
 }
 
-export interface ModelInfo {
+interface ModelInfo {
   name: string;
   path: string;
   sizeGb: number;
 }
 
-export type RemoteNetworkEventKind =
+type RemoteNetworkEventKind =
   | "connection"
   | "http"
   | "upload"
@@ -90,7 +90,7 @@ export type RemoteNetworkEventKind =
   | "retry"
   | "ws";
 
-export type RemoteNetworkEventPhase =
+type RemoteNetworkEventPhase =
   | "start"
   | "success"
   | "error"
@@ -998,18 +998,3 @@ export class RemoteClient {
 /**
  * 获取/创建远程客户端单例
  */
-let remoteClientInstance: RemoteClient | null = null;
-
-export function getRemoteClient(
-  config?: RemoteServerConfig,
-  observer?: RemoteClientObserver,
-): RemoteClient | null {
-  if (config) {
-    remoteClientInstance = new RemoteClient(config, observer);
-  }
-  return remoteClientInstance;
-}
-
-export function clearRemoteClient(): void {
-  remoteClientInstance = null;
-}

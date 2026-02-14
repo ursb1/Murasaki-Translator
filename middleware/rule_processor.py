@@ -4,9 +4,12 @@ This module provides text transformation capabilities with support for:
 - Simple string replacement
 - Regular expression substitution (with validation and safety checks)
 - Predefined format transformers
+- User-provided python scripts
 """
 
 import re
+import ast
+import threading
 from typing import List, Dict, Any, Optional, Tuple
 
 try:
@@ -21,6 +24,51 @@ try:
     import opencc
 except ImportError:
     opencc = None
+
+PYTHON_SCRIPT_MAX_LEN = 8000
+PYTHON_SCRIPT_TIMEOUT_SEC = 0.5
+PYTHON_SCRIPT_BANNED_CALLS = {
+    "eval",
+    "exec",
+    "compile",
+    "open",
+    "__import__",
+    "input",
+    "globals",
+    "locals",
+    "vars",
+    "dir",
+    "getattr",
+    "setattr",
+    "delattr",
+}
+
+def _safe_import(name, globals=None, locals=None, fromlist=(), level=0):
+    if name == "re":
+        return re
+    raise ImportError("Only 're' import is allowed")
+
+PYTHON_SCRIPT_SAFE_BUILTINS = {
+    "len": len,
+    "range": range,
+    "min": min,
+    "max": max,
+    "sum": sum,
+    "str": str,
+    "int": int,
+    "float": float,
+    "bool": bool,
+    "list": list,
+    "dict": dict,
+    "set": set,
+    "tuple": tuple,
+    "enumerate": enumerate,
+    "zip": zip,
+    "sorted": sorted,
+    "abs": abs,
+    "round": round,
+    "__import__": _safe_import,
+}
 
 
 def validate_regex(pattern: str) -> Tuple[bool, str]:
@@ -66,6 +114,7 @@ class RuleProcessor:
     - 'replace': Simple string replacement
     - 'regex': Regular expression substitution (with validation)
     - 'format': Predefined formatters (clean_empty, smart_quotes, full_to_half_punct)
+    - 'python': User script executed with input text, returns output text
     
     Example usage:
         rules = [
@@ -91,6 +140,19 @@ class RuleProcessor:
         self.rules = rules_data if rules_data else []
         self._validated_patterns: Dict[str, bool] = {}
         self._compiled_patterns: Dict[str, Any] = {}
+        self._compiled_python_scripts: Dict[str, Any] = {}
+        self._python_script_errors: Dict[str, str] = {}
+
+    def _set_python_script_error(self, script: str, error: Optional[str]) -> None:
+        if not script:
+            return
+        if error:
+            self._python_script_errors[script] = str(error)
+        else:
+            self._python_script_errors.pop(script, None)
+
+    def get_python_script_error(self, script: str) -> str:
+        return self._python_script_errors.get(script, "")
 
     def _validate_and_compile(self, pattern: str) -> Optional[Any]:
         """
@@ -119,6 +181,145 @@ class RuleProcessor:
             print(f"[RuleProcessor] Failed to compile pattern: {e}")
             self._compiled_patterns[pattern] = None
             return None
+
+    def _validate_python_script(self, script: str) -> Tuple[bool, str]:
+        try:
+            tree = ast.parse(script, mode="exec")
+        except Exception as e:
+            return False, f"Syntax error: {e}"
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name != "re":
+                        return False, "Only 're' import is allowed"
+                continue
+            if isinstance(node, ast.ImportFrom):
+                if node.module != "re":
+                    return False, "Only 're' import is allowed"
+                continue
+
+            if isinstance(node, ast.Name) and node.id.startswith("__"):
+                return False, "Dunder names are not allowed"
+
+            if isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Name) and func.id in PYTHON_SCRIPT_BANNED_CALLS:
+                    return False, f"Call blocked: {func.id}"
+        return True, ""
+
+    def _normalize_python_script(self, script: str) -> str:
+        if "\\n" not in script:
+            return script
+
+        # Convert literal "\n" used as line separators (avoid touching string literals)
+        return re.sub(
+            r"\\n(?=\s*(?:import|from|output|return|if|for|while|def|class|try|except|finally|with|lines\s*=))",
+            "\n",
+            script,
+        )
+
+    def _compile_python_script(self, script: str) -> Optional[Any]:
+        """
+        Compile a user-provided python script into a callable function.
+        The script is wrapped in a function to allow `return` statements.
+        """
+        if script in self._compiled_python_scripts:
+            return self._compiled_python_scripts[script]
+
+        if not script or not script.strip():
+            self._compiled_python_scripts[script] = None
+            self._set_python_script_error(script, None)
+            return None
+
+        working_script = self._normalize_python_script(script)
+
+        if len(working_script) > PYTHON_SCRIPT_MAX_LEN:
+            err_msg = f"Script too long (max {PYTHON_SCRIPT_MAX_LEN} chars)"
+            logger.error(f"[RuleProcessor] Python script too long.")
+            self._compiled_python_scripts[script] = None
+            self._set_python_script_error(script, err_msg)
+            return None
+
+        is_safe, reason = self._validate_python_script(working_script)
+        if not is_safe:
+            logger.error(f"[RuleProcessor] Python script blocked: {reason}")
+            self._compiled_python_scripts[script] = None
+            self._set_python_script_error(script, reason)
+            return None
+
+        func_name = "__murasaki_user_rule"
+        indented = "\n".join([f"    {line}" for line in working_script.splitlines()])
+        wrapper = f"def {func_name}(text, src_text=None, protector=None):\n"
+        wrapper += "    output = text\n"
+        wrapper += indented + "\n" if indented.strip() else "    pass\n"
+        wrapper += "    return output\n"
+
+        try:
+            scope: Dict[str, Any] = {
+                "__builtins__": PYTHON_SCRIPT_SAFE_BUILTINS,
+                "re": re,
+            }
+            local_scope: Dict[str, Any] = {}
+            exec(wrapper, scope, local_scope)
+            func = local_scope.get(func_name)
+            if callable(func):
+                self._compiled_python_scripts[script] = func
+                self._set_python_script_error(script, None)
+                return func
+        except Exception as e:
+            err_msg = f"Compile error: {e}"
+            logger.error(f"[RuleProcessor] Python script compile error: {e}")
+            self._set_python_script_error(script, err_msg)
+
+        self._compiled_python_scripts[script] = None
+        return None
+
+    def _apply_python_script(self, script: str, text: str, src_text: Optional[str] = None, protector: Any = None) -> str:
+        func = self._compile_python_script(script)
+        if not func:
+            if script and script.strip() and not self.get_python_script_error(script):
+                self._set_python_script_error(script, "Compile failed")
+            return text
+
+        result_holder: Dict[str, Any] = {"done": False, "value": None, "error": None}
+
+        def runner():
+            try:
+                result_holder["value"] = func(text, src_text, protector)
+            except Exception as e:
+                result_holder["error"] = e
+            finally:
+                result_holder["done"] = True
+
+        thread = threading.Thread(target=runner, daemon=True)
+        thread.start()
+        thread.join(PYTHON_SCRIPT_TIMEOUT_SEC)
+
+        if not result_holder["done"]:
+            logger.error("[RuleProcessor] Python script timeout")
+            self._set_python_script_error(
+                script,
+                f"Timeout after {PYTHON_SCRIPT_TIMEOUT_SEC}s",
+            )
+            return text
+
+        if result_holder["error"] is not None:
+            logger.error(
+                f"[RuleProcessor] Python script runtime error: {result_holder['error']}"
+            )
+            self._set_python_script_error(
+                script,
+                f"Runtime error: {result_holder['error']}",
+            )
+            return text
+
+        result = result_holder["value"]
+        if result is None:
+            self._set_python_script_error(script, None)
+            return text
+        self._set_python_script_error(script, None)
+        return str(result)
 
     def process(self, text: str, src_text: Optional[str] = None, protector: Any = None, strict_line_count: bool = False) -> str:
         """
@@ -179,9 +380,27 @@ class RuleProcessor:
                         strict_line_count=strict_line_count
                     )
                 
+                elif r_type == 'python':
+                    script = rule.get('script') or rule.get('pattern', '')
+                    if script:
+                        new_text = self._apply_python_script(
+                            script,
+                            current_text,
+                            src_text=src_text,
+                            protector=protector,
+                        )
+                        if strict_line_count and len(new_text.splitlines()) != original_line_count:
+                            logger.warning(f"[RuleProcessor] Skipping python script because it changes line count in strict mode.")
+                        else:
+                            current_text = new_text
+                
                 if current_text != before_text:
                     is_experimental = r_type == 'format' and pattern in ['restore_protection', 'kana_fixer', 'punctuation_fixer']
-                    if r_type in ['replace', 'regex'] or not is_experimental:
+                    if r_type == 'python':
+                        logger.debug(
+                            f"Core Rule [python] transformed text (chars: {len(before_text)} -> {len(current_text)})"
+                        )
+                    elif r_type in ['replace', 'regex'] or not is_experimental:
                         label = f"Core Rule [{r_type if r_type != 'format' else 'built-in'}:{pattern}]"
                         logger.debug(f"{label} transformed text (chars: {len(before_text)} -> {len(current_text)})")
                     else:

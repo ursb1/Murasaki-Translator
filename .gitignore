@@ -12,6 +12,7 @@ venv-gpu/
 .idea/
 
 demo/
+.tmp*/
 
 # Large Data & Models
 models/

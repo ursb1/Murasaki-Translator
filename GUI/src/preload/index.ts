@@ -31,15 +31,6 @@ const addIpcListener = <T>(
   };
 };
 
-const removeRegisteredListeners = (channel: string): void => {
-  const listeners = listenerRegistry.get(channel);
-  if (!listeners) return;
-  for (const listener of listeners) {
-    ipcRenderer.off(channel, listener);
-  }
-  listenerRegistry.delete(channel);
-};
-
 // Custom APIs for renderer
 const api = {
   selectFile: (options?: {
@@ -72,7 +63,6 @@ const api = {
       runId,
     }),
   getHardwareSpecs: () => ipcRenderer.invoke("get-hardware-specs"),
-  refreshGpuDetection: () => ipcRenderer.invoke("refresh-gpu-detection"),
   stopTranslation: () => ipcRenderer.send("stop-translation"),
   getGlossaries: () => ipcRenderer.invoke("get-glossaries"),
   createGlossaryFile: (arg: string | { filename: string; content?: string }) =>
@@ -99,8 +89,6 @@ const api = {
         stopRequested: Boolean(payload?.stopRequested),
       });
     }),
-  removeLogListener: () => removeRegisteredListeners("log-update"),
-  removeProcessExitListener: () => removeRegisteredListeners("process-exit"),
 
   // Glossary Management
   readGlossaryFile: (filename: string) =>
@@ -169,8 +157,6 @@ const api = {
       downloadedBytes?: number;
     }) => void,
   ) => addIpcListener("env-fix-progress", callback),
-  removeEnvFixProgressListener: () =>
-    removeRegisteredListeners("env-fix-progress"),
 
   // Debug Export
   readServerLog: () => ipcRenderer.invoke("read-server-log"),
@@ -196,8 +182,6 @@ const api = {
       isError?: boolean;
     }) => void,
   ) => addIpcListener("retranslate-log", callback),
-  removeRetranslateLogListener: () =>
-    removeRegisteredListeners("retranslate-log"),
 
   // Term Extraction
   extractTerms: (options: {
@@ -207,8 +191,6 @@ const api = {
   }) => ipcRenderer.invoke("extract-terms", options),
   onTermExtractProgress: (callback: (progress: number) => void) =>
     addIpcListener("term-extract-progress", callback),
-  removeTermExtractProgressListener: () =>
-    removeRegisteredListeners("term-extract-progress"),
 
   // Remote Server
   remoteConnect: (config: { url: string; apiKey?: string }) =>
@@ -217,17 +199,6 @@ const api = {
   remoteStatus: () => ipcRenderer.invoke("remote-status"),
   remoteModels: () => ipcRenderer.invoke("remote-models"),
   remoteGlossaries: () => ipcRenderer.invoke("remote-glossaries"),
-  remoteTranslate: (options: any) =>
-    ipcRenderer.invoke("remote-translate", options),
-  remoteTaskStatus: (
-    taskId: string,
-    query?: { logFrom?: number; logLimit?: number },
-  ) => ipcRenderer.invoke("remote-task-status", taskId, query),
-  remoteCancel: (taskId: string) => ipcRenderer.invoke("remote-cancel", taskId),
-  remoteUpload: (filePath: string) =>
-    ipcRenderer.invoke("remote-upload", filePath),
-  remoteDownload: (taskId: string, savePath: string) =>
-    ipcRenderer.invoke("remote-download", taskId, savePath),
   remoteNetworkStatus: () => ipcRenderer.invoke("remote-network-status"),
   remoteNetworkEvents: (limit?: number) =>
     ipcRenderer.invoke("remote-network-events", limit),
@@ -259,11 +230,8 @@ const api = {
   hfDownloadCancel: () => ipcRenderer.invoke("hf-download-cancel"),
   onHfDownloadProgress: (callback: (data: any) => void) =>
     addIpcListener("hf-download-progress", callback),
-  offHfDownloadProgress: () =>
-    removeRegisteredListeners("hf-download-progress"),
   onHfDownloadError: (callback: (data: any) => void) =>
     addIpcListener("hf-download-error", callback),
-  offHfDownloadError: () => removeRegisteredListeners("hf-download-error"),
   hfVerifyModel: (orgName: string, filePath: string) =>
     ipcRenderer.invoke("hf-verify-model", orgName, filePath),
   hfCheckNetwork: () => ipcRenderer.invoke("hf-check-network"),

@@ -52,18 +52,24 @@ def main():
             # Use src_text_overlay to make Fixers like NumberFixer and PunctuationFixer work in sandbox
             new_text = p.process(current_text, src_text=src_text_overlay or current_text, protector=protector)
             
-            if new_text != current_text:
-                label = rule.get('type', 'rule')
-                if label == 'format':
-                    label = rule.get('pattern', 'format')
-                elif label == 'regex':
-                    label = f"regex: {rule.get('pattern')[:20]}..."
-                
-                steps.append({
-                    "label": label,
-                    "text": new_text
-                })
-                current_text = new_text
+            label = rule.get('type', 'rule')
+            if label == 'format':
+                label = rule.get('pattern', 'format')
+            elif label == 'regex':
+                label = f"regex: {rule.get('pattern')[:20]}..."
+
+            error = None
+            if rule.get('type') == 'python':
+                script = rule.get('script') or rule.get('pattern', '')
+                error = p.get_python_script_error(script) or None
+
+            steps.append({
+                "label": label,
+                "text": new_text,
+                "changed": new_text != current_text,
+                "error": error,
+            })
+            current_text = new_text
 
         print(json.dumps({"success": True, "steps": steps}))
 

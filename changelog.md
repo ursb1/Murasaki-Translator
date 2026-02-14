@@ -1,5 +1,48 @@
 # Murasaki Translator - Changelog
 
+## [1.7.1] - 2026-02-14
+
+### 规则系统与文本处理
+
+*   规则引擎新增 `python` 脚本规则：安全执行（禁用危险调用、长度限制、超时、允许 `re`、安全内建）、严格行数模式保护，并记录执行日志（`middleware/rule_processor.py`）。
+*   RuleEditor 支持规则配置组（创建/重命名/删除/切换/导入/导出），新增 Python 脚本编辑与模板插入，沙盒执行链路与交互优化，全面接入 i18n（`GUI/src/renderer/src/components/RuleEditor.tsx`）。
+*   新增 `test-rules` IPC，沙盒调用后端规则引擎并从 stdout/stderr 提取 JSON 结果（`GUI/src/main/index.ts`）。
+*   单文件配置新增预处理/后处理配置组覆盖（`rulesPreProfileId/rulesPostProfileId`），Dashboard 启动时按配置组解析规则（`GUI/src/renderer/src/types/common.ts`，`Dashboard.tsx`，`LibraryView.tsx`）。
+
+### 术语表与校对
+
+*   Glossary 管理完善：新增读取/保存/删除/重命名 IPC，GlossaryView 支持表格/原文编辑、重命名、错误提示与通知（`GUI/src/main/index.ts`，`preload/index.ts`，`GlossaryView.tsx`，`types/api.d.ts`）。
+*   校对与检查体验增强：Proofread 支持正则错误提示、术语加载失败提示与缓存加载错误弹窗；ResultChecker 增强缓存读取错误提示；TermExtract 支持队列加载失败提示与格式校验弹窗（`ProofreadView.tsx`，`ResultChecker.tsx`，`TermExtractModal.tsx`）。
+*   EPUB 保护锚点恢复增强：容错全角/空白/跨块的 `@id/@end` 标记，提升点对点映射稳定性（`middleware/murasaki_translator/documents/epub.py`）。
+
+### 远程与服务管理
+
+*   远程翻译链路增强：日志/进度处理更稳健（避免覆盖后端 JSON_PROGRESS）、补拉剩余日志、完成后下载缓存，并记录远程执行信息到历史（`GUI/src/main/index.ts`）。
+*   远程断开时若存在活跃任务，统一走取消流程并确保发送 `process-exit`，避免前端状态悬挂（`GUI/src/main/index.ts`）。
+*   ServiceView 与 RemoteStatusBar 全面 i18n，新增内联提示条与更清晰的自动连接失败提示，日志查看器接入语言参数（`ServiceView.tsx`，`RemoteStatusBar.tsx`，`LogViewerModal.tsx`，`useRemoteRuntime.ts`）。
+
+### UI / UX 与国际化
+
+*   i18n 扩展：新增 `common/errorBoundary/remoteStatusBar/serviceView/logViewer` 等模块，移除大量硬编码文本（`GUI/src/renderer/src/lib/i18n.ts` 及相关组件）。
+*   语言选择持久化（`app_lang`），Sidebar 切换即保存；App 初始化使用持久化语言（`Sidebar.tsx`，`App.tsx`）。
+*   新增轻量 Toast 系统（`emitToast` + `ToastHost`），ErrorBoundary 支持复制错误信息并弹出提示（`lib/toast.ts`，`ToastHost.tsx`，`ErrorBoundary.tsx`）。
+*   Dashboard 增强：快速上手引导、队列提示条、错误摘要面板与通知文案优化（`Dashboard.tsx`）。
+*   Library 队列增强：新增 `.ssa` 支持、去重与非法格式提示、翻译运行中锁定队列、规则配置组选择入口（`LibraryView.tsx`）。
+*   模型管理增强：模型列表加载/校验错误提示，下载模块与相关文案 i18n（`ModelView.tsx`，`HFDownloadModal.tsx`）。
+*   历史记录新增打开输出文件/文件夹入口，日志查看与提示文案统一 i18n（`HistoryView.tsx`，`LogViewerModal.tsx`）。
+*   高级设置补充硬件/模型信息失败提示（`AdvancedView.tsx`）。
+*   新增 `scroller-hide` 样式、补充 `vite-env.d.ts`（`index.css`，`vite-env.d.ts`）。
+
+### IPC / 类型契约与清理
+
+*   Preload 与类型契约同步：新增 Glossary CRUD API，移除过期 `remote-translate/*` IPC 与 `remove*Listener`/`offHfDownload*` 接口，统一订阅返回 `unsubscribe`（`preload/index.ts`，`types/api.d.ts`，`GUI/src/main/index.ts`）。
+*   清理未使用模块与导出：移除 `useConfig/useBackup/useFileQueue/hooks index`、`ThinkingStream`、`Skeleton`，删除未使用的 `modelConfig`/`utils` 导出与 `USER_TIPS` 配置（对应相关文件）。
+*   平台检测简化：移除 GPU 异步检测与缓存刷新入口（`GUI/src/main/platform.ts`）。
+
+### 后端与运行环境
+
+*   Linux 后端支持 `MURASAKI_FORCE_CPU` 强制 CPU，并在 GPU/Vulkan 后端缺失时自动回退 CPU（`middleware/server/translation_worker.py`，`middleware/cli/murasaki_server.py`）。
+
 ## [1.7.0] - 2026-02-13
 
 ### 远程翻译模式 (Remote Translation)

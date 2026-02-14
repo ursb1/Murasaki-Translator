@@ -38,6 +38,9 @@ import { EnvFixerModal } from "./EnvFixerModal";
 
 export function SettingsView({ lang }: { lang: Language }) {
   const t = translations[lang];
+  const settingsText = t.settingsView;
+  const diagText = t.settingsView.diagnostics;
+  const envFixerText = t.envFixer;
 
   // Output Config
   const [outputDir, setOutputDir] = useState("");
@@ -156,25 +159,25 @@ export function SettingsView({ lang }: { lang: Language }) {
           }),
         );
       } else {
-        setDiagError("诊断结果为空，请检查系统权限");
+        setDiagError(diagText.errors.empty);
       }
     } catch (e) {
       console.error("Failed to load diagnostics:", e);
       const errorMsg = String(e);
       if (errorMsg.includes("EACCES") || errorMsg.includes("permission")) {
-        setDiagError("权限不足：无法访问系统信息，请以管理员身份运行");
+        setDiagError(diagText.errors.permission);
       } else if (
         errorMsg.includes("timeout") ||
         errorMsg.includes("ETIMEDOUT")
       ) {
-        setDiagError("扫描超时：系统响应过慢，请稍后重试");
+        setDiagError(diagText.errors.timeout);
       } else if (
         errorMsg.includes("ENOENT") ||
         errorMsg.includes("not found")
       ) {
-        setDiagError("组件缺失：部分诊断工具未安装");
+        setDiagError(diagText.errors.missing);
       } else {
-        setDiagError(`扫描失败：${errorMsg}`);
+        setDiagError(diagText.errors.failed.replace("{error}", errorMsg));
       }
     }
     setDiagLoading(false);
@@ -215,6 +218,25 @@ export function SettingsView({ lang }: { lang: Language }) {
       }
     } catch (e) {
       console.error(`Failed to check ${component}:`, e);
+      setEnvCheckResults((prev) => {
+        const newResults = prev || {
+          Python: null,
+          CUDA: null,
+          Vulkan: null,
+          LlamaBackend: null,
+          Middleware: null,
+          Permissions: null,
+        };
+        return {
+          ...newResults,
+          [component]: {
+            status: "error",
+            issues: [String(e)],
+            fixes: [],
+            canAutoFix: false,
+          },
+        };
+      });
     }
   };
 
@@ -261,22 +283,24 @@ export function SettingsView({ lang }: { lang: Language }) {
 
       setAlertConfig({
         open: true,
-        title: result.success ? "修复完成" : "修复失败",
-        description: result.message || "未返回详细信息",
+        title: result.success
+          ? diagText.fixSuccessTitle
+          : diagText.fixFailTitle,
+        description: result.message || diagText.fixNoDetails,
         variant: result.success ? "success" : "destructive",
         showCancel: false,
-        confirmText: "确定",
+        confirmText: t.common.confirm,
         onConfirm: async () => {
           await checkEnvironmentComponent(component);
           setAlertConfig({
             open: true,
-            title: "运行环境诊断与修复",
+            title: diagText.envFixerTitle,
             description: renderEnvFixerContent(),
             variant: "info",
             showCancel: true,
             showIcon: false,
-            cancelText: "关闭",
-            confirmText: "刷新检测",
+            cancelText: diagText.close,
+            confirmText: diagText.refreshCheck,
             closeOnConfirm: false,
             onConfirm: async () => {
               await checkAllEnvironmentComponents();
@@ -291,11 +315,11 @@ export function SettingsView({ lang }: { lang: Language }) {
     } catch (e) {
       setAlertConfig({
         open: true,
-        title: "修复失败",
+        title: diagText.fixFailTitle,
         description: String(e),
         variant: "destructive",
         showCancel: false,
-        confirmText: "确定",
+        confirmText: t.common.confirm,
         onConfirm: () => setAlertConfig((prev) => ({ ...prev, open: false })),
       });
     }
@@ -435,9 +459,14 @@ export function SettingsView({ lang }: { lang: Language }) {
           "last_input_path",
           "last_output_dir",
           "translation_history",
+          "library_queue",
+          "file_queue",
           "last_preview_blocks",
           "config_rules_pre",
           "config_rules_post",
+          "murasaki_quickstart_state",
+          "murasaki_quickstart_seen",
+          "murasaki_guide_dismissed",
         ];
 
         Object.keys(localStorage).forEach((key) => {
@@ -447,10 +476,19 @@ export function SettingsView({ lang }: { lang: Language }) {
         });
 
         // Write default post-processing rules so translation works immediately
-        // Uses shared constant from config.ts for maintainability
+        // Use localized labels to avoid hard-coded language in UI
+        const localizedPostRules = DEFAULT_POST_RULES.map((rule) => {
+          const label =
+            rule.pattern === "ensure_double_newline"
+              ? t.ruleEditor.presetRuleLabels.doubleNewlineNovel
+              : rule.pattern === "smart_quotes"
+                ? t.ruleEditor.presetRuleLabels.smartQuotes
+                : rule.label;
+          return { ...rule, label };
+        });
         localStorage.setItem(
           "config_rules_post",
-          JSON.stringify(DEFAULT_POST_RULES),
+          JSON.stringify(localizedPostRules),
         );
 
         // Reload to apply defaults across all components
@@ -625,39 +663,39 @@ export function SettingsView({ lang }: { lang: Language }) {
     }> = [
       {
         name: "Python",
-        label: "Python 环境",
+        label: envFixerText.components.python.label,
         icon: Terminal,
-        description: "内嵌 Python 解释器（版本 >= 3.10）",
+        description: envFixerText.components.python.desc,
       },
       {
         name: "CUDA",
-        label: "CUDA 环境",
+        label: envFixerText.components.cuda.label,
         icon: Zap,
-        description: "NVIDIA GPU 加速支持（可选）",
+        description: envFixerText.components.cuda.desc,
       },
       {
         name: "Vulkan",
-        label: "Vulkan 环境",
+        label: envFixerText.components.vulkan.label,
         icon: Box,
-        description: "跨平台 GPU 加速（可选）",
+        description: envFixerText.components.vulkan.desc,
       },
       {
         name: "LlamaBackend",
-        label: "Llama 后端",
+        label: envFixerText.components.llama.label,
         icon: Server,
-        description: "本地 LLM 推理服务（端口 11434）",
+        description: envFixerText.components.llama.desc,
       },
       {
         name: "Middleware",
-        label: "中间件文件",
+        label: envFixerText.components.middleware.label,
         icon: Layers,
-        description: "翻译引擎核心文件",
+        description: envFixerText.components.middleware.desc,
       },
       {
         name: "Permissions",
-        label: "文件权限",
+        label: envFixerText.components.permissions.label,
         icon: ShieldCheck,
-        description: "程序运行所需的目录访问权限",
+        description: envFixerText.components.permissions.desc,
       },
     ];
 
@@ -679,7 +717,7 @@ export function SettingsView({ lang }: { lang: Language }) {
           <div className="flex flex-col items-center justify-center py-8 gap-3">
             <RefreshCw className="w-8 h-8 animate-spin text-primary/40" />
             <span className="text-sm text-muted-foreground">
-              正在检测运行环境...
+              {diagText.envChecking}
             </span>
           </div>
         ) : (
@@ -717,10 +755,10 @@ export function SettingsView({ lang }: { lang: Language }) {
                       >
                         <StatusIcon className="w-3 h-3" />
                         {result.status === "ok"
-                          ? "正常"
+                          ? envFixerText.status.ok
                           : result.status === "warning"
-                            ? "警告"
-                            : "错误"}
+                            ? envFixerText.status.warning
+                            : envFixerText.status.error}
                       </div>
                     )}
                   </div>
@@ -742,7 +780,7 @@ export function SettingsView({ lang }: { lang: Language }) {
                   {result && result.fixes.length > 0 && (
                     <div className="pl-10 space-y-1">
                       <p className="text-xs font-medium text-muted-foreground mb-1">
-                        修复建议：
+                        {diagText.fixSuggestion}
                       </p>
                       {result.fixes.map((fix, idx) => (
                         <div
@@ -769,19 +807,19 @@ export function SettingsView({ lang }: { lang: Language }) {
                           {isFixing ? (
                             <>
                               <RefreshCw className="w-3 h-3 animate-spin" />
-                              修复中...
+                              {diagText.fixing}
                             </>
                           ) : (
                             <>
                               <Wrench className="w-3 h-3" />
-                              自动修复
+                              {diagText.autoFix}
                             </>
                           )}
                         </Button>
                       ) : (
                         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                           <AlertCircle className="w-3 h-3 text-yellow-600" />
-                          需要手动修复（见上方建议）
+                          {diagText.manualFixHint}
                         </div>
                       )}
                     </div>
@@ -797,9 +835,9 @@ export function SettingsView({ lang }: { lang: Language }) {
             <Info className="w-3 h-3 mt-0.5 shrink-0 text-blue-500" />
             <div className="space-y-1">
               <p>
-                检测到问题时，请根据修复建议进行操作。大部分环境问题需要手动解决（如安装驱动或重新安装程序）。
+                {diagText.fixHint}
               </p>
-              <p>点击"刷新检测"可重新检查所有组件的状态。</p>
+              <p>{diagText.refreshHint}</p>
             </div>
           </div>
         </div>
@@ -825,7 +863,7 @@ export function SettingsView({ lang }: { lang: Language }) {
           <CardHeader className="flex flex-row items-center justify-between space-y-0 py-2 bg-secondary/10 border-b">
             <CardTitle className="text-base flex items-center gap-2 font-bold">
               <ShieldCheck className="w-4 h-4 text-primary" />
-              运行环境诊断
+              {diagText.title}
             </CardTitle>
             <Button
               variant="ghost"
@@ -837,7 +875,7 @@ export function SettingsView({ lang }: { lang: Language }) {
               <RefreshCw
                 className={cn("w-3 h-3", diagLoading && "animate-spin")}
               />
-              {diagLoading ? "刷新中" : "刷新"}
+              {diagLoading ? diagText.refreshing : diagText.refresh}
             </Button>
           </CardHeader>
           <CardContent className="p-0">
@@ -856,14 +894,14 @@ export function SettingsView({ lang }: { lang: Language }) {
                   className="mt-2"
                 >
                   <RefreshCw className="w-3 h-3 mr-1.5" />
-                  重试
+                  {diagText.retry}
                 </Button>
               </div>
             ) : diagLoading && !diagnostics ? (
               <div className="flex flex-col items-center justify-center py-12 gap-3">
                 <Activity className="w-8 h-8 animate-pulse text-primary/40" />
                 <span className="text-sm text-muted-foreground font-medium">
-                  正在扫描系统硬件与环境依赖...
+                  {diagText.scanLoading}
                 </span>
               </div>
             ) : diagnostics ? (
@@ -876,7 +914,7 @@ export function SettingsView({ lang }: { lang: Language }) {
                     </div>
                     <div className="space-y-1 min-w-0">
                       <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                        操作系统
+                        {diagText.osLabel}
                       </p>
                       <p className="text-sm font-semibold truncate">
                         {diagnostics.os.platform === "win32"
@@ -899,7 +937,7 @@ export function SettingsView({ lang }: { lang: Language }) {
                     </div>
                     <div className="space-y-1 min-w-0">
                       <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                        图形处理器
+                        {diagText.gpuLabel}
                       </p>
                       {diagnostics.gpu ? (
                         <>
@@ -916,7 +954,7 @@ export function SettingsView({ lang }: { lang: Language }) {
                         </>
                       ) : (
                         <p className="text-sm font-semibold text-muted-foreground">
-                          未检测到 NVIDIA
+                          {diagText.gpuNotFound}
                         </p>
                       )}
                     </div>
@@ -929,7 +967,7 @@ export function SettingsView({ lang }: { lang: Language }) {
                     </div>
                     <div className="space-y-1 min-w-0">
                       <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                        Python 环境
+                        {diagText.pythonLabel}
                       </p>
                       {diagnostics.python ? (
                         <>
@@ -947,7 +985,7 @@ export function SettingsView({ lang }: { lang: Language }) {
                       ) : (
                         <p className="text-sm font-semibold text-red-500 flex items-center gap-1">
                           <XCircleIcon className="w-3 h-3" />
-                          未安装
+                          {diagText.notInstalled}
                         </p>
                       )}
                     </div>
@@ -962,16 +1000,19 @@ export function SettingsView({ lang }: { lang: Language }) {
                     </div>
                     <div className="space-y-1">
                       <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                        CUDA 加速
+                        {diagText.cudaLabel}
                       </p>
                       {diagnostics.cuda?.available ? (
                         <p className="text-sm font-semibold flex items-center gap-1.5">
-                          版本 {diagnostics.cuda.version}
+                          {diagText.versionLabel.replace(
+                            "{version}",
+                            String(diagnostics.cuda.version),
+                          )}
                           <CheckCircle2 className="w-3 h-3 text-green-500" />
                         </p>
                       ) : (
                         <p className="text-sm font-semibold text-muted-foreground">
-                          未检出 nvcc
+                          {diagText.cudaNotFound}
                         </p>
                       )}
                     </div>
@@ -984,18 +1025,21 @@ export function SettingsView({ lang }: { lang: Language }) {
                     </div>
                     <div className="space-y-1">
                       <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                        Vulkan 后端
+                        {diagText.vulkanLabel}
                       </p>
                       {diagnostics.vulkan?.available ? (
                         <p className="text-sm font-semibold flex items-center gap-1.5">
                           {diagnostics.vulkan.version
-                            ? `版本 ${diagnostics.vulkan.version}`
-                            : "可用驱动已加载"}
+                            ? diagText.versionLabel.replace(
+                                "{version}",
+                                String(diagnostics.vulkan.version),
+                              )
+                            : diagText.vulkanAvailable}
                           <CheckCircle2 className="w-3 h-3 text-green-500" />
                         </p>
                       ) : (
                         <p className="text-sm font-semibold text-muted-foreground">
-                          不可用
+                          {diagText.unavailable}
                         </p>
                       )}
                     </div>
@@ -1008,12 +1052,12 @@ export function SettingsView({ lang }: { lang: Language }) {
                     </div>
                     <div className="space-y-1 min-w-0">
                       <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                        推理后端
+                        {diagText.llamaLabel}
                       </p>
                       {diagnostics.llamaServer.status === "online" ? (
                         <>
                           <p className="text-sm font-semibold flex items-center gap-1.5 text-primary">
-                            在线服务中
+                            {diagText.llamaOnline}
                             <Activity className="w-3 h-3 animate-pulse" />
                           </p>
                           <p className="text-[10px] font-mono text-muted-foreground/70 truncate">
@@ -1022,7 +1066,7 @@ export function SettingsView({ lang }: { lang: Language }) {
                         </>
                       ) : (
                         <p className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5">
-                          离线
+                          {diagText.llamaOffline}
                           <span className="w-2 h-2 rounded-full bg-zinc-300 dark:bg-zinc-600" />
                         </p>
                       )}
@@ -1033,7 +1077,7 @@ export function SettingsView({ lang }: { lang: Language }) {
             ) : (
               <div className="p-8 text-center bg-secondary/5 border-y">
                 <p className="text-sm text-muted-foreground font-medium italic">
-                  尚未初始化诊断数据，点击右上角开始检测
+                  {diagText.noData}
                 </p>
               </div>
             )}
@@ -1043,11 +1087,11 @@ export function SettingsView({ lang }: { lang: Language }) {
               <div className="flex items-center gap-2">
                 <TerminalSquare className="w-4 h-4 text-muted-foreground/60" />
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">
-                  调试工具箱
+                  {settingsText.toolbox.title}
                 </span>
               </div>
               <div className="flex gap-2">
-                <Tooltip content="在文件资源管理器中打开 Python 环境所在目录">
+                <Tooltip content={settingsText.toolbox.openPythonDirTip}>
                   <Button
                     variant="outline"
                     size="sm"
@@ -1060,10 +1104,10 @@ export function SettingsView({ lang }: { lang: Language }) {
                     disabled={!diagnostics?.python}
                   >
                     <FolderOpen className="w-3 h-3" />
-                    打开运行目录
+                    {settingsText.toolbox.openPythonDir}
                   </Button>
                 </Tooltip>
-                <Tooltip content="查看推理后端的实时运行日志">
+                <Tooltip content={settingsText.toolbox.viewServerLogTip}>
                   <Button
                     variant="outline"
                     size="sm"
@@ -1071,10 +1115,10 @@ export function SettingsView({ lang }: { lang: Language }) {
                     onClick={() => setShowServerLogModal(true)}
                   >
                     <Activity className="w-3 h-3" />
-                    查看运行日志
+                    {settingsText.toolbox.viewServerLog}
                   </Button>
                 </Tooltip>
-                <Tooltip content="查看开发模式下的完整主进程终端日志">
+                <Tooltip content={settingsText.toolbox.viewTerminalLogTip}>
                   <Button
                     variant="outline"
                     size="sm"
@@ -1082,10 +1126,10 @@ export function SettingsView({ lang }: { lang: Language }) {
                     onClick={() => setShowTerminalLogModal(true)}
                   >
                     <TerminalSquare className="w-3 h-3" />
-                    查看终端日志
+                    {settingsText.toolbox.viewTerminalLog}
                   </Button>
                 </Tooltip>
-                <Tooltip content="检查并修复运行环境问题">
+                <Tooltip content={settingsText.toolbox.envFixerTip}>
                   <Button
                     variant="outline"
                     size="sm"
@@ -1093,7 +1137,7 @@ export function SettingsView({ lang }: { lang: Language }) {
                     onClick={() => setShowEnvFixerModal(true)}
                   >
                     <Wrench className="w-3 h-3" />
-                    环境修复工具
+                    {settingsText.toolbox.envFixer}
                   </Button>
                 </Tooltip>
               </div>
@@ -1124,7 +1168,7 @@ export function SettingsView({ lang }: { lang: Language }) {
                   {t.settingsView.selectDir}
                 </Button>
                 {outputDir && (
-                  <Tooltip content="重置为默认">
+                  <Tooltip content={settingsText.resetDefault}>
                     <Button
                       variant="ghost"
                       size="sm"
@@ -1172,7 +1216,7 @@ export function SettingsView({ lang }: { lang: Language }) {
                   {t.settingsView.selectDir}
                 </Button>
                 {cacheDir && (
-                  <Tooltip content="重置为默认">
+                  <Tooltip content={settingsText.resetDefault}>
                     <Button
                       variant="ghost"
                       size="sm"
@@ -1434,12 +1478,14 @@ export function SettingsView({ lang }: { lang: Language }) {
       {/* New Modal Components */}
       {showServerLogModal && (
         <LogViewerModal
+          lang={lang}
           mode="server"
           onClose={() => setShowServerLogModal(false)}
         />
       )}
       {showTerminalLogModal && (
         <LogViewerModal
+          lang={lang}
           mode="terminal"
           onClose={() => setShowTerminalLogModal(false)}
         />

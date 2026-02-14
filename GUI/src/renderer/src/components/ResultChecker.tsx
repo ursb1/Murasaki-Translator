@@ -16,7 +16,7 @@ import {
   ChevronUp,
   AlertCircle,
 } from "lucide-react";
-import { Language } from "../lib/i18n";
+import { Language, translations } from "../lib/i18n";
 import {
   calculateSimilarity,
   findHighSimilarityLines,
@@ -107,24 +107,27 @@ function detectGlossaryMiss(
 }
 
 export function ResultChecker({
-  lang: _lang,
+  lang,
   cacheData,
   glossary,
   onNavigateToBlock,
 }: ResultCheckerProps) {
+  const t = translations[lang].resultChecker;
   const [filterType, setFilterType] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedIssues, setExpandedIssues] = useState<Set<number>>(new Set());
   const [localCacheData, setLocalCacheData] = useState<CacheData | null>(null);
   const [localCachePath, setLocalCachePath] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // 优先使用传入的 cacheData，如果没有则使用本地加载的 localCacheData
   const displayData = cacheData || localCacheData;
 
   const handleLoadCache = async () => {
     try {
+      setLoadError(null);
       const path = await window.api?.selectFile({
-        title: "打开翻译缓存",
+        title: t.openCacheTitle,
         filters: [{ name: "JSON Cache", extensions: ["json"] }],
       });
       if (path && window.api?.loadCache) {
@@ -132,10 +135,14 @@ export function ResultChecker({
         if (data) {
           setLocalCacheData(data);
           setLocalCachePath(path);
+          setLoadError(null);
+        } else {
+          setLoadError(t.cacheEmptyError);
         }
       }
     } catch (e) {
       console.error(e);
+      setLoadError(t.cacheReadFailed.replace("{error}", String(e)));
     }
   };
 
@@ -155,10 +162,10 @@ export function ResultChecker({
           blockIndex: block.index,
           type: "empty_output",
           severity: "error",
-          message: "译文为空",
+          message: t.messages.emptyOutput,
           srcPreview: srcText.substring(0, 100),
-          dstPreview: "(空)",
-          suggestion: "需要重新翻译此块",
+          dstPreview: t.messages.emptyOutputPreview,
+          suggestion: t.messages.emptyOutputSuggestion,
         });
         continue;
       }
@@ -171,10 +178,15 @@ export function ResultChecker({
           blockIndex: block.index,
           type: "kana_residue",
           severity: isMinor ? "info" : "warning",
-          message: `发现${isMinor ? "少量" : "较多"}残留假名 (${kanaCount}个)`,
+          message: t.messages.kanaResidue
+            .replace(
+              "{level}",
+              isMinor ? t.messages.kanaResidueMinor : t.messages.kanaResidueMajor,
+            )
+            .replace("{count}", String(kanaCount)),
           srcPreview: srcText.substring(0, 100),
           dstPreview: dstText.substring(0, 100),
-          suggestion: "可能存在漏翻，建议检查或启用假名清理",
+          suggestion: t.messages.kanaResidueSuggestion,
         });
       }
 
@@ -192,10 +204,22 @@ export function ResultChecker({
             blockIndex: block.index,
             type: "glossary_miss",
             severity: "warning",
-            message: `术语未生效 (${count}项): ${missed.slice(0, 3).join(", ")}${count > 3 ? "..." : ""}`,
+            message: t.messages.glossaryMiss
+              .replace("{count}", String(count))
+              .replace(
+                "{terms}",
+                `${missed.slice(0, 3).join(", ")}${count > 3 ? "..." : ""}`,
+              ),
             srcPreview: srcText.substring(0, 100),
             dstPreview: dstText.substring(0, 100),
-            suggestion: `建议手动修改。${cotFound.length > 0 ? `(其中 ${cotFound.length} 项在CoT中被提及)` : ""}`,
+            suggestion: `${t.messages.glossarySuggestion}${
+              cotFound.length > 0
+                ? ` ${t.messages.cotMention.replace(
+                    "{count}",
+                    String(cotFound.length),
+                  )}`
+                : ""
+            }`,
           });
         }
       }
@@ -210,10 +234,12 @@ export function ResultChecker({
           blockIndex: block.index,
           type: "high_similarity",
           severity: "warning",
-          message: `发现 ${similarLines.length} 行高度相似 (第 ${similarLines.join(", ")} 行)`,
+          message: t.messages.highSimilarityLines
+            .replace("{count}", String(similarLines.length))
+            .replace("{lines}", similarLines.join(", ")),
           srcPreview: srcText.substring(0, 100),
           dstPreview: dstText.substring(0, 100),
-          suggestion: "检测到原文与译文几乎一致，请检查是否漏翻",
+          suggestion: t.messages.highSimilaritySuggestion,
         });
       } else if (similarity > 0.9 && srcText.length > 10) {
         // Fallback global check
@@ -221,10 +247,13 @@ export function ResultChecker({
           blockIndex: block.index,
           type: "high_similarity",
           severity: "warning",
-          message: `原文/译文相似度极高 (${Math.round(similarity * 100)}%)`,
+          message: t.messages.highSimilarityOverall.replace(
+            "{percent}",
+            String(Math.round(similarity * 100)),
+          ),
           srcPreview: srcText.substring(0, 100),
           dstPreview: dstText.substring(0, 100),
-          suggestion: "可能存在漏翻或复制原文的情况",
+          suggestion: t.messages.highSimilarityOverallSuggestion,
         });
       }
 
@@ -239,20 +268,25 @@ export function ResultChecker({
               blockIndex: block.index,
               type: "line_mismatch",
               severity: "info",
-              message: `行数偏差轻微 (${block.srcLines} → ${block.dstLines})`,
+              message: t.messages.lineMismatchMinor
+                .replace("{src}", String(block.srcLines))
+                .replace("{dst}", String(block.dstLines)),
               srcPreview: srcText.substring(0, 100),
               dstPreview: dstText.substring(0, 100),
-              suggestion: "无需严重关注，但可检查是否有合并",
+              suggestion: t.messages.lineMismatchMinorSuggestion,
             });
           } else if (diff > 10 || pct > 0.4) {
             result.push({
               blockIndex: block.index,
               type: "line_mismatch",
               severity: "warning",
-              message: `行数差异较大 (${block.srcLines} → ${block.dstLines}, 差${diff}行)`,
+              message: t.messages.lineMismatchMajor
+                .replace("{src}", String(block.srcLines))
+                .replace("{dst}", String(block.dstLines))
+                .replace("{diff}", String(diff)),
               srcPreview: srcText.substring(0, 100),
               dstPreview: dstText.substring(0, 100),
-              suggestion: "可能存在合并或拆分行的情况",
+              suggestion: t.messages.lineMismatchMajorSuggestion,
             });
           }
         }
@@ -265,10 +299,10 @@ export function ResultChecker({
           blockIndex: block.index,
           type: "kana_residue",
           severity: "error",
-          message: `模型标记了假名残留 (kana_residue)`,
+          message: t.messages.tagKana,
           srcPreview: srcText.substring(0, 100),
           dstPreview: dstText,
-          suggestion: "请检查并移除原文中的假名，或手动修复译文",
+          suggestion: t.messages.tagKanaSuggestion,
         });
       }
       if (dstText.includes("<line_mismatch>")) {
@@ -276,10 +310,10 @@ export function ResultChecker({
           blockIndex: block.index,
           type: "line_mismatch",
           severity: "error",
-          message: `模型标记了行数不匹配 (line_mismatch)`,
+          message: t.messages.tagLineMismatch,
           srcPreview: srcText.substring(0, 100),
           dstPreview: dstText,
-          suggestion: "译文行数与原文严重不符，请核对",
+          suggestion: t.messages.tagLineMismatchSuggestion,
         });
       }
       if (dstText.includes("<glossary_miss>")) {
@@ -287,10 +321,10 @@ export function ResultChecker({
           blockIndex: block.index,
           type: "glossary_miss",
           severity: "warning",
-          message: `模型标记了术语缺失 (glossary_miss)`,
+          message: t.messages.tagGlossary,
           srcPreview: srcText.substring(0, 100),
           dstPreview: dstText,
-          suggestion: "请补全缺失的术语",
+          suggestion: t.messages.tagGlossarySuggestion,
         });
       }
       // Generic Error Tag Pattern: <error_...>
@@ -304,10 +338,10 @@ export function ResultChecker({
             blockIndex: block.index,
             type: "empty_output",
             severity: "error",
-            message: `模型标记了未定义错误: ${errType}`,
+            message: t.messages.tagUnknown.replace("{type}", errType),
             srcPreview: srcText.substring(0, 100),
             dstPreview: dstText,
-            suggestion: "请检查译文内容",
+            suggestion: t.messages.tagUnknownSuggestion,
           });
         }
       }
@@ -348,10 +382,10 @@ export function ResultChecker({
               blockIndex: block.index,
               type: wType as any,
               severity: severity,
-              message: `后端检测到风险: ${wType}`,
+              message: t.messages.backendWarning.replace("{type}", wType),
               srcPreview: srcText.substring(0, 100),
               dstPreview: dstText.substring(0, 100),
-              suggestion: "请检查该块内容",
+              suggestion: t.messages.backendWarningSuggestion,
             });
           }
         });
@@ -423,13 +457,7 @@ export function ResultChecker({
   };
 
   const getTypeLabel = (type: string) => {
-    const labels: Record<string, string> = {
-      kana_residue: "假名残留",
-      glossary_miss: "术语未生效",
-      high_similarity: "高相似度",
-      line_mismatch: "行数不匹配",
-      empty_output: "空输出",
-    };
+    const labels = t.typeLabels as Record<string, string>;
     return labels[type] || type;
   };
 
@@ -440,18 +468,23 @@ export function ResultChecker({
           <div className="text-center text-muted-foreground flex flex-col items-center gap-4">
             <div>
               <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
-              <p>请先加载翻译缓存文件</p>
+              <p>{t.noCacheTitle}</p>
               <p className="text-sm mt-2 opacity-70">
-                在校对界面选择缓存文件，或在此处直接打开
+                {t.noCacheDesc}
               </p>
             </div>
+            {loadError && (
+              <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-600">
+                {loadError}
+              </div>
+            )}
             <Button
               onClick={handleLoadCache}
               variant="outline"
               className="gap-2"
             >
               <FileText className="w-4 h-4" />
-              打开缓存文件
+              {t.openCacheButton}
             </Button>
           </div>
         </Card>
@@ -464,7 +497,7 @@ export function ResultChecker({
       {/* Header with Path if available */}
       {localCachePath && (
         <div className="text-xs text-muted-foreground break-all px-1">
-          当前文件: {localCachePath}
+          {t.currentFileLabel} {localCachePath}
         </div>
       )}
 
@@ -483,7 +516,9 @@ export function ResultChecker({
             </div>
             <div>
               <p className="text-lg font-bold">{stats.total}</p>
-              <p className="text-[10px] text-muted-foreground">总问题</p>
+              <p className="text-[10px] text-muted-foreground">
+                {t.statsTotal}
+              </p>
             </div>
           </div>
         </Card>
@@ -494,7 +529,9 @@ export function ResultChecker({
             </div>
             <div>
               <p className="text-lg font-bold">{stats.errors}</p>
-              <p className="text-[10px] text-muted-foreground">错误</p>
+              <p className="text-[10px] text-muted-foreground">
+                {t.statsErrors}
+              </p>
             </div>
           </div>
         </Card>
@@ -505,7 +542,9 @@ export function ResultChecker({
             </div>
             <div>
               <p className="text-lg font-bold">{stats.warnings}</p>
-              <p className="text-[10px] text-muted-foreground">警告</p>
+              <p className="text-[10px] text-muted-foreground">
+                {t.statsWarnings}
+              </p>
             </div>
           </div>
         </Card>
@@ -518,7 +557,9 @@ export function ResultChecker({
               <p className="text-lg font-bold">
                 {displayData?.blocks?.length || 0}
               </p>
-              <p className="text-[10px] text-muted-foreground">块数</p>
+              <p className="text-[10px] text-muted-foreground">
+                {t.statsBlocks}
+              </p>
             </div>
           </div>
         </Card>
@@ -532,7 +573,7 @@ export function ResultChecker({
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="搜索问题..."
+            placeholder={t.filterPlaceholder}
             className="w-full pl-10 pr-4 py-2 bg-muted rounded-lg text-sm"
           />
         </div>
@@ -541,21 +582,21 @@ export function ResultChecker({
           onChange={(e) => setFilterType(e.target.value)}
           className="px-4 py-2 bg-muted rounded-lg text-sm"
         >
-          <option value="all">全部类型</option>
+          <option value="all">{t.filterAll}</option>
           <option value="kana_residue">
-            假名残留 ({stats.byType.kana_residue})
+            {getTypeLabel("kana_residue")} ({stats.byType.kana_residue})
           </option>
           <option value="glossary_miss">
-            术语未生效 ({stats.byType.glossary_miss})
+            {getTypeLabel("glossary_miss")} ({stats.byType.glossary_miss})
           </option>
           <option value="high_similarity">
-            高相似度 ({stats.byType.high_similarity})
+            {getTypeLabel("high_similarity")} ({stats.byType.high_similarity})
           </option>
           <option value="line_mismatch">
-            行数不匹配 ({stats.byType.line_mismatch})
+            {getTypeLabel("line_mismatch")} ({stats.byType.line_mismatch})
           </option>
           <option value="empty_output">
-            空输出 ({stats.byType.empty_output})
+            {getTypeLabel("empty_output")} ({stats.byType.empty_output})
           </option>
         </select>
       </div>
@@ -564,7 +605,10 @@ export function ResultChecker({
       <Card className="flex-1 overflow-hidden flex flex-col">
         <CardHeader className="py-3 border-b border-border">
           <CardTitle className="text-sm font-medium">
-            检测结果 ({filteredIssues.length})
+            {t.resultsTitle.replace(
+              "{count}",
+              String(filteredIssues.length),
+            )}
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0 flex-1 overflow-y-auto">
@@ -573,11 +617,11 @@ export function ResultChecker({
               {issues.length === 0 ? (
                 <div className="text-center">
                   <CheckCircle2 className="w-12 h-12 mx-auto mb-4 text-green-500" />
-                  <p>未检测到明显问题</p>
-                  <p className="text-sm mt-2">翻译质量良好!</p>
+                  <p>{t.noIssuesTitle}</p>
+                  <p className="text-sm mt-2">{t.noIssuesDesc}</p>
                 </div>
               ) : (
-                <p>没有匹配的结果</p>
+                <p>{t.noMatches}</p>
               )}
             </div>
           ) : (
@@ -592,7 +636,10 @@ export function ResultChecker({
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-xs px-2 py-0.5 bg-muted rounded">
-                          Block #{issue.blockIndex}
+                          {t.blockLabel.replace(
+                            "{index}",
+                            String(issue.blockIndex),
+                          )}
                         </span>
                         <span className="text-xs px-2 py-0.5 bg-muted rounded">
                           {getTypeLabel(issue.type)}
@@ -610,7 +657,7 @@ export function ResultChecker({
                             onNavigateToBlock(issue.blockIndex);
                           }}
                         >
-                          跳转
+                          {t.jump}
                         </Button>
                       )}
                       {expandedIssues.has(idx) ? (
@@ -625,19 +672,21 @@ export function ResultChecker({
                     <div className="mt-3 ml-8 space-y-2 text-sm">
                       <div className="p-3 bg-muted rounded-lg">
                         <p className="text-xs text-muted-foreground mb-1">
-                          原文预览:
+                          {t.srcPreview}
                         </p>
                         <p className="text-foreground">{issue.srcPreview}...</p>
                       </div>
                       <div className="p-3 bg-muted rounded-lg">
                         <p className="text-xs text-muted-foreground mb-1">
-                          译文预览:
+                          {t.dstPreview}
                         </p>
                         <p className="text-foreground">{issue.dstPreview}...</p>
                       </div>
                       {issue.suggestion && (
                         <div className="p-3 bg-blue-500/10 rounded-lg border border-blue-500/20">
-                          <p className="text-xs text-blue-400 mb-1">建议:</p>
+                          <p className="text-xs text-blue-400 mb-1">
+                            {t.suggestion}
+                          </p>
                           <p className="text-blue-300">{issue.suggestion}</p>
                         </div>
                       )}

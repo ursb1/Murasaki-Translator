@@ -1,6 +1,6 @@
 import { FileText, BookOpen } from "lucide-react";
 
-export interface FileIconProps {
+interface FileIconProps {
   type: "txt" | "epub" | "srt" | "ass" | "ssa" | string;
   className?: string;
 }

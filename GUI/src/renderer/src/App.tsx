@@ -19,6 +19,7 @@ import { AlertModal } from "./components/ui/AlertModal";
 import { useAlertModal } from "./hooks/useAlertModal";
 import { useRemoteRuntime } from "./hooks/useRemoteRuntime";
 import { RemoteStatusBar } from "./components/RemoteStatusBar";
+import { ToastHost } from "./components/ui/ToastHost";
 
 export type View =
   | "dashboard"
@@ -34,12 +35,15 @@ export type View =
   | "proofread";
 
 function AppContent() {
-  const [lang, setLang] = useState<Language>("zh");
+  const [lang, setLang] = useState<Language>(() => {
+    const stored = localStorage.getItem("app_lang");
+    return stored === "zh" || stored === "en" || stored === "jp" ? stored : "zh";
+  });
   const [view, setView] = useState<View>("dashboard");
   const [proofreadHasChanges, setProofreadHasChanges] = useState(false);
   const { alertProps, showConfirm } = useAlertModal();
   const [isRunning, setIsRunning] = useState(false);
-  const remoteRuntime = useRemoteRuntime();
+  const remoteRuntime = useRemoteRuntime(lang);
 
   // Dashboard ref for triggering translation
   const dashboardRef = useRef<{
@@ -76,7 +80,7 @@ function AppContent() {
         ) {
           const t = translations[lang];
           showConfirm({
-            title: t.config.proofread.unsavedChanges.split("，")[0], // "当前有未保存的更改"
+            title: t.config.proofread.unsavedChangesTitle,
             description: t.config.proofread.unsavedChanges,
             onConfirm: executeSwitch,
           });
@@ -113,6 +117,7 @@ function AppContent() {
           active={view === "dashboard"}
           onRunningChange={setIsRunning}
           remoteRuntime={remoteRuntime}
+          onNavigate={handleSwitchView}
         />
       </div>
       {view === "settings" && <SettingsView lang={lang} />}
@@ -147,8 +152,9 @@ function AppContent() {
         </div>
       )}
 
-      <RemoteStatusBar remote={remoteRuntime} />
+      <RemoteStatusBar remote={remoteRuntime} lang={lang} />
       <AlertModal {...alertProps} />
+      <ToastHost />
     </div>
   );
 }

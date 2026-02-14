@@ -8,9 +8,11 @@ import {
   WifiOff,
 } from "lucide-react";
 import type { UseRemoteRuntimeResult } from "../hooks/useRemoteRuntime";
+import { translations, Language } from "../lib/i18n";
 
 interface RemoteStatusBarProps {
   remote: UseRemoteRuntimeResult;
+  lang: Language;
 }
 
 interface FloatingPosition {
@@ -23,16 +25,27 @@ const FLOATING_STATUS_BAR_EDGE_PADDING = 8;
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
 
-const formatAgo = (timestamp?: number): string => {
+type RemoteStatusText = (typeof translations)["zh"]["remoteStatusBar"];
+
+const formatAgo = (t: RemoteStatusText, timestamp?: number): string => {
   if (!timestamp) return "--";
   const deltaSeconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
-  if (deltaSeconds < 5) return "刚刚";
-  if (deltaSeconds < 60) return `${deltaSeconds}秒前`;
-  if (deltaSeconds < 3600) return `${Math.floor(deltaSeconds / 60)}分钟前`;
-  return `${Math.floor(deltaSeconds / 3600)}小时前`;
+  if (deltaSeconds < 5) return t.agoJustNow;
+  if (deltaSeconds < 60)
+    return t.agoSeconds.replace("{count}", String(deltaSeconds));
+  if (deltaSeconds < 3600)
+    return t.agoMinutes.replace(
+      "{count}",
+      String(Math.floor(deltaSeconds / 60)),
+    );
+  return t.agoHours.replace(
+    "{count}",
+    String(Math.floor(deltaSeconds / 3600)),
+  );
 };
 
-export function RemoteStatusBar({ remote }: RemoteStatusBarProps) {
+export function RemoteStatusBar({ remote, lang }: RemoteStatusBarProps) {
+  const t = translations[lang].remoteStatusBar;
   const [expanded, setExpanded] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [position, setPosition] = useState<FloatingPosition | null>(null);
@@ -133,21 +146,23 @@ export function RemoteStatusBar({ remote }: RemoteStatusBarProps) {
 
   const sessionSource = remote.runtime.session?.source || "manual";
   const sourceLabel =
-    sessionSource === "local-daemon" ? "本机常驻服务" : "远程服务器";
+    sessionSource === "local-daemon"
+      ? t.sourceLocalDaemon
+      : t.sourceRemoteServer;
   const endpoint = remote.runtime.session?.url || "--";
   const fileScopeLabel =
     remote.runtime.fileScope === "shared-local"
-      ? "文件域：本地共享"
-      : "文件域：远程隔离";
+      ? t.fileScopeLocal
+      : t.fileScopeRemote;
   const outputPolicyLabel =
     remote.runtime.outputPolicy === "same-dir"
-      ? "输出：同目录"
-      : "输出：远程分域目录";
+      ? t.outputSameDir
+      : t.outputRemoteDir;
   const isConnected = remote.runtime.connected;
   const hasError = remote.network.errorCount > 0 || Boolean(remote.lastError);
   const communicationText = remote.network.wsConnected
-    ? "通信：WebSocket 实时"
-    : "通信：HTTP 轮询";
+    ? t.communicationWs
+    : t.communicationHttp;
 
   return (
     <div className="fixed z-[999] pointer-events-none" style={wrapperStyle}>
@@ -162,7 +177,7 @@ export function RemoteStatusBar({ remote }: RemoteStatusBarProps) {
             className={`flex items-center gap-2 flex-wrap select-none ${
               dragging ? "cursor-grabbing" : "cursor-grab"
             }`}
-            title="按住拖动可移动状态窗"
+            title={t.dragHint}
             onMouseDown={handleStartDrag}
           >
             <div className="flex items-center gap-1 font-semibold">
@@ -177,68 +192,103 @@ export function RemoteStatusBar({ remote }: RemoteStatusBarProps) {
               ) : (
                 <WifiOff className="w-3.5 h-3.5" />
               )}
-              <span>{isConnected ? "已连接" : "未连接"}</span>
+              <span>{isConnected ? t.connected : t.disconnected}</span>
             </div>
             <span className="text-muted-foreground">{communicationText}</span>
-            <span className="text-muted-foreground">延迟: {remote.network.lastLatencyMs ?? "--"} ms</span>
-            <span className="text-muted-foreground">在途: {remote.network.inFlightRequests}</span>
+            <span className="text-muted-foreground">
+              {t.latency.replace(
+                "{ms}",
+                String(remote.network.lastLatencyMs ?? "--"),
+              )}{" "}
+              ms
+            </span>
+            <span className="text-muted-foreground">
+              {t.inFlight.replace(
+                "{count}",
+                String(remote.network.inFlightRequests),
+              )}
+            </span>
             <button
               type="button"
               className="ml-auto inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 hover:bg-secondary"
               onClick={() => void remote.refresh(true)}
-              title="立即刷新远程状态"
+              title={t.refreshTitle}
             >
               <RefreshCw className={`w-3 h-3 ${remote.refreshing ? "animate-spin" : ""}`} />
-              <span>刷新</span>
+              <span>{t.refresh}</span>
             </button>
           </div>
 
           <div className="flex items-start justify-between gap-2 text-[10px] text-muted-foreground">
-            <span>连接地址:</span>
+            <span>{t.endpoint}</span>
             <span className="font-mono break-all text-right">{endpoint}</span>
           </div>
 
           <div className="text-[10px] text-muted-foreground">
-            最近同步: {formatAgo(remote.network.lastSyncAt)} · 最近检测:{" "}
-            {formatAgo(remote.runtime.lastCheckedAt)} · 活动任务:{" "}
-            {remote.diagnostics.activeTaskId ? "1" : "0"} · 事件:{" "}
-            {remote.network.totalEvents} · 健康失败:{" "}
-            {remote.diagnostics.healthFailures}
+            {t.lastSync.replace(
+              "{value}",
+              formatAgo(t, remote.network.lastSyncAt),
+            )}{" "}
+            {t.separator}{" "}
+            {t.lastCheck.replace(
+              "{value}",
+              formatAgo(t, remote.runtime.lastCheckedAt),
+            )}{" "}
+            {t.separator}{" "}
+            {t.activeTasks.replace(
+              "{count}",
+              remote.diagnostics.activeTaskId ? "1" : "0",
+            )}{" "}
+            {t.separator}{" "}
+            {t.events.replace("{count}", String(remote.network.totalEvents))}{" "}
+            {t.separator}{" "}
+            {t.healthFailures.replace(
+              "{count}",
+              String(remote.diagnostics.healthFailures),
+            )}
           </div>
           <div className="text-[10px] text-muted-foreground">
-            成功/错误/重试: {remote.network.successCount}/{remote.network.errorCount}/
-            {remote.network.retryCount} · 上传/下载: {remote.network.uploadCount}/
-            {remote.network.downloadCount}
+            {t.successErrorRetry.replace(
+              "{value}",
+              `${remote.network.successCount}/${remote.network.errorCount}/${remote.network.retryCount}`,
+            )}{" "}
+            {t.separator}{" "}
+            {t.uploadDownload.replace(
+              "{value}",
+              `${remote.network.uploadCount}/${remote.network.downloadCount}`,
+            )}
           </div>
           <div className="text-[10px] text-muted-foreground">
-            {fileScopeLabel} · {outputPolicyLabel}
+            {fileScopeLabel} {t.separator} {outputPolicyLabel}
           </div>
         </div>
 
         {expanded && (
           <div className="border-t border-border px-3 py-2 text-[10px] bg-secondary/20 space-y-1.5">
             <div className="text-muted-foreground">
-              运行来源:{" "}
+              {t.runtimeSource}{" "}
               <span className="font-mono">{sourceLabel}</span>
             </div>
             <div className="text-muted-foreground">
-              运行模式:{" "}
+              {t.runtimeMode}{" "}
               <span className="font-mono">
-                {remote.runtime.executionMode === "remote" ? "远程" : "本地"}
+                {remote.runtime.executionMode === "remote"
+                  ? t.modeRemote
+                  : t.modeLocal}
               </span>
             </div>
             <div className="text-muted-foreground">
-              镜像文件:{" "}
+              {t.mirrorPath}{" "}
               <span className="font-mono">{remote.runtime.syncMirrorPath || "--"}</span>
             </div>
             <div className="text-muted-foreground">
-              网络日志:{" "}
+              {t.networkLog}{" "}
               <span className="font-mono">
                 {remote.runtime.networkEventLogPath || "--"}
               </span>
             </div>
             <div className="text-muted-foreground">
-              最近同步:{" "}
+              {t.lastSyncLabel}{" "}
               <span className="font-mono">
                 {remote.network.lastSyncAt
                   ? new Date(remote.network.lastSyncAt).toLocaleTimeString()
@@ -246,14 +296,14 @@ export function RemoteStatusBar({ remote }: RemoteStatusBarProps) {
               </span>
             </div>
             <div className="text-muted-foreground">
-              延迟(当前/平均):{" "}
+              {t.latencyDetail}{" "}
               <span className="font-mono">
                 {remote.network.lastLatencyMs ?? "--"} ms /{" "}
                 {remote.network.avgLatencyMs ?? "--"} ms
               </span>
             </div>
             <div className="text-muted-foreground">
-              状态码 / 在途:{" "}
+              {t.statusInFlight}{" "}
               <span className="font-mono">
                 {remote.network.lastStatusCode ?? "--"} /{" "}
                 {remote.network.inFlightRequests ?? 0}
@@ -261,14 +311,16 @@ export function RemoteStatusBar({ remote }: RemoteStatusBarProps) {
             </div>
             {remote.network.lastError && (
               <div className="text-destructive">
-                最近错误: {remote.network.lastError.message}
+                {t.lastError}: {remote.network.lastError.message}
                 {remote.network.lastError.path
                   ? ` @ ${remote.network.lastError.path}`
                   : ""}
               </div>
             )}
             {remote.lastError && (
-              <div className="text-destructive">状态错误: {remote.lastError}</div>
+              <div className="text-destructive">
+                {t.statusError}: {remote.lastError}
+              </div>
             )}
           </div>
         )}
@@ -284,7 +336,7 @@ export function RemoteStatusBar({ remote }: RemoteStatusBarProps) {
             ) : (
               <ChevronUp className="w-3 h-3" />
             )}
-            <span>{expanded ? "收起详情" : "展开详情"}</span>
+            <span>{expanded ? t.collapse : t.expand}</span>
           </button>
         </div>
       </div>

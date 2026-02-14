@@ -55,12 +55,7 @@ export function Sidebar({ lang, setLang, view, setView }: SidebarProps) {
     { icon: Play, label: t.nav.start, id: "dashboard" },
     {
       icon: Layers,
-      label:
-        lang === "zh"
-          ? "翻译队列"
-          : lang === "jp"
-            ? "ワークベンチ"
-            : "Workbench",
+      label: t.nav.library,
       id: "library",
     },
     { icon: Clock, label: t.nav.history, id: "history" },
@@ -72,15 +67,15 @@ export function Sidebar({ lang, setLang, view, setView }: SidebarProps) {
     { icon: FileInput, label: t.nav.pre, id: "pre" },
     { icon: FileOutput, label: t.nav.post, id: "post" },
     // 高级与设置
-    { icon: Server, label: t.nav.service || "服务管理", id: "service" },
+    { icon: Server, label: t.nav.service, id: "service" },
     { icon: Sparkles, label: t.nav.advanced, id: "advanced" },
     { icon: Settings, label: t.nav.setting, id: "settings" },
   ];
 
   return (
     <div className="w-[200px] bg-card border-r border-border h-screen flex flex-col">
-      <div className="p-4 pb-3">
-        <h1 className="text-xl font-bold bg-gradient-to-r from-purple-400 to-violet-400 bg-clip-text text-transparent">
+      <div className="p-4 pb-3 flex flex-col items-start text-left">
+        <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-purple-400 to-violet-400 bg-clip-text text-transparent">
           Murasaki
         </h1>
         <p className="text-xs text-muted-foreground mt-1">{t.title}</p>
@@ -119,7 +114,10 @@ export function Sidebar({ lang, setLang, view, setView }: SidebarProps) {
           {(["zh", "en", "jp"] as Language[]).map((l) => (
             <button
               key={l}
-              onClick={() => setLang(l)}
+              onClick={() => {
+                localStorage.setItem("app_lang", l);
+                setLang(l);
+              }}
               className={cn(
                 "text-xs px-2 py-1 rounded transition-colors",
                 lang === l

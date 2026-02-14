@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Check,
   ChevronDown,
@@ -7,6 +7,7 @@ import {
   Eye,
   EyeOff,
   Info,
+  X,
   RefreshCw,
   Server,
   Sparkles,
@@ -68,6 +69,7 @@ const maskApiKey = (value: string): string => {
 
 export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewProps) {
   const t = translations[lang];
+  const s = t.serviceView;
   const { alertProps, showAlert, showConfirm } = useAlertModal();
 
   const [serverUrl, setServerUrl] = useState(
@@ -117,6 +119,12 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
     title?: string;
     subtitle?: string;
   } | null>(null);
+  const [inlineNotice, setInlineNotice] = useState<{
+    type: "info" | "warning" | "error" | "success";
+    message: string;
+  } | null>(null);
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastStatusErrorRef = useRef(0);
 
   const {
     runtime,
@@ -142,6 +150,26 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
     runtime?.networkEventLogPath || network?.networkEventLogPath || "";
   const remoteMirrorLogPath =
     runtime?.syncMirrorPath || network?.syncMirrorPath || "";
+  const inlineNoticeConfig = inlineNotice
+    ? {
+        success: {
+          className: "bg-emerald-500/10 border-emerald-500/30 text-emerald-600",
+          icon: Check,
+        },
+        warning: {
+          className: "bg-amber-500/10 border-amber-500/30 text-amber-600",
+          icon: Info,
+        },
+        error: {
+          className: "bg-red-500/10 border-red-500/30 text-red-600",
+          icon: Info,
+        },
+        info: {
+          className: "bg-blue-500/10 border-blue-500/30 text-blue-600",
+          icon: Info,
+        },
+      }[inlineNotice.type]
+    : null;
 
   useEffect(() => {
     void refreshRemoteRuntime();
@@ -156,7 +184,15 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
           setServerStatus(status);
         } catch (error) {
           console.error("Server status check failed", error);
-        }
+          const now = Date.now();
+            if (now - lastStatusErrorRef.current > 10000) {
+              lastStatusErrorRef.current = now;
+              pushNotice({
+                type: "warning",
+                message: s.statusFetchFailed,
+              });
+            }
+          }
       }
     };
     if (daemonMode) {
@@ -174,6 +210,21 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
       localStorage.setItem(REMOTE_API_URL_STORAGE_KEY, runtime.session.url);
     }
   }, [runtime.session?.url]);
+
+  const pushNotice = useCallback(
+    (next: { type: "info" | "warning" | "error" | "success"; message: string }) => {
+      setInlineNotice(next);
+      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+      noticeTimerRef.current = setTimeout(() => setInlineNotice(null), 5200);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     localStorage.setItem(
@@ -199,12 +250,12 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
   const toggleDaemonMode = async (nextValue: boolean) => {
     if (daemonMode && !nextValue && serverStatus?.running) {
       showConfirm({
-        title: "确认切换到自动模式？",
+        title: s.switchToAutoTitle,
         description:
-          "当前本机常驻服务正在运行。切换到自动模式后将立即停止本机常驻服务，并断开本机远程桥接链路。",
+          s.switchToAutoDesc,
         variant: "warning",
-        confirmText: "确认切换",
-        cancelText: "取消",
+        confirmText: s.switchToAutoConfirm,
+        cancelText: t.common.cancel,
         onConfirm: async () => {
           await (window as any).api?.serverStop();
           setServerStatus(null);
@@ -253,8 +304,8 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
     const activeModel = localStorage.getItem("config_model") || "";
     if (!activeModel) {
       showAlert({
-        title: "未选择模型",
-        description: "请先在模型管理页面选择可用模型后再启动本机常驻服务。",
+        title: s.noModelTitle,
+        description: s.noModelDesc,
         variant: "destructive",
       });
       return;
@@ -277,7 +328,7 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
       const config = buildServerStartConfig(activeModel, preferredPort);
       const startResult = await (window as any).api?.serverStart(config);
       if (!startResult?.success) {
-        let errorDetail = startResult?.error || "服务启动失败，请检查日志。";
+        let errorDetail = startResult?.error || s.startFailed;
         try {
           const logs = await (window as any).api?.serverLogs?.();
           if (Array.isArray(logs) && logs.length > 0) {
@@ -294,7 +345,7 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
           // ignore log fetch failure
         }
         showAlert({
-          title: "启动失败",
+          title: s.startFailTitle,
           description: errorDetail,
           variant: "destructive",
         });
@@ -328,9 +379,21 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
           if (connectResult?.ok) {
             autoConnected = true;
             setRemotePanelExpanded(true);
+          } else {
+            const ui = mapApiError(connectResult, s.autoConnectFail);
+            pushNotice({
+              type: "warning",
+              message: `${ui.title}：${ui.description}${ui.hint ? ` ${ui.hint}` : ""}`,
+            });
           }
-        } catch {
-          // 连接失败不阻塞启动流程
+        } catch (error) {
+          pushNotice({
+            type: "warning",
+            message: s.autoConnectFailDetail.replace(
+              "{error}",
+              String(error),
+            ),
+          });
         }
       } else if (autoConnectRemoteAfterDaemonStart && startResult?.endpoint && isRemoteConnected) {
         // 已有远程连接时不覆盖，仅同步表单
@@ -350,31 +413,45 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
         setLocalPort(String(startResult.selectedPort));
         localStorage.setItem("config_local_port", String(startResult.selectedPort));
         detailParts.push(
-          `端口 ${startResult.requestedPort || preferredPort} 被占用，已自动切换为 ${startResult.selectedPort}（自动探测范围 ${preferredPort}-${preferredPort + LOCAL_API_PORT_SCAN_RANGE}）`,
+          s.portChangedNotice
+            .replace(
+              "{requested}",
+              String(startResult.requestedPort || preferredPort),
+            )
+            .replace("{selected}", String(startResult.selectedPort))
+            .replace("{from}", String(preferredPort))
+            .replace(
+              "{to}",
+              String(preferredPort + LOCAL_API_PORT_SCAN_RANGE),
+            ),
         );
       } else if (startResult?.selectedPort) {
         setLocalPort(String(startResult.selectedPort));
         localStorage.setItem("config_local_port", String(startResult.selectedPort));
       }
       if (startResult?.endpoint) {
-        detailParts.push(`本机地址：${startResult.endpoint}`);
+        detailParts.push(
+          s.localEndpoint.replace("{value}", startResult.endpoint),
+        );
       }
       if (Array.isArray(startResult?.lanEndpoints) && startResult.lanEndpoints.length > 0) {
-        detailParts.push(`局域网地址：${startResult.lanEndpoints[0]}`);
+        detailParts.push(
+          s.lanEndpoint.replace("{value}", startResult.lanEndpoints[0]),
+        );
       }
       if (autoConnected) {
-        detailParts.push("已自动接入本机远程统一链路");
+        detailParts.push(s.autoConnected);
       } else if (!autoConnectRemoteAfterDaemonStart) {
-        detailParts.push(
-          `已按你的设置仅启动本机服务；如需远程统一链路，请点击右侧\u201c连接并启用远程\u201d。`,
-        );
+        detailParts.push(s.autoConnectHint);
       } else if (isRemoteConnected) {
-        detailParts.push("本机服务已启动，当前继续保持你已有的远程连接。");
+        detailParts.push(s.keepRemote);
       }
 
       showAlert({
-        title: startResult?.portChanged ? "本机推理服务已启动（端口已调整）" : "本机推理服务已启动",
-        description: detailParts.join(" | ") || "本机推理服务已就绪。",
+        title: startResult?.portChanged
+          ? s.localStartedPortChanged
+          : s.localStarted,
+        description: detailParts.join(" | ") || s.localReady,
         variant: "success",
       });
 
@@ -385,8 +462,8 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
       await refreshRemoteRuntime();
     } catch (error) {
       showAlert({
-        title: "启动异常",
-        description: `启动本机推理服务失败：${String(error)}`,
+        title: s.startExceptionTitle,
+        description: s.startExceptionDesc.replace("{error}", String(error)),
         variant: "destructive",
       });
     } finally {
@@ -411,9 +488,19 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
       const result = await (window as any).api?.serverWarmup();
       if (result?.success) {
         setWarmupTime(result.durationMs ?? null);
+      } else {
+        pushNotice({
+          type: "warning",
+          message:
+            result?.error || s.warmupFailHint,
+        });
       }
     } catch (error) {
       console.error("Warmup failed", error);
+      pushNotice({
+        type: "warning",
+        message: s.warmupFailDetail.replace("{error}", String(error)),
+      });
     } finally {
       setIsWarming(false);
     }
@@ -422,8 +509,8 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
   const handleCopyLocalApiKey = async () => {
     if (!canCopyLocalApiKey) {
       showAlert({
-        title: "无法复制",
-        description: "当前没有可复制的本机 API 密钥，请先填写密钥或启动服务后重试。",
+        title: s.copyMissingTitle,
+        description: s.copyMissingLocalDesc,
         variant: "destructive",
       });
       return;
@@ -434,8 +521,8 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
       window.setTimeout(() => setLocalApiKeyCopied(false), 1800);
     } catch (error) {
       showAlert({
-        title: "复制失败",
-        description: `复制本机 API 密钥失败：${String(error)}`,
+        title: s.copyFailTitle,
+        description: s.copyLocalFailDesc.replace("{error}", String(error)),
         variant: "destructive",
       });
     }
@@ -444,8 +531,8 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
   const handleCopyRemoteApiKey = async () => {
     if (!canCopyRemoteApiKey) {
       showAlert({
-        title: "无法复制",
-        description: "当前没有可复制的远程 API 密钥，请先填写后重试。",
+        title: s.copyMissingTitle,
+        description: s.copyMissingRemoteDesc,
         variant: "destructive",
       });
       return;
@@ -456,8 +543,8 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
       window.setTimeout(() => setRemoteApiKeyCopied(false), 1800);
     } catch (error) {
       showAlert({
-        title: "复制失败",
-        description: `复制远程 API 密钥失败：${String(error)}`,
+        title: s.copyFailTitle,
+        description: s.copyRemoteFailDesc.replace("{error}", String(error)),
         variant: "destructive",
       });
     }
@@ -471,12 +558,12 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
         if (disconnectResult?.ok) {
           setRemotePanelExpanded(false);
           showAlert({
-            title: "已断开远程连接",
-            description: "已切回本地执行模式。",
+            title: s.disconnectedTitle,
+            description: s.disconnectedDesc,
             variant: "success",
           });
         } else {
-          const ui = mapApiError(disconnectResult, "断开远程连接失败。");
+          const ui = mapApiError(disconnectResult, s.disconnectFail);
           showAlert({
             title: ui.title,
             description: ui.hint ? `${ui.description} ${ui.hint}` : ui.description,
@@ -489,8 +576,8 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
       const url = serverUrl.trim();
       if (!url) {
         showAlert({
-          title: "缺少地址",
-          description: "请先填写远程 API 地址后再连接。",
+          title: s.missingUrlTitle,
+          description: s.missingUrlDesc,
           variant: "destructive",
         });
         return;
@@ -503,12 +590,17 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
         localStorage.setItem(REMOTE_API_KEY_STORAGE_KEY, apiKey.trim());
         const sourceHint = result?.message ? `${result.message} ` : "";
         showAlert({
-          title: "连接成功",
-          description: `${sourceHint}已启用远程模式${result?.data?.version ? `（服务版本 v${result.data.version}）` : ""}`,
+          title: s.connectSuccessTitle,
+          description: s.connectSuccessDesc
+            .replace("{source}", sourceHint)
+            .replace(
+              "{version}",
+              result?.data?.version ? `（服务版本 v${result.data.version}）` : "",
+            ),
           variant: "success",
         });
       } else {
-        const ui = mapApiError(result, "连接远程服务器失败。");
+        const ui = mapApiError(result, s.connectFail);
         showAlert({
           title: ui.title,
           description: ui.hint ? `${ui.description} ${ui.hint}` : ui.description,
@@ -517,8 +609,8 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
       }
     } catch (error) {
       showAlert({
-        title: "连接异常",
-        description: "连接远程服务器失败：" + String(error),
+        title: s.connectErrorTitle,
+        description: s.connectErrorDesc.replace("{error}", String(error)),
         variant: "destructive",
       });
     } finally {
@@ -556,15 +648,15 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
 
   const handleOpenLocalLlamaLog = async () => {
     const logPath = await resolveLocalLogPath("llama-daemon.log");
-    openFileLog(logPath, "本地 llama 日志");
+    openFileLog(logPath, s.localLlamaLog);
   };
 
   const handleOpenRemoteNetworkLog = () => {
-    openFileLog(remoteNetworkLogPath, "远程网络日志");
+    openFileLog(remoteNetworkLogPath, s.remoteNetworkLog);
   };
 
   const handleOpenRemoteMirrorLog = () => {
-    openFileLog(remoteMirrorLogPath, "远程任务镜像日志");
+    openFileLog(remoteMirrorLogPath, s.remoteMirrorLog);
   };
 
   return (
@@ -572,23 +664,43 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
       <div className="px-8 pt-8 pb-6 shrink-0 z-10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <h2 className="text-2xl font-bold text-foreground flex items-center gap-3">
           <Server className="w-6 h-6 text-primary" />
-          {t.nav.service || "服务管理"}
+          {s.title}
           {(isStartingServer || remoteRuntimeLoading) && (
             <RefreshCw className="w-5 h-5 animate-spin text-muted-foreground" />
           )}
         </h2>
         <p className="text-xs text-muted-foreground mt-2">
-          本页面用于管理本机常驻推理服务与远程连接链路。服务启动参数使用“高级功能”中已保存的模型与推理配置。
+          {s.subtitle}
         </p>
       </div>
+      {inlineNotice && inlineNoticeConfig && (() => {
+        const NoticeIcon = inlineNoticeConfig.icon;
+        return (
+          <div className="px-8 -mt-2 pb-4">
+            <div
+              className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${inlineNoticeConfig.className}`}
+            >
+              <NoticeIcon className="w-3.5 h-3.5 mt-0.5" />
+              <span className="flex-1 leading-relaxed">{inlineNotice.message}</span>
+              <button
+                type="button"
+                onClick={() => setInlineNotice(null)}
+                className="ml-auto text-current/70 hover:text-current"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        );
+      })()}
       <div className="flex-1 overflow-y-auto px-8 pb-4 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent hover:scrollbar-thumb-muted-foreground/30">
         <div className="grid gap-6">
           <div className="rounded-lg border border-border/60 bg-muted/40 px-3 py-2">
             <div className="flex flex-wrap items-center gap-2 text-[11px]">
               <Info className="w-3.5 h-3.5 text-blue-500" />
-              <span className="font-medium">链路说明</span>
+              <span className="font-medium">{s.guideTitle}</span>
               <span className="text-muted-foreground">
-                Linux Server 与本机常驻差异、参数透传范围（点击可查看详情）
+                {s.guideSubtitle}
               </span>
               <button
                 type="button"
@@ -598,12 +710,12 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                 {serviceGuideExpanded ? (
                   <>
                     <ChevronUp className="w-3 h-3" />
-                    收起说明
+                    {s.guideCollapse}
                   </>
                 ) : (
                   <>
                     <ChevronDown className="w-3 h-3" />
-                    展开说明
+                    {s.guideExpand}
                   </>
                 )}
               </button>
@@ -613,41 +725,45 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
               <div className="mt-3 space-y-3">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 text-[11px]">
                   <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2 space-y-2">
-                    <div className="font-semibold">Linux Server（远程服务器）</div>
+                    <div className="font-semibold">{s.guideLinuxTitle}</div>
                     <div className="text-muted-foreground leading-relaxed">
-                      部署在独立 Linux 主机，通常用于多客户端共享算力。GUI 通过网络连接，服务端文件系统与本机隔离。
+                      {s.guideLinuxDesc1}
                     </div>
                     <div className="text-muted-foreground leading-relaxed">
-                      默认建议手动连接；适合团队协作、集中部署、长时运行。
+                      {s.guideLinuxDesc2}
                     </div>
                   </div>
                   <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2 space-y-2">
-                    <div className="font-semibold">本机 GUI 常驻服务（Windows）</div>
+                    <div className="font-semibold">{s.guideLocalTitle}</div>
                     <div className="text-muted-foreground leading-relaxed">
-                      由当前 GUI 在本机启动 API 常驻进程，本地文件可直接共享；可选自动接入远程统一链路。
+                      {s.guideLocalDesc1}
                     </div>
                     <div className="text-muted-foreground leading-relaxed">
-                      绑定 <span className="font-mono">0.0.0.0</span> 后可给局域网设备提供同一套接口，逻辑与 Linux Server 一致。
+                      {s.guideLocalDesc2Prefix}{" "}
+                      <span className="font-mono">0.0.0.0</span>{" "}
+                      {s.guideLocalDesc2Suffix}
                     </div>
                   </div>
                 </div>
                 <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2 space-y-2 text-[11px]">
                   <div className="font-semibold text-foreground">
-                    通过服务链路可透传的参数与功能
+                    {s.guidePassThroughTitle}
                   </div>
                   <div className="text-muted-foreground leading-relaxed">
-                    模型与推理：模型名、预设、上下文、GPU 层、设备 ID、并发、Flash Attention、KV Cache、Batch、Seed。
+                    {s.guidePassThroughModel}
                   </div>
                   <div className="text-muted-foreground leading-relaxed">
-                    质量策略：严格模式、行数校验与容差、重复惩罚、最大重试、术语覆盖率策略、重试温度提升、反馈注入。
+                    {s.guidePassThroughQuality}
                   </div>
                   <div className="text-muted-foreground leading-relaxed">
-                    文本处理：预/后处理规则（路径或内联规则）、文本保护、假名/注音/标点修复、繁中转换、CoT 与摘要保存。
+                    {s.guidePassThroughProcessing}
                   </div>
                   <div className="text-muted-foreground leading-relaxed">
-                    任务能力：上传、创建任务、WS/轮询进度、日志、取消、下载结果。注意：外部远程会话默认不透传本地
-                    <span className="font-mono">resume</span> 与
-                    <span className="font-mono">cacheDir</span>，仅本机常驻会话支持本地路径语义。
+                    {s.guidePassThroughTasksPrefix}
+                    <span className="font-mono">resume</span>
+                    {s.guidePassThroughTasksMid}
+                    <span className="font-mono">cacheDir</span>
+                    {s.guidePassThroughTasksSuffix}
                   </div>
                 </div>
               </div>
@@ -659,9 +775,9 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <div>
-                    <span className="text-sm font-semibold">本机推理服务</span>
+                    <span className="text-sm font-semibold">{s.localTitle}</span>
                     <p className="text-[10px] text-muted-foreground mt-0.5">
-                      在本机启动 API 常驻进程，可供当前 GUI 或局域网客户端调用
+                      {s.localDesc}
                     </p>
                   </div>
                   <div className="flex bg-secondary rounded-lg p-0.5 border">
@@ -672,7 +788,7 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                         : "text-muted-foreground hover:text-foreground"
                         }`}
                     >
-                      自动模式
+                      {s.modeAuto}
                     </button>
                     <button
                       onClick={() => void toggleDaemonMode(true)}
@@ -681,15 +797,15 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                         : "text-muted-foreground hover:text-foreground"
                         }`}
                     >
-                      常驻模式
+                      {s.modeFixed}
                     </button>
                   </div>
                 </div>
 
                 <p className="text-xs text-muted-foreground">
                   {daemonMode
-                    ? "常驻模式下服务持续运行；适合频繁翻译或局域网共享。"
-                    : "翻译时自动启动推理服务，闲置时自动关闭以释放显存。"}
+                    ? s.modeFixedDesc
+                    : s.modeAutoDesc}
                 </p>
 
                 {daemonMode && (
@@ -697,7 +813,7 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1.5">
                         <label className="text-xs font-medium text-muted-foreground">
-                          监听端口 (Port)
+                          {s.portLabel}
                         </label>
                         <input
                           type="number"
@@ -715,13 +831,16 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                           }}
                         />
                         <p className="text-[11px] leading-5 text-muted-foreground">
-                          默认端口为 <span className="font-mono">8000</span>；若端口被占用，将自动尝试
-                          <span className="font-mono"> 8001 ~ 8020</span> 并切换到可用端口。
+                          {s.portHintPrefix}{" "}
+                          <span className="font-mono">8000</span>
+                          {s.portHintMid}
+                          <span className="font-mono"> 8001 ~ 8020</span>
+                          {s.portHintSuffix}
                         </p>
                       </div>
                       <div className="space-y-1">
                         <label className="text-xs font-medium text-muted-foreground">
-                          绑定地址 (Host)
+                          {s.hostLabel}
                         </label>
                         <select
                           className="w-full border border-border p-2 rounded bg-secondary text-foreground text-sm"
@@ -731,8 +850,8 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                             localStorage.setItem("config_local_host", event.target.value);
                           }}
                         >
-                          <option value="127.0.0.1">127.0.0.1 (仅本机)</option>
-                          <option value="0.0.0.0">0.0.0.0 (局域网可访问)</option>
+                          <option value="127.0.0.1">{s.hostLocal}</option>
+                          <option value="0.0.0.0">{s.hostLan}</option>
                         </select>
                       </div>
                     </div>
@@ -740,7 +859,7 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between gap-2">
                         <label className="text-xs font-medium text-muted-foreground">
-                          本机 API 密钥（留空自动生成）
+                          {s.localApiKeyLabel}
                         </label>
                         <div className="flex items-center gap-1">
                           <Button
@@ -753,12 +872,12 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                             {showLocalApiKey ? (
                               <>
                                 <EyeOff className="w-3 h-3" />
-                                隐藏
+                                {s.hide}
                               </>
                             ) : (
                               <>
                                 <Eye className="w-3 h-3" />
-                                显示
+                                {s.show}
                               </>
                             )}
                           </Button>
@@ -773,12 +892,12 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                             {localApiKeyCopied ? (
                               <>
                                 <Check className="w-3 h-3" />
-                                已复制
+                                {s.copied}
                               </>
                             ) : (
                               <>
                                 <Copy className="w-3 h-3" />
-                                复制
+                                {s.copy}
                               </>
                             )}
                           </Button>
@@ -787,7 +906,7 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                       <input
                         type={showLocalApiKey ? "text" : "password"}
                         className="w-full border p-2 rounded text-sm bg-secondary disabled:opacity-70"
-                        placeholder="留空则启动服务时自动生成"
+                        placeholder={s.localApiKeyPlaceholder}
                         value={localDaemonApiKey}
                         disabled={isLocalServerRunning}
                         onChange={(event) => {
@@ -799,20 +918,20 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                       />
                       <p className="text-[11px] text-muted-foreground leading-5">
                         {isLocalServerRunning
-                          ? "服务运行中，密钥已锁定；如需修改请先停止服务。"
-                          : "可手动填写固定密钥；留空时会在启动服务后自动生成并保存。"}
+                          ? s.localKeyLockedHint
+                          : s.localKeyManualHint}
                       </p>
                     </div>
 
                     <div className="flex items-start justify-between gap-3 pt-0.5">
                       <div className="space-y-0.5 pr-2">
                         <div className="text-sm font-medium leading-none">
-                          启动后自动进入远程统一链路
+                          {s.autoConnectLabel}
                         </div>
                         <p className="text-xs text-muted-foreground leading-relaxed">
-                          开启后自动连接
+                          {s.autoConnectDescPrefix}
                           <span className="font-mono"> localhost </span>
-                          进入统一链路；关闭则仅启动本机服务，可手动连接远程。
+                          {s.autoConnectDescSuffix}
                         </p>
                       </div>
                       <div className="pt-0.5">
@@ -829,18 +948,23 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                             className={`w-2 h-2 rounded-full ${serverStatus?.running ? "bg-green-500 animate-pulse" : "bg-red-500"}`}
                           />
                           <span className="text-xs font-bold">
-                            {serverStatus?.running ? "运行中" : "已停止"}
+                            {serverStatus?.running ? s.running : s.stopped}
                           </span>
                         </div>
                         <div className="flex items-center gap-2">
                           {serverStatus?.running && (
                             <span className="text-[10px] bg-secondary px-1 rounded border font-mono text-muted-foreground">
-                              监听端口:{serverStatus.port} (PID: {serverStatus.pid})
+                              {s.portInfo
+                                .replace("{port}", String(serverStatus.port))
+                                .replace("{pid}", String(serverStatus.pid))}
                             </span>
                           )}
                           {warmupTime && (
                             <span className="text-[10px] text-green-600">
-                              预热耗时: {(warmupTime / 1000).toFixed(1)}s
+                              {s.warmupTimeLabel.replace(
+                                "{time}",
+                                (warmupTime / 1000).toFixed(1),
+                              )}
                             </span>
                           )}
                         </div>
@@ -849,7 +973,7 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                       {serverStatus?.running && (
                         <div className="rounded border border-border bg-background/70 px-2 py-1 text-[10px] text-muted-foreground space-y-1">
                           <div className="font-mono break-all">
-                            本机 API：{" "}
+                            {s.localApiLabel}{" "}
                             {serverStatus.localEndpoint ||
                               serverStatus.endpoint ||
                               `http://127.0.0.1:${serverStatus.port}`}
@@ -857,7 +981,7 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                           {Array.isArray(serverStatus.lanEndpoints) &&
                             serverStatus.lanEndpoints.length > 0 && (
                               <div className="space-y-0.5">
-                                <div>局域网 API：</div>
+                                <div>{s.lanApiLabel}</div>
                                 {serverStatus.lanEndpoints.map((url: string) => (
                                   <div key={url} className="font-mono break-all">
                                     {url}
@@ -866,10 +990,15 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                               </div>
                             )}
                           <div className="space-y-0.5">
-                            <div>鉴权: {serverStatus.authEnabled ? "已启用" : "未启用"}</div>
+                            <div>
+                              {s.authLabel}{" "}
+                              {serverStatus.authEnabled
+                                ? s.authEnabled
+                                : s.authDisabledLocal}
+                            </div>
                             {serverStatus.authEnabled && (
                               <div>
-                                本地 API 密钥:{" "}
+                                {s.localApiKeyShort}{" "}
                                 <span className="font-mono">
                                   {serverStatus.apiKeyHint || maskApiKey(effectiveLocalApiKey)}
                                 </span>
@@ -890,7 +1019,7 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                               className="flex-1 h-8 text-xs gap-2"
                             >
                               <Sparkles className="w-3 h-3" />
-                              {isWarming ? "预热中..." : "预热模型"}
+                              {isWarming ? s.warming : s.warmup}
                             </Button>
                             <Button
                               size="sm"
@@ -898,7 +1027,7 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                               onClick={handleStopServer}
                               className="flex-1 h-8 text-xs"
                             >
-                              停止服务
+                              {s.stopServer}
                             </Button>
                           </>
                         ) : (
@@ -908,7 +1037,7 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                             disabled={isStartingServer}
                             className="flex-1 h-8 text-xs bg-green-600 hover:bg-green-700 text-white"
                           >
-                            {isStartingServer ? "启动中..." : "启动服务"}
+                            {isStartingServer ? s.starting : s.startServer}
                           </Button>
                         )}
                       </div>
@@ -919,7 +1048,7 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                           onClick={() => void handleOpenLocalLlamaLog()}
                           className="w-full h-8 text-xs"
                         >
-                          查看本地 llama 日志
+                          {s.viewLocalLog}
                         </Button>
                       </div>
                     </div>
@@ -929,19 +1058,19 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
 
               <div className="space-y-3 border-t pt-4">
                 <div>
-                  <span className="text-sm font-semibold">远程 API 服务器</span>
+                  <span className="text-sm font-semibold">{s.remoteTitle}</span>
                   <p className="text-[10px] text-muted-foreground mt-0.5">
-                    连接远程部署的推理服务，或连接你本机常驻服务进入统一远程链路
+                    {s.remoteDesc}
                   </p>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-xs font-medium text-muted-foreground">
-                      API 地址
+                      {s.remoteUrlLabel}
                     </label>
                     <input
                       type="text"
-                      placeholder="示例：http://127.0.0.1:8000"
+                      placeholder={s.remoteUrlPlaceholder}
                       className="w-full border p-2 rounded text-sm bg-secondary disabled:opacity-80 disabled:bg-muted/50 disabled:text-muted-foreground disabled:cursor-not-allowed"
                       value={serverUrl}
                       disabled={isRemoteConnected}
@@ -956,7 +1085,7 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                   <div className="space-y-1">
                     <div className="flex items-center justify-between gap-2">
                       <label className="text-xs font-medium text-muted-foreground">
-                        API 密钥（可选）
+                        {s.remoteKeyLabel}
                       </label>
                       <div className="flex items-center gap-1">
                         <Button
@@ -969,12 +1098,12 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                           {showRemoteApiKey ? (
                             <>
                               <EyeOff className="w-3 h-3" />
-                              隐藏
+                              {s.hide}
                             </>
                           ) : (
                             <>
                               <Eye className="w-3 h-3" />
-                              显示
+                              {s.show}
                             </>
                           )}
                         </Button>
@@ -989,12 +1118,12 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                           {remoteApiKeyCopied ? (
                             <>
                               <Check className="w-3 h-3" />
-                              已复制
+                              {s.copied}
                             </>
                           ) : (
                             <>
                               <Copy className="w-3 h-3" />
-                              复制
+                              {s.copy}
                             </>
                           )}
                         </Button>
@@ -1016,13 +1145,13 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                   </div>
                 </div>
                 <div className="text-[11px] text-muted-foreground">
-                  格式：`http(s)://主机:端口`。SSH 隧道请填写 `http://127.0.0.1:本地端口`。
+                  {s.remoteFormatHint}
                 </div>
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-[11px] text-muted-foreground leading-relaxed">
                     {isRemoteConnected
-                      ? "当前已启用远程模式：所有交互将直接发送到服务器并同步镜像到本地。"
-                      : "填写 API 地址与密钥后，可手动连接并启用远程模式。"}
+                      ? s.remoteModeEnabledDesc
+                      : s.remoteModeDisabledDesc}
                   </div>
                   <Button
                     variant="outline"
@@ -1032,10 +1161,10 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                     onClick={() => void handleToggleRemote()}
                   >
                     {isTestingRemote
-                      ? "测试中..."
+                      ? s.testing
                       : isRemoteConnected
-                        ? "断开远程"
-                        : "连接并启用远程"}
+                        ? s.disconnectRemote
+                        : s.connectRemote}
                   </Button>
                 </div>
 
@@ -1046,7 +1175,7 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                       className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold hover:bg-secondary/50 transition-colors"
                       onClick={() => setRemotePanelExpanded((value) => !value)}
                     >
-                      <span>远程运行详情（连接/模型/网络）</span>
+                      <span>{s.remoteDetailTitle}</span>
                       {remotePanelExpanded ? (
                         <ChevronUp className="w-3.5 h-3.5" />
                       ) : (
@@ -1056,111 +1185,149 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                     {remotePanelExpanded && (
                       <div className="px-3 pb-3 space-y-2 text-[11px]">
                         <p className="text-[10px] text-muted-foreground leading-relaxed">
-                          查看当前远程连接状态、桥接链路、模型加载与网络状态概览
+                          {s.remoteDetailDesc}
                         </p>
                         <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">连接状态</span>
+                          <span className="text-muted-foreground">
+                            {s.remoteStatusLabel}
+                          </span>
                           <span className="font-mono justify-self-end text-right">
                             {remoteRuntimeLoading
-                              ? "刷新中..."
+                              ? s.refreshing
                               : runtime?.connected
-                                ? "已连接"
-                                : "未连接"}
+                                ? s.connected
+                                : s.disconnected}
                           </span>
                         </div>
                         <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">连接来源</span>
+                          <span className="text-muted-foreground">
+                            {s.remoteSourceLabel}
+                          </span>
                           <span className="font-mono justify-self-end text-right">
                             {runtime?.session?.source === "local-daemon"
-                              ? "本机常驻服务"
-                              : "手动远程"}
+                              ? s.remoteSourceLocal
+                              : s.remoteSourceManual}
                           </span>
                         </div>
                         <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">桥接链路</span>
+                          <span className="text-muted-foreground">
+                            {s.remoteBridgeLabel}
+                          </span>
                           <span className="font-mono justify-self-end text-right break-all">
                             {runtime?.session?.source === "local-daemon"
-                              ? "localhost /api/v1 统一链路"
-                              : "远程服务器直连"}
+                              ? s.remoteBridgeLocal
+                              : s.remoteBridgeRemote}
                           </span>
                         </div>
                         <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">通讯模式</span>
+                          <span className="text-muted-foreground">
+                            {s.remoteCommLabel}
+                          </span>
                           <span className="font-mono justify-self-end text-right">
-                            {network.wsConnected ? "WebSocket 实时" : "HTTP 轮询"}
+                            {network.wsConnected
+                              ? s.remoteCommWs
+                              : s.remoteCommHttp}
                           </span>
                         </div>
                         <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">重试 / 错误</span>
+                          <span className="text-muted-foreground">
+                            {s.remoteRetryErrorLabel}
+                          </span>
                           <span className="font-mono justify-self-end text-right">
                             {network.retryCount} / {network.errorCount}
                           </span>
                         </div>
                         <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">文件域</span>
+                          <span className="text-muted-foreground">
+                            {s.remoteFileScopeLabel}
+                          </span>
                           <span className="font-mono justify-self-end text-right">
                             {runtime?.fileScope === "shared-local"
-                              ? "本地共享文件系统"
-                              : "远程隔离文件系统"}
+                              ? s.remoteFileScopeLocal
+                              : s.remoteFileScopeRemote}
                           </span>
                         </div>
                         <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">输出策略</span>
+                          <span className="text-muted-foreground">
+                            {s.remoteOutputLabel}
+                          </span>
                           <span className="font-mono justify-self-end text-right">
-                            {runtime?.outputPolicy === "same-dir" ? "原目录保存" : "远程分域目录"}
+                            {runtime?.outputPolicy === "same-dir"
+                              ? s.remoteOutputSame
+                              : s.remoteOutputRemote}
                           </span>
                         </div>
                         <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">执行模式</span>
+                          <span className="text-muted-foreground">
+                            {s.remoteExecutionLabel}
+                          </span>
                           <span className="font-mono justify-self-end text-right">
-                            {runtime?.executionMode || diagnostics?.executionMode || "未知"}
+                            {runtime?.executionMode ||
+                              diagnostics?.executionMode ||
+                              s.unknown}
                           </span>
                         </div>
                         <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">活跃任务</span>
+                          <span className="text-muted-foreground">
+                            {s.remoteActiveTasksLabel}
+                          </span>
                           <span className="font-mono justify-self-end text-right">
                             {runtime?.activeTasks ?? diagnostics?.activeTaskId ?? 0}
                           </span>
                         </div>
                         <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">模型加载</span>
+                          <span className="text-muted-foreground">
+                            {s.remoteModelLoadedLabel}
+                          </span>
                           <span className="font-mono justify-self-end text-right">
-                            {runtime?.modelLoaded ? "已加载" : "未加载"}
+                            {runtime?.modelLoaded
+                              ? s.remoteModelLoaded
+                              : s.remoteModelNotLoaded}
                           </span>
                         </div>
                         <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">当前模型</span>
+                          <span className="text-muted-foreground">
+                            {s.remoteCurrentModelLabel}
+                          </span>
                           <span className="font-mono justify-self-end text-right break-all">
-                            {runtime?.currentModel || "无"}
+                            {runtime?.currentModel || s.none}
                           </span>
                         </div>
                         <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">鉴权要求</span>
+                          <span className="text-muted-foreground">
+                            {s.remoteAuthLabel}
+                          </span>
                           <span className="font-mono justify-self-end text-right">
                             {runtime?.authRequired === true
-                              ? "必需"
+                              ? s.authRequired
                               : runtime?.authRequired === false
-                                ? "已关闭"
-                                : "未知"}
+                                ? s.authDisabled
+                                : s.unknown}
                           </span>
                         </div>
                         <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">服务能力</span>
+                          <span className="text-muted-foreground">
+                            {s.remoteCapabilitiesLabel}
+                          </span>
                           <span className="font-mono justify-self-end text-right break-all">
                             {Array.isArray(runtime?.capabilities) &&
                               runtime.capabilities.length > 0
                               ? runtime.capabilities.join(", ")
-                              : "无"}
+                              : s.none}
                           </span>
                         </div>
                         <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">最近健康失败</span>
+                          <span className="text-muted-foreground">
+                            {s.remoteHealthFailuresLabel}
+                          </span>
                           <span className="font-mono justify-self-end text-right">
                             {diagnostics?.healthFailures ?? 0}
                           </span>
                         </div>
                         <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">最近同步</span>
+                          <span className="text-muted-foreground">
+                            {s.remoteLastSyncLabel}
+                          </span>
                           <span className="font-mono justify-self-end text-right">
                             {network.lastSyncAt
                               ? new Date(network.lastSyncAt).toLocaleTimeString()
@@ -1168,13 +1335,17 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                           </span>
                         </div>
                         <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">延迟(当前/平均)</span>
+                          <span className="text-muted-foreground">
+                            {s.remoteLatencyLabel}
+                          </span>
                           <span className="font-mono justify-self-end text-right">
                             {network.lastLatencyMs ?? "--"} ms / {network.avgLatencyMs ?? "--"} ms
                           </span>
                         </div>
                         <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">状态码 / 在途</span>
+                          <span className="text-muted-foreground">
+                            {s.remoteStatusInFlightLabel}
+                          </span>
                           <span className="font-mono justify-self-end text-right">
                             {network.lastStatusCode ?? "--"} / {network.inFlightRequests ?? 0}
                           </span>
@@ -1183,29 +1354,31 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                           <div className="flex items-center justify-between gap-3">
                             <span>
                               {runtime?.session?.source === "local-daemon"
-                                ? "当前链路：本机常驻桥接（localhost /api/v1）"
-                                : "当前链路：外部远程会话（结果回传并镜像到本地）"}
+                                ? s.remoteLinkLocal
+                                : s.remoteLinkRemote}
                             </span>
                             <button
                               type="button"
                               className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] hover:bg-secondary"
                               onClick={() => setRemoteNoticeExpanded((value) => !value)}
                             >
-                              {remoteNoticeExpanded ? "收起说明" : "展开说明"}
+                              {remoteNoticeExpanded
+                                ? s.noticeCollapse
+                                : s.noticeExpand}
                             </button>
                           </div>
                           {remoteNoticeExpanded && (
                             <p className="mt-1.5">
                               {remoteNotice}
                               {runtime?.session?.source === "local-daemon"
-                                ? " 当前为本机常驻桥接链路，文件域与输出策略沿用本地语义；网络状态、重试与事件会持续更新并写入本地镜像日志。"
-                                : " 当前为外部远程会话，`resume` 与 `cacheDir` 不会下发到服务器；任务结果会回传并镜像保存到本地，避免跨机器路径语义混淆。"}
+                                ? s.noticeLocalDesc
+                                : s.noticeRemoteDesc}
                             </p>
                           )}
                         </div>
                         {remoteLastError && (
                           <div className="text-[10px] text-destructive">
-                            最近错误: {remoteLastError}
+                            {s.remoteLastErrorLabel}: {remoteLastError}
                           </div>
                         )}
                         <div className="pt-2 flex flex-wrap items-center gap-2">
@@ -1216,7 +1389,7 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                             disabled={!remoteNetworkLogPath}
                             onClick={() => handleOpenRemoteNetworkLog()}
                           >
-                            远程网络日志
+                            {s.remoteNetworkLog}
                           </Button>
                           <Button
                             size="sm"
@@ -1225,7 +1398,7 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                             disabled={!remoteMirrorLogPath}
                             onClick={() => handleOpenRemoteMirrorLog()}
                           >
-                            远程任务镜像日志
+                            {s.remoteMirrorLog}
                           </Button>
                         </div>
                         <div className="pt-1 flex items-center justify-end gap-2">
@@ -1239,7 +1412,7 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
                             <RefreshCw
                               className={`w-3 h-3 mr-1 ${remoteRuntimeLoading ? "animate-spin" : ""}`}
                             />
-                            刷新状态
+                            {s.refreshStatus}
                           </Button>
                         </div>
                       </div>
@@ -1253,6 +1426,7 @@ export function ServiceView({ lang, remoteRuntime: remoteState }: ServiceViewPro
       </div>
       {logViewer && (
         <LogViewerModal
+          lang={lang}
           mode={logViewer.mode}
           filePath={logViewer.filePath}
           title={logViewer.title}

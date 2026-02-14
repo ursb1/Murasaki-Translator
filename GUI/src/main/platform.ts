@@ -1,16 +1,12 @@
 import { platform, arch } from "os";
 import { join } from "path";
 import { existsSync, chmodSync } from "fs";
-import { exec } from "child_process";
-import { promisify } from "util";
 import { is } from "@electron-toolkit/utils";
 
-const execAsync = promisify(exec);
+type PlatformOS = "win32" | "darwin" | "linux";
+type Backend = "cuda" | "vulkan" | "metal" | "cpu";
 
-export type PlatformOS = "win32" | "darwin" | "linux";
-export type Backend = "cuda" | "vulkan" | "metal" | "cpu";
-
-export interface PlatformInfo {
+interface PlatformInfo {
   os: PlatformOS;
   arch: "x64" | "arm64";
   backend: Backend;
@@ -21,57 +17,6 @@ export interface PlatformInfo {
 
 // 缓存 GPU 检测结果，避免重复执行
 let cachedHasNvidiaGpu: boolean | null = null;
-
-/**
- * 清除 GPU 检测缓存，允许重新检测
- * 用于热插拔 eGPU 或驱动更新后重新检测
- */
-export function clearGpuCache(): void {
-  cachedHasNvidiaGpu = null;
-  console.log("[Platform] GPU cache cleared, will re-detect on next request");
-}
-
-/**
- * 异步检测 NVIDIA GPU (通过执行 nvidia-smi 命令)
- * 使用异步执行避免阻塞 Electron 主线程
- */
-export async function hasNvidiaGpuAsync(): Promise<boolean> {
-  if (cachedHasNvidiaGpu !== null) {
-    return cachedHasNvidiaGpu;
-  }
-
-  // Windows 上 nvidia-smi 可能不在 PATH 中，尝试多个路径
-  const commands =
-    process.platform === "win32"
-      ? [
-          "nvidia-smi --query-gpu=name --format=csv,noheader",
-          '"C:\\Windows\\System32\\nvidia-smi.exe" --query-gpu=name --format=csv,noheader',
-          '"C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvidia-smi.exe" --query-gpu=name --format=csv,noheader',
-        ]
-      : ["nvidia-smi --query-gpu=name --format=csv,noheader"];
-
-  for (const cmd of commands) {
-    try {
-      const { stdout } = await execAsync(cmd, {
-        timeout: 5000,
-        windowsHide: true,
-      });
-      if (stdout.trim().length > 0) {
-        cachedHasNvidiaGpu = true;
-        console.log(`[Platform] NVIDIA GPU detected (async): ${stdout.trim()}`);
-        return true;
-      }
-    } catch {
-      // 尝试下一个路径
-    }
-  }
-
-  cachedHasNvidiaGpu = false;
-  console.log(
-    "[Platform] No NVIDIA GPU detected (async), using Vulkan/Metal fallback",
-  );
-  return false;
-}
 
 /**
  * 同步检测 NVIDIA GPU - 仅用于必须同步的场景

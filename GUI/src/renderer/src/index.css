@@ -180,6 +180,16 @@ select option:checked {
   border-radius: 4px;
 }
 
+/* Hide scrollbars for compact horizontal lists */
+.scroller-hide {
+  scrollbar-width: none;
+}
+
+.scroller-hide::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
 /* Input range slider styling for dark mode */
 .dark input[type="range"] {
   background: transparent !important;

@@ -22,6 +22,8 @@ import {
   Trash2,
   ArrowRight,
   AlertTriangle,
+  CheckCircle2,
+  Info,
   GripVertical,
   RefreshCw,
   AlignLeft,
@@ -69,6 +71,7 @@ interface DashboardProps {
   active?: boolean;
   onRunningChange?: (isRunning: boolean) => void;
   remoteRuntime?: UseRemoteRuntimeResult;
+  onNavigate?: (view: string) => void;
 }
 
 interface RemoteModelInfo {
@@ -83,8 +86,12 @@ interface GlossaryOption {
   matchKey: string;
 }
 
+const QUICKSTART_STATE_KEY = "murasaki_quickstart_state";
+const QUICKSTART_SEEN_KEY = "murasaki_quickstart_seen";
+const LEGACY_GUIDE_KEY = "murasaki_guide_dismissed";
+
 export const Dashboard = forwardRef<any, DashboardProps>(
-  ({ lang, active, onRunningChange, remoteRuntime }, ref) => {
+  ({ lang, active, onRunningChange, remoteRuntime, onNavigate }, ref) => {
     const t = translations[lang];
 
     // Queue System (Synced with LibraryView)
@@ -148,6 +155,71 @@ export const Dashboard = forwardRef<any, DashboardProps>(
     const [completedFiles, setCompletedFiles] = useState<Set<string>>(
       new Set(),
     );
+    const [queueNotice, setQueueNotice] = useState<{
+      type: "info" | "warning" | "success";
+      message: string;
+    } | null>(null);
+    const [quickStartState, setQuickStartState] = useState<
+      "new" | "dismissed" | "completed"
+    >(() => {
+      const stored = localStorage.getItem(QUICKSTART_STATE_KEY);
+      if (stored === "dismissed" || stored === "completed") return stored;
+      if (localStorage.getItem(QUICKSTART_SEEN_KEY) === "true") {
+        localStorage.setItem(QUICKSTART_STATE_KEY, "dismissed");
+        return "dismissed";
+      }
+      if (localStorage.getItem(LEGACY_GUIDE_KEY) === "true") {
+        localStorage.setItem(QUICKSTART_STATE_KEY, "dismissed");
+        localStorage.setItem(QUICKSTART_SEEN_KEY, "true");
+        return "dismissed";
+      }
+      return "new";
+    });
+    const [errorDigest, setErrorDigest] = useState<{
+      title: string;
+      message: string;
+    } | null>(null);
+    const queueNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+      null,
+    );
+
+    const pushQueueNotice = useCallback(
+      (next: { type: "info" | "warning" | "success"; message: string }) => {
+        setQueueNotice(next);
+        if (queueNoticeTimerRef.current) {
+          clearTimeout(queueNoticeTimerRef.current);
+        }
+        queueNoticeTimerRef.current = setTimeout(
+          () => setQueueNotice(null),
+          4200,
+        );
+      },
+      [],
+    );
+
+    useEffect(() => {
+      return () => {
+        if (queueNoticeTimerRef.current) {
+          clearTimeout(queueNoticeTimerRef.current);
+        }
+      };
+    }, []);
+
+    const setQuickStartStatus = useCallback(
+      (next: "dismissed" | "completed") => {
+        setQuickStartState(next);
+        localStorage.setItem(QUICKSTART_STATE_KEY, next);
+        localStorage.setItem(QUICKSTART_SEEN_KEY, "true");
+        if (next === "dismissed") {
+          localStorage.setItem(LEGACY_GUIDE_KEY, "true");
+        }
+      },
+      [],
+    );
+
+    const dismissGuide = useCallback(() => {
+      setQuickStartStatus("dismissed");
+    }, [setQuickStartStatus]);
 
     // Monitors
     const [monitorData, setMonitorData] = useState<MonitorData | null>(null);
@@ -338,19 +410,10 @@ export const Dashboard = forwardRef<any, DashboardProps>(
     const MAX_HISTORY_LLAMA_LOG_LINES = 300;
 
     const presetOptionLabel = (value: "novel" | "script" | "short") => {
-      if (lang === "zh") {
-        if (value === "novel") return "轻小说模式(默认)";
-        if (value === "script") return "剧本模式";
-        return "短句模式";
-      }
-      if (lang === "jp") {
-        if (value === "novel") return "小説モード";
-        if (value === "script") return "スクリプトモード";
-        return "短文モード";
-      }
-      if (value === "novel") return "Novel";
-      if (value === "script") return "Script";
-      return "Short";
+      const labels = t.dashboard.promptPresetLabels;
+      if (value === "novel") return labels.novel;
+      if (value === "script") return labels.script;
+      return labels.short;
     };
 
     // Collapsible Panels
@@ -427,6 +490,12 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       speedGen: 0,
       retries: 0,
     });
+    const [lastOutputPath, setLastOutputPath] = useState<string>("");
+    const [runNotice, setRunNotice] = useState<{
+      type: "success" | "warning" | "error";
+      message: string;
+    } | null>(null);
+    const runNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [displayElapsed, setDisplayElapsed] = useState(0); // 本地平滑计时(基于后端数据)
     const [displayRemaining, setDisplayRemaining] = useState(0); // 本地平滑倒计时
     const [chartData, setChartData] = useState<any[]>([]);
@@ -545,6 +614,14 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       queueRef.current = queue;
     }, [queue]);
 
+    useEffect(() => {
+      return () => {
+        if (runNoticeTimerRef.current) {
+          clearTimeout(runNoticeTimerRef.current);
+        }
+      };
+    }, []);
+
     // Sync queue index ref
     useEffect(() => {
       currentQueueIndexRef.current = currentQueueIndex;
@@ -584,6 +661,21 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         : stopRequested
           ? "interrupted"
           : "failed";
+      const runNoticeMessage = success
+        ? t.dashboard.runCompleted
+        : stopRequested
+          ? t.dashboard.runStopped
+          : t.dashboard.runFailed;
+      setRunNotice({
+        type: success ? "success" : stopRequested ? "warning" : "error",
+        message: runNoticeMessage,
+      });
+      if (runNoticeTimerRef.current) {
+        clearTimeout(runNoticeTimerRef.current);
+      }
+      runNoticeTimerRef.current = setTimeout(() => {
+        setRunNotice(null);
+      }, 6000);
       const message = success
         ? "✅ Translation completed successfully!"
         : stopRequested
@@ -631,6 +723,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           llamaLogs: llamaLogsBufferRef.current.slice(-MAX_HISTORY_LLAMA_LOG_LINES),
           triggers: triggersBufferRef.current,
         });
+        if (progressDataRef.current.outputPath) {
+          setLastOutputPath(progressDataRef.current.outputPath);
+        }
         currentRecordIdRef.current = null;
         progressDataRef.current = {
           total: 0,
@@ -649,10 +744,12 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       // Don't clear preview - keep showing last translation result
       // setPreview(null) - REMOVED to preserve last result
 
-      window.api?.showNotification(
-        "Murasaki Translator",
-        success ? "翻译完成！" : stopRequested ? "翻译已停止" : "翻译失败",
-      );
+      const notifyMessage = success
+        ? t.dashboard.notifyCompleted
+        : stopRequested
+          ? t.dashboard.notifyStopped
+          : t.dashboard.notifyFailed;
+      window.api?.showNotification("Murasaki Translator", notifyMessage);
 
       const queueIndex = currentQueueIndexRef.current;
       const queue = queueRef.current;
@@ -699,7 +796,10 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           if (queue.length > 1) {
             window.api?.showNotification(
               "Murasaki Translator",
-              `全部 ${queue.length} 个文件翻译完成！`,
+              t.dashboard.notifyAllCompleted.replace(
+                "{count}",
+                String(queue.length),
+              ),
             );
           }
           setProgress((prev) => ({ ...prev, percent: 100 }));
@@ -869,18 +969,33 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                     : data.type === "empty"
                       ? "empty_retry"
                       : "line_mismatch";
+              const retryMessages = t.dashboard.retryMessages;
+              const coverageText =
+                typeof data.coverage === "number"
+                  ? data.coverage.toFixed(1)
+                  : "--";
               triggersBufferRef.current.push({
                 time: new Date().toISOString(),
                 type: retryType,
                 block: data.block || 0,
                 message:
                   data.type === "repetition"
-                    ? `重复惩罚提升至 ${data.penalty}`
+                    ? retryMessages.repPenalty.replace(
+                      "{value}",
+                      String(data.penalty),
+                    )
                     : data.type === "glossary"
-                      ? `术语覆盖率 ${data.coverage?.toFixed(1)}% 不足，重试中`
+                      ? retryMessages.glossaryCoverage
+                        .replace("{coverage}", coverageText)
                       : data.type === "empty"
-                        ? `区块 ${data.block} 输出为空，跳过/重试`
-                        : `区块 ${data.block} 行数差异 ${data.src_lines - data.dst_lines}，重试中`,
+                        ? retryMessages.emptyBlock
+                          .replace("{block}", String(data.block))
+                        : retryMessages.lineMismatch
+                          .replace("{block}", String(data.block))
+                          .replace(
+                            "{diff}",
+                            String(data.src_lines - data.dst_lines),
+                          ),
               });
             } catch (e) {
               console.error("JSON_RETRY Parse Error:", e, log);
@@ -919,6 +1034,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                 log.substring("JSON_OUTPUT_PATH:".length),
               );
               progressDataRef.current.outputPath = data.path || "";
+              if (data.path) setLastOutputPath(data.path);
             } catch (e) {
               console.error("Output Path Parse Error:", e);
             }
@@ -943,9 +1059,13 @@ export const Dashboard = forwardRef<any, DashboardProps>(
             // Critical error from backend - show internal alert
             try {
               const data = JSON.parse(log.substring("JSON_ERROR:".length));
+              setErrorDigest({
+                title: data.title || t.dashboard.errorTitle,
+                message: data.message || t.dashboard.errorUnknown,
+              });
               showAlert({
-                title: data.title || "错误",
-                description: data.message || "发生未知错误",
+                title: data.title || t.dashboard.errorTitle,
+                description: data.message || t.dashboard.errorUnknown,
                 variant: "destructive",
               });
             } catch (e) {
@@ -1033,7 +1153,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         if (!isRunning && queue.length > 0) handleStartQueue();
       },
       stopTranslation: () => {
-        if (isRunning) handleStop();
+        if (isRunning) requestStop();
       },
     }));
 
@@ -1131,13 +1251,32 @@ export const Dashboard = forwardRef<any, DashboardProps>(
 
     // File icon helper (Synced with LibraryView)
 
-    const handleAddFiles = async () => {
-      const files = await window.api?.selectFiles();
-      if (files?.length) {
+    const addQueueItems = useCallback(
+      (paths: string[], scanFailures: number = 0) => {
         const existing = new Set(queue.map((q) => q.path));
-        const newItems = files
-          .filter((f: string) => !existing.has(f))
-          .map((path: string) => ({
+        const newItems: QueueItem[] = [];
+        let skippedUnsupported = 0;
+        let skippedDuplicate = 0;
+        const supportedExtensions = new Set([
+          ".txt",
+          ".epub",
+          ".srt",
+          ".ass",
+          ".ssa",
+        ]);
+
+        for (const path of paths) {
+          const ext = "." + path.split(".").pop()?.toLowerCase();
+          if (!supportedExtensions.has(ext)) {
+            skippedUnsupported += 1;
+            continue;
+          }
+          if (existing.has(path)) {
+            skippedDuplicate += 1;
+            continue;
+          }
+          existing.add(path);
+          newItems.push({
             id: generateId(),
             path,
             fileName: path.split(/[/\\]/).pop() || path,
@@ -1145,27 +1284,66 @@ export const Dashboard = forwardRef<any, DashboardProps>(
             addedAt: new Date().toISOString(),
             config: { useGlobalDefaults: true },
             status: "pending" as const,
-          }));
+          });
+        }
+
         if (newItems.length) setQueue((prev) => [...prev, ...newItems]);
+
+        const messages: string[] = [];
+        if (newItems.length) {
+          messages.push(
+            t.dashboard.queueAdded.replace("{count}", String(newItems.length)),
+          );
+        }
+        if (skippedUnsupported > 0) {
+          messages.push(
+            t.dashboard.queueIgnoredUnsupported.replace(
+              "{count}",
+              String(skippedUnsupported),
+            ),
+          );
+        }
+        if (skippedDuplicate > 0) {
+          messages.push(
+            t.dashboard.queueIgnoredDuplicate.replace(
+              "{count}",
+              String(skippedDuplicate),
+            ),
+          );
+        }
+        if (scanFailures > 0) {
+          messages.push(
+            t.dashboard.queueScanFailed.replace(
+              "{count}",
+              String(scanFailures),
+            ),
+          );
+        }
+
+        if (messages.length) {
+          const type =
+            skippedUnsupported > 0 || scanFailures > 0
+              ? "warning"
+              : newItems.length > 0
+                ? "success"
+                : "info";
+          pushQueueNotice({ type, message: messages.join(" · ") });
+        }
+      },
+      [queue, t, pushQueueNotice],
+    );
+
+    const handleAddFiles = async () => {
+      const files = await window.api?.selectFiles();
+      if (files?.length) {
+        addQueueItems(files);
       }
     };
 
     const handleAddFolder = async () => {
       const files = await window.api?.selectFolderFiles();
       if (files?.length) {
-        const existing = new Set(queue.map((q) => q.path));
-        const newItems = files
-          .filter((f: string) => !existing.has(f))
-          .map((path: string) => ({
-            id: generateId(),
-            path,
-            fileName: path.split(/[/\\]/).pop() || path,
-            fileType: getFileType(path),
-            addedAt: new Date().toISOString(),
-            config: { useGlobalDefaults: true },
-            status: "pending" as const,
-          }));
-        if (newItems.length) setQueue((prev) => [...prev, ...newItems]);
+        addQueueItems(files);
       }
     };
 
@@ -1187,11 +1365,11 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       }
 
       showConfirm({
-        title: lang === "zh" ? "确认移除" : "Confirm Remove",
-        description:
-          lang === "zh"
-            ? `确定要移除 "${item.fileName}" 吗？`
-            : `Are you sure you want to remove "${item.fileName}"?`,
+        title: t.dashboard.confirmRemoveTitle,
+        description: t.dashboard.confirmRemoveDesc.replace(
+          "{name}",
+          item.fileName,
+        ),
         variant: "destructive",
         onConfirm: () => {
           const newQueue = [...queue];
@@ -1221,7 +1399,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
     const handleClearQueue = useCallback(() => {
       showConfirm({
         title: t.dashboard.clear,
-        description: (t as any).confirmClear || "确定要清空全部翻译队列吗？",
+        description: t.dashboard.confirmClear,
         variant: "destructive",
         onConfirm: () => {
           setQueue([]);
@@ -1260,6 +1438,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
 
         if (paths.length > 0) {
           const finalPaths: string[] = [];
+          let scanFailures = 0;
 
           // Scan for folders
           for (const p of paths) {
@@ -1270,27 +1449,18 @@ export const Dashboard = forwardRef<any, DashboardProps>(
               }
             } catch (e) {
               console.error("Scan failed for", p, e);
+              scanFailures += 1;
             }
           }
 
           if (finalPaths.length > 0) {
-            const existing = new Set(queue.map((q) => q.path));
-            const newItems = finalPaths
-              .filter((f: string) => !existing.has(f))
-              .map((path: string) => ({
-                id: generateId(),
-                path,
-                fileName: path.split(/[/\\]/).pop() || path,
-                fileType: getFileType(path),
-                addedAt: new Date().toISOString(),
-                config: { useGlobalDefaults: true },
-                status: "pending" as const,
-              }));
-            if (newItems.length) setQueue((prev) => [...prev, ...newItems]);
+            addQueueItems(finalPaths, scanFailures);
+          } else if (scanFailures > 0) {
+            addQueueItems([], scanFailures);
           }
         }
       },
-      [queue],
+      [addQueueItems],
     );
 
     const handleDragOver = useCallback(
@@ -1351,6 +1521,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         retries: 0,
       });
       setPreviewBlocks({});
+      setLastOutputPath("");
       localStorage.removeItem("last_preview_blocks"); // Clear persisted preview
 
       // Prefer in-memory queue config so modal edits apply immediately
@@ -1361,6 +1532,35 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       }
       const pickCustom = <T,>(customValue: T | undefined, globalValue: T): T =>
         customValue !== undefined ? customValue : globalValue;
+
+      const resolveRulesFromProfile = (
+        mode: "pre" | "post",
+        profileId?: string,
+      ) => {
+        if (!profileId) return undefined;
+        try {
+          const raw = localStorage.getItem(`config_rules_${mode}_profiles`);
+          if (!raw) return undefined;
+          const parsed = JSON.parse(raw);
+          if (!Array.isArray(parsed)) return undefined;
+          const match = parsed.find((profile: any) => profile?.id === profileId);
+          if (match && Array.isArray(match.rules)) {
+            return match.rules;
+          }
+        } catch (e) {
+          console.error("Failed to resolve rule profile:", e);
+        }
+        return undefined;
+      };
+
+      const resolvedPreRules = resolveRulesFromProfile(
+        "pre",
+        customConfig.rulesPreProfileId,
+      );
+      const resolvedPostRules = resolveRulesFromProfile(
+        "post",
+        customConfig.rulesPostProfileId,
+      );
 
       // 根据 ctx 自动计算 chunk-size
       const ctxValue =
@@ -1389,14 +1589,13 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       if (!effectiveModelPath) {
         // Use custom AlertModal
         showAlert({
-          title: "Error",
-          description:
-            "Please select a model in the Model Management page first.",
-          variant: "destructive",
+          title: t.dashboard.selectModelTitle,
+          description: t.dashboard.selectModelDesc,
+          variant: "warning",
         });
         window.api?.showNotification(
-          "Error",
-          "Please select a model in the Model Management page first.",
+          t.dashboard.selectModelTitle,
+          t.dashboard.selectModelDesc,
         );
         setIsRunning(false);
         activeRunIdRef.current = null;
@@ -1421,10 +1620,12 @@ export const Dashboard = forwardRef<any, DashboardProps>(
               ? glossaryOverride
               : glossaryPath,
         preset: pickCustom(customConfig.preset, promptPreset || "novel"),
-        rulesPre: JSON.parse(localStorage.getItem("config_rules_pre") || "[]"),
-        rulesPost: JSON.parse(
-          localStorage.getItem("config_rules_post") || "[]",
-        ),
+        rulesPre: Array.isArray(resolvedPreRules)
+          ? resolvedPreRules
+          : JSON.parse(localStorage.getItem("config_rules_pre") || "[]"),
+        rulesPost: Array.isArray(resolvedPostRules)
+          ? resolvedPostRules
+          : JSON.parse(localStorage.getItem("config_rules_post") || "[]"),
 
         // Device Mode
         deviceMode: pickCustom(
@@ -1781,6 +1982,60 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       setCurrentQueueIndex(-1);
     };
 
+    const requestStop = () => {
+      if (!isRunning) return;
+      showConfirm({
+        title: t.dashboard.stopTitle,
+        description: t.dashboard.stopDesc,
+        variant: "warning",
+        confirmText: t.dashboard.stopConfirm,
+        cancelText: t.dashboard.stopCancel,
+        onConfirm: () => handleStop(),
+      });
+    };
+
+    const getOutputFileName = (path: string) => {
+      const lastSep = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+      return lastSep >= 0 ? path.slice(lastSep + 1) : path;
+    };
+
+    const getOutputDir = (path: string) => {
+      const lastSep = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+      return lastSep >= 0 ? path.slice(0, lastSep) : "";
+    };
+
+    const handleOpenOutput = async (mode: "file" | "folder") => {
+      if (!lastOutputPath) return;
+      try {
+        if (mode === "file") {
+          const result = await window.api?.openPath?.(lastOutputPath);
+          if (result) {
+            showAlert({
+              title: t.dashboard.outputOpenFailTitle,
+              description: t.dashboard.outputOpenFailDesc,
+              variant: "warning",
+            });
+          }
+        } else {
+          const folder = getOutputDir(lastOutputPath) || lastOutputPath;
+          const ok = await window.api?.openFolder?.(folder);
+          if (!ok) {
+            showAlert({
+              title: t.dashboard.outputOpenFailTitle,
+              description: t.dashboard.outputOpenFailDesc,
+              variant: "warning",
+            });
+          }
+        }
+      } catch (e) {
+        showAlert({
+          title: t.dashboard.outputOpenFailTitle,
+          description: `${t.dashboard.outputOpenFailDesc} ${String(e)}`,
+          variant: "warning",
+        });
+      }
+    };
+
     const formatTime = (sec: number) => {
       if (sec < 60) return `${Math.round(sec)}s`;
       const m = Math.floor(sec / 60);
@@ -1938,7 +2193,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
               </span>
               {lineCountMismatch && (
                 <span className="text-[8px] text-blue-500 bg-blue-500/10 px-1.5 py-0.5 rounded">
-                  行数不匹配
+                  {t.dashboard.lineMismatch}
                 </span>
               )}
             </div>
@@ -2037,6 +2292,93 @@ export const Dashboard = forwardRef<any, DashboardProps>(
 
     const needsModel = activeModelsCount === 0;
     const canStart = queue.length > 0 && !isRunning;
+    const statusText = isRunning
+      ? `${t.dashboard.processing} ${currentQueueIndex + 1}/${queue.length}`
+      : needsModel
+        ? t.dashboard.selectModelWarn
+        : queue.length === 0
+          ? t.dashboard.emptyQueueHint
+          : t.dashboard.startHint;
+    const outputFileName = lastOutputPath
+      ? getOutputFileName(lastOutputPath)
+      : "";
+    const displayedLogs = logs.filter(
+      (log) =>
+        !log.includes("STDERR") &&
+        !log.includes("ggml") &&
+        !log.includes("llama_"),
+    );
+    const remoteErrorMessage = isRemoteMode
+      ? remoteRuntime?.lastError ||
+        remoteRuntime?.network?.lastError?.message ||
+        (remoteRuntime?.network?.errorCount
+          ? t.dashboard.remoteErrorFallback
+          : "")
+      : "";
+    const hasRemoteError = Boolean(remoteErrorMessage);
+    const runNoticeConfig = runNotice
+      ? {
+          success: {
+            className: "bg-emerald-500/10 border-emerald-500/30 text-emerald-600",
+            icon: CheckCircle2,
+          },
+          warning: {
+            className: "bg-amber-500/10 border-amber-500/30 text-amber-600",
+            icon: AlertTriangle,
+          },
+          error: {
+            className: "bg-red-500/10 border-red-500/30 text-red-600",
+            icon: AlertTriangle,
+          },
+        }[runNotice.type]
+      : null;
+    const queueNoticeConfig = queueNotice
+      ? {
+          success: {
+            className: "bg-emerald-500/10 border-emerald-500/30 text-emerald-600",
+            icon: CheckCircle2,
+          },
+          warning: {
+            className: "bg-amber-500/10 border-amber-500/30 text-amber-600",
+            icon: AlertTriangle,
+          },
+          info: {
+            className: "bg-blue-500/10 border-blue-500/30 text-blue-600",
+            icon: Info,
+          },
+        }[queueNotice.type]
+      : null;
+    const hasUsageEvidence = (() => {
+      if (quickStartState !== "new") return false;
+      if (queue.length > 0) return true;
+      if (modelPath) return true;
+      const modelKey = localStorage.getItem("selected_model") || localStorage.getItem("config_model");
+      if (modelKey) return true;
+      try {
+        const historyRaw = localStorage.getItem("translation_history");
+        if (historyRaw) {
+          const parsed = JSON.parse(historyRaw);
+          if (Array.isArray(parsed) && parsed.length > 0) return true;
+        }
+      } catch { }
+      return false;
+    })();
+
+    useEffect(() => {
+      if (quickStartState === "new" && hasUsageEvidence) {
+        setQuickStartStatus("completed");
+      }
+    }, [quickStartState, hasUsageEvidence, setQuickStartStatus]);
+
+    const shouldShowGuide =
+      quickStartState === "new" && !isRunning && !hasUsageEvidence;
+
+    useEffect(() => {
+      if (!shouldShowGuide) return;
+      if (localStorage.getItem(QUICKSTART_SEEN_KEY) !== "true") {
+        localStorage.setItem(QUICKSTART_SEEN_KEY, "true");
+      }
+    }, [shouldShowGuide]);
     const activeConfirmModal = confirmModal;
 
     return (
@@ -2089,6 +2431,28 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                     </Button>
                   </div>
                 </div>
+                {queueNotice && queueNoticeConfig && (() => {
+                  const NoticeIcon = queueNoticeConfig.icon;
+                  return (
+                    <div className="px-3 pb-2">
+                      <div
+                        className={`flex items-start gap-2 rounded-lg border px-2.5 py-2 text-[11px] ${queueNoticeConfig.className}`}
+                      >
+                        <NoticeIcon className="w-3.5 h-3.5 mt-0.5" />
+                        <span className="flex-1 leading-relaxed">
+                          {queueNotice.message}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setQueueNotice(null)}
+                          className="ml-auto text-current/70 hover:text-current"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
                 <div className="flex-1 overflow-y-auto p-2 space-y-1 relative">
                   {queue.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center text-muted-foreground text-sm px-4 text-center">
@@ -2252,6 +2616,17 @@ export const Dashboard = forwardRef<any, DashboardProps>(
             {/* Hardware Monitor */}
             <HardwareMonitorBar data={monitorData} lang={lang} />
 
+            {hasRemoteError && (
+              <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 flex items-start gap-3">
+                <AlertTriangle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                <div className="text-xs text-red-600 leading-relaxed">
+                  <div className="font-semibold">{t.dashboard.remoteErrorTitle}</div>
+                  <div className="mt-1">{remoteErrorMessage}</div>
+                  <div className="mt-1 text-red-500/80">{t.dashboard.remoteErrorHint}</div>
+                </div>
+              </div>
+            )}
+
             {/* Model Warning */}
             {needsModel && (
               <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 flex items-start gap-3">
@@ -2263,9 +2638,158 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                   <p className="text-xs text-amber-400 mt-1">
                     {t.dashboard.modelMissingMsg}
                   </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-3 h-7 text-xs"
+                    onClick={() => window.api?.openFolder?.("middleware/models")}
+                  >
+                    <FolderOpen className="w-3.5 h-3.5 mr-1.5" />
+                    {t.modelView.openFolder}
+                  </Button>
                 </div>
               </div>
             )}
+
+            {shouldShowGuide && (
+              <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+                <div className="absolute inset-0" />
+                <div className="relative w-[min(960px,94vw)] max-h-[85vh] overflow-hidden rounded-2xl border border-border bg-background shadow-2xl">
+                  <div className="flex items-start justify-between gap-4 px-6 py-5 border-b border-border/60 bg-secondary/20">
+                    <div className="flex items-start gap-4">
+                      <div className="w-11 h-11 rounded-2xl bg-primary/10 flex items-center justify-center text-primary shrink-0">
+                        <Info className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <p className="text-base font-semibold">
+                          {t.dashboard.quickStartTitle}
+                        </p>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          {t.dashboard.quickStartDesc}
+                        </p>
+                      </div>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-xs"
+                      onClick={dismissGuide}
+                    >
+                      {t.dashboard.quickStartDismiss}
+                    </Button>
+                  </div>
+                  <div className="p-6">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                      <div className="rounded-xl border border-border/60 bg-card/80 px-4 py-4 shadow-sm">
+                        <div className="text-xs uppercase tracking-widest text-muted-foreground font-semibold">
+                          {t.dashboard.quickStartStep} 1
+                        </div>
+                        <div className="mt-2 text-base font-semibold">
+                          {t.dashboard.quickStartModel}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {t.dashboard.quickStartModelDesc}
+                        </p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="mt-4 h-8 text-xs"
+                          onClick={() => onNavigate?.("model")}
+                        >
+                          {t.dashboard.quickStartGoModel}
+                        </Button>
+                      </div>
+                      <div className="rounded-xl border border-border/60 bg-card/80 px-4 py-4 shadow-sm">
+                        <div className="text-xs uppercase tracking-widest text-muted-foreground font-semibold">
+                          {t.dashboard.quickStartStep} 2
+                        </div>
+                        <div className="mt-2 text-base font-semibold">
+                          {t.dashboard.quickStartQueue}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {t.dashboard.quickStartQueueDesc}
+                        </p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="mt-4 h-8 text-xs"
+                          onClick={() => onNavigate?.("library")}
+                        >
+                          {t.dashboard.quickStartGoQueue}
+                        </Button>
+                      </div>
+                      <div className="rounded-xl border border-border/60 bg-card/80 px-4 py-4 shadow-sm">
+                        <div className="text-xs uppercase tracking-widest text-muted-foreground font-semibold">
+                          {t.dashboard.quickStartStep} 3
+                        </div>
+                        <div className="mt-2 text-base font-semibold">
+                          {t.dashboard.quickStartStart}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {t.dashboard.quickStartStartDesc}
+                        </p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="mt-4 h-8 text-xs"
+                          disabled={!canStart || needsModel}
+                          onClick={handleStartQueue}
+                        >
+                          {t.dashboard.quickStartRun}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {errorDigest && (
+              <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-red-500 mt-0.5" />
+                <div className="flex-1 text-xs">
+                  <div className="font-semibold text-red-600">
+                    {errorDigest.title}
+                  </div>
+                  <div className="text-red-500/80 mt-1 line-clamp-2">
+                    {errorDigest.message}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setErrorDigest(null)}
+                  className="text-red-500/70 hover:text-red-500"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {runNotice && runNoticeConfig && (() => {
+              const NoticeIcon = runNoticeConfig.icon;
+              return (
+                <div
+                  className={`rounded-xl border p-3 flex items-start gap-2 ${runNoticeConfig.className}`}
+                >
+                  <NoticeIcon className="w-4 h-4 shrink-0 mt-0.5" />
+                  <div className="text-xs leading-relaxed flex-1">
+                    <div className="font-semibold">{runNotice.message}</div>
+                    {lastOutputPath && !isRunning && (
+                      <div className="mt-1 text-[10px] text-current/70">
+                        {t.dashboard.outputPathLabel}: {outputFileName}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setRunNotice(null)}
+                    className="ml-auto text-current/70 hover:text-current"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              );
+            })()}
 
             {/* Config Row - Compact Property Bar Style */}
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-2 shrink-0">
@@ -2711,36 +3235,61 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         >
           <div className="h-[50px] px-4 flex items-center justify-between shrink-0 border-b border-border/30">
             <div className="flex items-center gap-3">
-              <Button
-                size="icon"
-                onClick={handleStartQueue}
-                disabled={!canStart || needsModel}
-                className={`rounded-full w-9 h-9 shadow-md transition-all ${!canStart || needsModel ? "bg-muted text-muted-foreground" : "bg-gradient-to-br from-purple-600 to-indigo-600 hover:scale-105"}`}
-              >
-                <Play
-                  className={`w-4 h-4 ${canStart && !needsModel ? "fill-white" : ""} ml-0.5`}
-                />
-              </Button>
-              <Button
-                size="icon"
-                variant="outline"
-                onClick={handleStop}
-                disabled={!isRunning}
-                className="rounded-full w-8 h-8 border-border hover:bg-red-500/20 hover:border-red-500/50 hover:text-red-400"
-              >
-                <X className="w-3.5 h-3.5" />
-              </Button>
+              <UITooltip content={t.dashboard.startHint}>
+                <Button
+                  size="icon"
+                  onClick={handleStartQueue}
+                  disabled={!canStart || needsModel}
+                  className={`rounded-full w-9 h-9 shadow-md transition-all ${!canStart || needsModel ? "bg-muted text-muted-foreground" : "bg-gradient-to-br from-purple-600 to-indigo-600 hover:scale-105"}`}
+                >
+                  <Play
+                    className={`w-4 h-4 ${canStart && !needsModel ? "fill-white" : ""} ml-0.5`}
+                  />
+                </Button>
+              </UITooltip>
+              <UITooltip content={t.dashboard.stopHint}>
+                <Button
+                  size="icon"
+                  variant="outline"
+                  onClick={requestStop}
+                  disabled={!isRunning}
+                  className="rounded-full w-8 h-8 border-border hover:bg-red-500/20 hover:border-red-500/50 hover:text-red-400"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </Button>
+              </UITooltip>
               <span className="text-xs text-muted-foreground font-medium ml-2">
-                {isRunning
-                  ? `${t.dashboard.processing} ${currentQueueIndex + 1}/${queue.length}`
-                  : needsModel
-                    ? t.dashboard.selectModelWarn
-                    : t.dashboard.startHint}
+                {statusText}
               </span>
             </div>
 
             <div className="flex items-center gap-2">
-              <UITooltip content="TXT文件辅助对齐：适用于漫画和游戏文本，辅助输出按照行进行对齐。小说等连贯性文本不建议开启，会影响翻译效果。">
+              {!isRunning && lastOutputPath && (
+                <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg border border-border/50 bg-secondary/40 text-[10px] text-muted-foreground">
+                  <span className="max-w-[160px] truncate" title={lastOutputPath}>
+                    {t.dashboard.outputPathLabel}: {outputFileName}
+                  </span>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-6 w-6"
+                    onClick={() => handleOpenOutput("folder")}
+                    title={t.dashboard.openOutputFolder}
+                  >
+                    <FolderOpen className="w-3 h-3" />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-6 w-6"
+                    onClick={() => handleOpenOutput("file")}
+                    title={t.dashboard.openOutputFile}
+                  >
+                    <FileText className="w-3 h-3" />
+                  </Button>
+                </div>
+              )}
+              <UITooltip content={t.dashboard.alignmentTooltip}>
                 <div
                   className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer text-[10px] font-medium shadow-sm active:scale-95 ${alignmentMode
                     ? "bg-indigo-500/15 border-indigo-500/40 text-indigo-500 dark:text-indigo-400"
@@ -2758,12 +3307,10 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                   <AlignLeft
                     className={`w-3 h-3 ${alignmentMode ? "text-indigo-500" : "text-muted-foreground/70"}`}
                   />
-                  <span>辅助对齐</span>
+                  <span>{t.dashboard.alignmentLabel}</span>
                 </div>
               </UITooltip>
-              <UITooltip
-                content={<>CoT导出：另外保存一份带思考过程的翻译文本</>}
-              >
+              <UITooltip content={t.dashboard.cotTooltip}>
                 <div
                   className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer text-[10px] font-medium shadow-sm active:scale-95 ${saveCot
                     ? "bg-amber-500/15 border-amber-500/40 text-amber-500 dark:text-amber-400"
@@ -2777,7 +3324,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                   <FileText
                     className={`w-3 h-3 ${saveCot ? "text-amber-500" : "text-muted-foreground/70"}`}
                   />
-                  <span>CoT导出</span>
+                  <span>{t.dashboard.cotLabel}</span>
                 </div>
               </UITooltip>
               <div
@@ -2800,27 +3347,19 @@ export const Dashboard = forwardRef<any, DashboardProps>(
 
           {!logsCollapsed && (
             <div className="flex-1 overflow-y-auto px-4 py-2 font-mono text-[10px] text-muted-foreground bg-secondary/20">
-              {logs.length === 0 ? (
+              {displayedLogs.length === 0 ? (
                 <span className="italic opacity-50">
                   {t.dashboard.waitingLog}
                 </span>
               ) : (
-                logs
-                  .filter(
-                    (log) =>
-                      !log.includes("STDERR") &&
-                      !log.includes("ggml") &&
-                      !log.includes("llama_"),
-                  )
-                  .slice(-100)
-                  .map((log, i) => (
-                    <div
-                      key={i}
-                      className="py-0.5 border-b border-border/5 last:border-0"
-                    >
-                      {log}
-                    </div>
-                  ))
+                displayedLogs.slice(-100).map((log, i) => (
+                  <div
+                    key={i}
+                    className="py-0.5 border-b border-border/5 last:border-0"
+                  >
+                    {log}
+                  </div>
+                ))
               )}
               <div ref={logEndRef} />
             </div>
@@ -2865,7 +3404,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                         variant="outline"
                         className="w-full h-11 border-border bg-background hover:bg-secondary text-foreground font-medium dark:bg-muted/10 dark:border-white/5 dark:hover:bg-muted/30"
                       >
-                        重新翻译
+                        {t.dashboard.retranslate}
                       </Button>
 
                       {activeConfirmModal!.onSkip && (
@@ -2874,7 +3413,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                           variant="outline"
                           className="w-full h-11 border-border bg-background hover:bg-secondary text-foreground font-medium dark:bg-muted/10 dark:border-white/5 dark:hover:bg-muted/30"
                         >
-                          跳过文件
+                          {t.dashboard.skipFile}
                         </Button>
                       )}
                     </div>
@@ -2886,7 +3425,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                       variant="ghost"
                       className="w-full text-muted-foreground hover:text-destructive hover:bg-destructive/10 text-sm font-medium h-10"
                     >
-                      停止全部翻译任务
+                      {t.dashboard.stopAll}
                     </Button>
                   </div>
                 </div>

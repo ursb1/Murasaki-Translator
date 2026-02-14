@@ -60,18 +60,28 @@ def find_llama_server():
         return False
     
     if sys.platform == 'linux':
-        # Linux 后端优先级：CUDA > Vulkan > CPU
-        # 如果用户自行编译了 CUDA 版本，优先使用
-        if has_nvidia_gpu():
-            cuda_path = middleware_dir / 'bin' / 'linux-cuda' / 'llama-server'
-            if cuda_path.exists():
-                candidate = cuda_path
-                print("[INFO] Using CUDA backend (user-compiled)")
+        force_cpu = os.environ.get("MURASAKI_FORCE_CPU", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if force_cpu:
+            candidate = middleware_dir / 'bin' / 'linux-cpu' / 'llama-server'
+            print("[INFO] MURASAKI_FORCE_CPU=1, using linux-cpu backend")
+        else:
+            # Linux 后端优先级：CUDA > Vulkan > CPU
+            # 如果用户自行编译了 CUDA 版本，优先使用
+            if has_nvidia_gpu():
+                cuda_path = middleware_dir / 'bin' / 'linux-cuda' / 'llama-server'
+                if cuda_path.exists():
+                    candidate = cuda_path
+                    print("[INFO] Using CUDA backend (user-compiled)")
+                else:
+                    candidate = middleware_dir / 'bin' / 'linux-vulkan' / 'llama-server'
+                    print("[INFO] NVIDIA GPU detected, using Vulkan backend (CUDA not found)")
             else:
                 candidate = middleware_dir / 'bin' / 'linux-vulkan' / 'llama-server'
-                print("[INFO] NVIDIA GPU detected, using Vulkan backend (CUDA not found)")
-        else:
-            candidate = middleware_dir / 'bin' / 'linux-vulkan' / 'llama-server'
         
         # 最终回退到 CPU
         if not candidate.exists():

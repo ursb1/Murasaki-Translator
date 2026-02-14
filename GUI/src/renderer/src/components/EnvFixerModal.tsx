@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { Button, Card, CardHeader, CardTitle, CardContent } from "./ui/core";
 import { APP_CONFIG } from "../lib/config";
+import { translations, Language } from "../lib/i18n";
 
 type ComponentName =
   | "Python"
@@ -55,6 +56,18 @@ interface FixAction {
 }
 
 export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
+  const resolveLang = (): Language => {
+    const stored = localStorage.getItem("app_lang");
+    if (stored === "zh" || stored === "en" || stored === "jp") return stored;
+    const nav = (navigator?.language || "").toLowerCase();
+    if (nav.startsWith("ja")) return "jp";
+    if (nav.startsWith("en")) return "en";
+    return "zh";
+  };
+
+  const lang = resolveLang();
+  const t = translations[lang].envFixer;
+  const common = translations[lang].common;
   // 组件状态 - 初始为 pending
   const [results, setResults] = useState<
     Record<ComponentName, ComponentResult>
@@ -118,21 +131,21 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
   }> = [
     {
       name: "Python",
-      label: "Python 环境",
+      label: t.components.python.label,
       icon: Terminal,
-      description: "内嵌解释器 ≥3.10",
+      description: t.components.python.desc,
       fixActions: [
         {
           component: "Python",
-          label: "一键安装依赖",
-          description: "自动运行 pip install 安装缺失的 Python 包",
+          label: t.actions.pythonInstall.label,
+          description: t.actions.pythonInstall.desc,
           type: "auto",
           primary: true,
         },
         {
           component: "Python",
-          label: "重新安装程序",
-          description: "重新下载安装 Murasaki Translator",
+          label: t.actions.pythonReinstall.label,
+          description: t.actions.pythonReinstall.desc,
           type: "link",
           url: `${APP_CONFIG.officialRepo}/releases`,
         },
@@ -140,15 +153,15 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
     },
     {
       name: "CUDA",
-      label: "CUDA 环境",
+      label: t.components.cuda.label,
       icon: Zap,
-      description: "NVIDIA GPU 加速",
+      description: t.components.cuda.desc,
       optional: true,
       fixActions: [
         {
           component: "CUDA",
-          label: "下载驱动",
-          description: "跳转 NVIDIA 官网下载，推荐下载CUDA Toolkit 12+版本",
+          label: t.actions.cudaDriver.label,
+          description: t.actions.cudaDriver.desc,
           type: "link",
           url: "https://www.nvidia.com/Download/index.aspx",
           primary: true,
@@ -157,23 +170,22 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
     },
     {
       name: "Vulkan",
-      label: "Vulkan 环境",
+      label: t.components.vulkan.label,
       icon: Box,
-      description: "跨平台 GPU 加速",
+      description: t.components.vulkan.desc,
       optional: true,
       fixActions: [
         {
           component: "Vulkan",
-          label: "一键安装",
-          description: "自动下载安装 Vulkan Runtime (~50MB)",
+          label: t.actions.vulkanAuto.label,
+          description: t.actions.vulkanAuto.desc,
           type: "download",
           primary: true,
         },
         {
           component: "Vulkan",
-          label: "手动下载",
-          description:
-            "跳转 LunarG 官网，下载后解压放到\resources\middleware\bin",
+          label: t.actions.vulkanManual.label,
+          description: t.actions.vulkanManual.desc,
           type: "link",
           url: "https://vulkan.lunarg.com/sdk/home",
         },
@@ -181,22 +193,21 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
     },
     {
       name: "LlamaBackend",
-      label: "Llama 后端",
+      label: t.components.llama.label,
       icon: Server,
-      description: "本地 LLM 推理",
+      description: t.components.llama.desc,
       fixActions: [
         {
           component: "LlamaBackend",
-          label: "启动服务",
-          description: "启动 llama-server",
+          label: t.actions.llamaStart.label,
+          description: t.actions.llamaStart.desc,
           type: "auto",
           primary: true,
         },
         {
           component: "LlamaBackend",
-          label: "手动下载",
-          description:
-            "跳转官网下载二进制文件 (~20MB)，下载后解压放到\resources\middleware\bin",
+          label: t.actions.llamaManual.label,
+          description: t.actions.llamaManual.desc,
           type: "link",
           url: "https://github.com/ggerganov/llama.cpp/releases",
         },
@@ -204,14 +215,14 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
     },
     {
       name: "Middleware",
-      label: "中间件",
+      label: t.components.middleware.label,
       icon: Layers,
-      description: "翻译引擎核心",
+      description: t.components.middleware.desc,
       fixActions: [
         {
           component: "Middleware",
-          label: "重新安装",
-          description: "重新下载安装程序",
+          label: t.actions.middlewareReinstall.label,
+          description: t.actions.middlewareReinstall.desc,
           type: "link",
           url: `${APP_CONFIG.officialRepo}/releases`,
           primary: true,
@@ -220,14 +231,14 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
     },
     {
       name: "Permissions",
-      label: "文件权限",
+      label: t.components.permissions.label,
       icon: ShieldCheck,
-      description: "目录访问权限",
+      description: t.components.permissions.desc,
       fixActions: [
         {
           component: "Permissions",
-          label: "管理员运行",
-          description: "右键以管理员身份运行",
+          label: t.actions.permissionsAdmin.label,
+          description: t.actions.permissionsAdmin.desc,
           type: "link",
           primary: true,
         },
@@ -244,35 +255,35 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
       bg: "bg-emerald-500/10",
       border: "border-emerald-500/30",
       icon: CheckCircle2,
-      label: "正常",
+      label: t.status.ok,
     },
     warning: {
       color: "text-amber-500",
       bg: "bg-amber-500/10",
       border: "border-amber-500/30",
       icon: AlertCircle,
-      label: "可选",
+      label: t.status.warning,
     },
     error: {
       color: "text-red-500",
       bg: "bg-red-500/10",
       border: "border-red-500/30",
       icon: XCircle,
-      label: "异常",
+      label: t.status.error,
     },
     pending: {
       color: "text-muted-foreground",
       bg: "bg-muted/50",
       border: "border-border",
       icon: Info,
-      label: "等待",
+      label: t.status.pending,
     },
     checking: {
       color: "text-blue-500",
       bg: "bg-blue-500/10",
       border: "border-blue-500/30",
       icon: Loader2,
-      label: "检测中",
+      label: t.status.checking,
     },
   };
 
@@ -281,7 +292,9 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
     // 检查组件是否仍然挂载
     if (!isMountedRef.current) return;
 
-    setCheckLogs([`[${new Date().toLocaleTimeString()}] ▶ 开始环境检测...`]);
+    setCheckLogs([
+      `[${new Date().toLocaleTimeString()}] ▶ ${t.logs.startCheck}`,
+    ]);
     const componentNames: ComponentName[] = [
       "Python",
       "CUDA",
@@ -375,7 +388,7 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
               const newState = { ...prev };
               newState[name] = {
                 status: "error",
-                issues: ["未找到检测结果"],
+                issues: [t.logs.noResult],
                 fixes: [],
                 canAutoFix: false,
               };
@@ -389,7 +402,10 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
             });
             setCheckLogs((prev) => [
               ...prev,
-              `[${new Date().toLocaleTimeString()}] ✗ ${name} 未找到`,
+              `[${new Date().toLocaleTimeString()}] ✗ ${t.logs.notFound.replace(
+                "{name}",
+                name,
+              )}`,
             ]);
           }
 
@@ -397,7 +413,7 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
           setCheckingComponent(nextName);
         }
       } else {
-        const errorMsg = result?.error || "检测失败";
+        const errorMsg = result?.error || t.logs.checkFailed;
         const isTransientParseFailure =
           typeof errorMsg === "string" &&
           errorMsg.includes("Failed to parse report");
@@ -406,7 +422,7 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
         if (isTransientParseFailure && attempt < 1) {
           setCheckLogs((prev) => [
             ...prev,
-            `[${new Date().toLocaleTimeString()}] ↻ 初始化中，自动重试检测...`,
+            `[${new Date().toLocaleTimeString()}] ↻ ${t.logs.retrying}`,
           ]);
           await new Promise((resolve) => setTimeout(resolve, 600));
           if (!isMountedRef.current) return;
@@ -435,7 +451,10 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
       console.error("Failed to check components:", e);
       setCheckLogs((prev) => [
         ...prev,
-        `[${new Date().toLocaleTimeString()}] ✗ 检测出错: ${e}`,
+        `[${new Date().toLocaleTimeString()}] ✗ ${t.logs.checkError.replace(
+          "{error}",
+          String(e),
+        )}`,
       ]);
       for (const name of componentNames) {
         setResults((prev) => ({
@@ -453,7 +472,7 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
     setCheckingComponent(null);
     setCheckLogs((prev) => [
       ...prev,
-      `[${new Date().toLocaleTimeString()}] ■ 检测完成`,
+      `[${new Date().toLocaleTimeString()}] ■ ${t.logs.checkDone}`,
     ]);
   };
 
@@ -462,7 +481,9 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
     setShowFixConfirm(null);
     setFixingComponent(action.component);
     setFixProgress(0);
-    setFixLogs([`开始: ${action.label}...`]);
+    setFixLogs([
+      t.logs.fixStart.replace("{action}", action.label),
+    ]);
     setFixResult(null);
     let unsubscribeProgress: (() => void) | undefined;
 
@@ -511,15 +532,18 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
         setFixProgress(100);
 
         if (result?.success) {
-          setFixLogs((prev) => [...prev, `✓ ${result.message || "修复成功"}`]);
+          setFixLogs((prev) => [
+            ...prev,
+            `✓ ${result.message || t.logs.fixSuccess}`,
+          ]);
           setFixResult({
             success: true,
-            message: result.message || "修复成功",
+            message: result.message || t.logs.fixSuccess,
           });
           setTimeout(() => checkAllComponents(), 1000);
         } else {
           const errorMsg =
-            result?.message || (result as any)?.error || "修复失败";
+            result?.message || (result as any)?.error || t.logs.fixFailed;
           setFixLogs((prev) => [...prev, `✗ ${errorMsg}`]);
           setFixResult({ success: false, message: errorMsg });
         }
@@ -527,12 +551,12 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
         // @ts-ignore
         await window.api?.openExternal?.(action.url);
         setFixProgress(100);
-        setFixLogs((prev) => [...prev, `✓ 已打开浏览器`]);
-        setFixResult({ success: true, message: "已打开浏览器" });
+        setFixLogs((prev) => [...prev, `✓ ${t.logs.openedBrowser}`]);
+        setFixResult({ success: true, message: t.logs.openedBrowser });
       } else if (action.type === "link") {
         setFixProgress(100);
-        setFixLogs((prev) => [...prev, `ℹ 请手动操作`]);
-        setFixResult({ success: true, message: "请按提示手动操作" });
+        setFixLogs((prev) => [...prev, `ℹ ${t.logs.manualAction}`]);
+        setFixResult({ success: true, message: t.logs.manualAction });
       }
     } catch (e: any) {
       setFixLogs((prev) => [...prev, `✗ ${e.message}`]);
@@ -596,10 +620,10 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
             </div>
             <div>
               <CardTitle className="text-base font-bold">
-                运行环境诊断
+                {t.title}
               </CardTitle>
               <p className="text-[11px] text-muted-foreground mt-0.5">
-                点击卡片查看详情和修复选项
+                {t.subtitle}
               </p>
             </div>
           </div>
@@ -633,7 +657,7 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
               <RefreshCw
                 className={`w-3.5 h-3.5 ${isChecking ? "animate-spin" : ""}`}
               />
-              {isChecking ? "检测中" : "重新检测"}
+              {isChecking ? t.checking : t.recheck}
             </Button>
             <div className="w-px h-5 bg-border mx-1" />
             <Button
@@ -695,7 +719,7 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
                           </p>
                           {comp.optional && (
                             <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                              可选
+                              {t.labels.optional}
                             </span>
                           )}
                         </div>
@@ -728,7 +752,7 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
                         {result.issues.length > 0 && (
                           <div className="p-2.5 bg-red-500/5 border border-red-500/20 rounded-lg space-y-1">
                             <p className="text-[10px] font-semibold text-red-500 uppercase tracking-wide">
-                              问题
+                              {t.labels.issues}
                             </p>
                             {result.issues.map((issue, idx) => (
                               <p key={idx} className="text-xs text-red-600">
@@ -742,7 +766,7 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
                         {hasIssues && comp.fixActions.length > 0 && (
                           <div className="space-y-2">
                             <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
-                              修复方案
+                              {t.labels.fixes}
                             </p>
                             <div className="space-y-1.5">
                               {comp.fixActions.map((action, idx) => {
@@ -788,12 +812,12 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
                                         </p>
                                         {isAuto && (
                                           <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-500 font-medium">
-                                            一键
+                                            {t.labels.auto}
                                           </span>
                                         )}
                                         {!isAuto && (
                                           <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                                            手动
+                                            {t.labels.manual}
                                           </span>
                                         )}
                                       </div>
@@ -814,7 +838,7 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
                           <div className="p-2.5 bg-emerald-500/5 border border-emerald-500/20 rounded-lg">
                             <p className="text-xs text-emerald-600 flex items-center gap-1.5">
                               <CheckCircle2 className="w-3.5 h-3.5" />
-                              组件运行正常，无需修复
+                              {t.labels.okNoFix}
                             </p>
                           </div>
                         )}
@@ -825,7 +849,7 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
                             <div className="flex items-center gap-2">
                               <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-500" />
                               <span className="text-xs font-medium">
-                                正在修复
+                                {t.labels.fixing}
                               </span>
                               <span className="text-[10px] text-muted-foreground ml-auto">
                                 {fixProgress}%
@@ -874,7 +898,7 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
             >
               <span className="text-xs font-medium flex items-center gap-2">
                 <Terminal className="w-3.5 h-3.5" />
-                检测日志
+                {t.labels.checkLogs}
               </span>
               <ChevronDown
                 className={`w-4 h-4 transition-transform ${showLogs ? "" : "-rotate-90"}`}
@@ -912,14 +936,15 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
 
         {/* Footer */}
         <div className="px-5 py-2.5 border-t border-border/50 bg-muted/30 flex items-center justify-between text-[10px] text-muted-foreground">
-          <span>ESC 关闭 · 点击卡片展开</span>
+          <span>{t.footer.hint}</span>
           <span className="flex items-center gap-3">
             <span className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-indigo-500" /> 一键修复
+              <span className="w-2 h-2 rounded-full bg-indigo-500" />{" "}
+              {t.footer.autoFix}
             </span>
             <span className="flex items-center gap-1">
               <span className="w-2 h-2 rounded-full bg-muted-foreground" />{" "}
-              手动修复
+              {t.footer.manualFix}
             </span>
           </span>
         </div>
@@ -937,7 +962,7 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
                 ) : (
                   <ExternalLink className="w-4 h-4 text-muted-foreground" />
                 )}
-                确认操作
+                {t.confirm.title}
               </CardTitle>
             </CardHeader>
             <CardContent className="p-4 space-y-4">
@@ -954,10 +979,10 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
                     <p className="text-xs text-amber-600 flex items-start gap-2">
                       <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                       <span>
-                        此操作将下载并安装组件，可能需要几分钟。
+                        {t.confirm.downloadWarn}
                         <br />
                         <span className="font-bold">
-                          注意：安装过程可能需求管理员权限
+                          {t.confirm.downloadNote}
                         </span>
                       </span>
                     </p>
@@ -970,8 +995,8 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
                   <p className="text-xs text-blue-600 flex items-start gap-2">
                     <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                     {showFixConfirm.url
-                      ? "将在浏览器中打开链接"
-                      : "请按照提示手动操作"}
+                      ? t.confirm.linkOpen
+                      : t.confirm.manualHint}
                   </p>
                 </div>
               )}
@@ -983,7 +1008,7 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
                   className="flex-1"
                   onClick={() => setShowFixConfirm(null)}
                 >
-                  取消
+                  {common.cancel}
                 </Button>
                 <Button
                   size="sm"
@@ -991,7 +1016,9 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
                   onClick={() => executeFix(showFixConfirm)}
                 >
                   <ChevronRight className="w-3.5 h-3.5" />
-                  {showFixConfirm.type === "link" ? "确认" : "开始修复"}
+                  {showFixConfirm.type === "link"
+                    ? common.confirm
+                    : t.confirm.startFix}
                 </Button>
               </div>
             </CardContent>

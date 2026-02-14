@@ -10,9 +10,11 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { Button, Card, CardHeader, CardTitle } from "./ui/core";
+import { translations, Language } from "../lib/i18n";
 
 interface LogViewerModalProps {
   mode: "server" | "terminal" | "file";
+  lang: Language;
   onClose: () => void;
   filePath?: string;
   title?: string;
@@ -20,12 +22,14 @@ interface LogViewerModalProps {
 }
 
 export function LogViewerModal({
+  lang,
   mode,
   onClose,
   filePath,
   title: customTitle,
   subtitle: customSubtitle,
 }: LogViewerModalProps) {
+  const t = translations[lang].logViewer;
   const [logs, setLogs] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -34,17 +38,17 @@ export function LogViewerModal({
   const title =
     customTitle ||
     (mode === "server"
-      ? "服务器日志"
+      ? t.titleServer
       : mode === "terminal"
-        ? "主进程日志"
-        : "日志文件");
+        ? t.titleTerminal
+        : t.titleFile);
   const subtitle =
     customSubtitle ||
     (mode === "server"
-      ? "llama-server 输出日志"
+      ? t.subtitleServer
       : mode === "terminal"
-        ? "Electron 主进程输出"
-        : filePath || "未指定文件");
+        ? t.subtitleTerminal
+        : filePath || t.subtitleFileFallback);
   const Icon = mode === "server" ? Activity : mode === "terminal" ? Terminal : FileText;
 
   const fetchLogs = async () => {
@@ -54,29 +58,29 @@ export function LogViewerModal({
         // @ts-ignore
         const result = await window.api?.readServerLog?.();
         if (result?.exists) {
-          setLogs(result.content || "日志为空");
+          setLogs(result.content || t.logEmpty);
         } else {
-          setLogs(result?.error || "未找到日志文件");
+          setLogs(result?.error || t.logNotFound);
         }
       } else if (mode === "terminal") {
         // @ts-ignore
         const result = await window.api?.getMainProcessLogs?.();
-        setLogs(result?.length ? result.join("\n") : "暂无主进程日志");
+        setLogs(result?.length ? result.join("\n") : t.noTerminalLogs);
       } else {
         if (!filePath) {
-          setLogs("未指定日志文件");
+          setLogs(t.noFile);
         } else {
           // @ts-ignore
           const result = await window.api?.readTextTail?.(filePath, { lineCount: 500 });
           if (result?.exists) {
-            setLogs(result.content || "日志为空");
+            setLogs(result.content || t.logEmpty);
           } else {
-            setLogs(result?.error || "未找到日志文件");
+            setLogs(result?.error || t.logNotFound);
           }
         }
       }
     } catch (e) {
-      setLogs(`读取日志失败: ${e}`);
+      setLogs(t.readFailed.replace("{error}", String(e)));
     }
     setLoading(false);
   };
@@ -136,7 +140,7 @@ export function LogViewerModal({
               className="h-8 px-3 text-xs gap-1.5"
             >
               <Copy className="w-3.5 h-3.5" />
-              复制
+              {t.copy}
             </Button>
             <Button
               variant="ghost"
@@ -145,7 +149,7 @@ export function LogViewerModal({
               className="h-8 px-3 text-xs gap-1.5"
             >
               <Trash2 className="w-3.5 h-3.5" />
-              清空
+              {t.clear}
             </Button>
             <Button
               variant="ghost"
@@ -157,7 +161,7 @@ export function LogViewerModal({
               <RefreshCw
                 className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`}
               />
-              刷新
+              {t.refresh}
             </Button>
             <div className="w-px h-5 bg-border mx-1" />
             <Button
@@ -180,7 +184,7 @@ export function LogViewerModal({
             {loading && !logs ? (
               <div className="flex items-center gap-2 text-muted-foreground">
                 <RefreshCw className="w-4 h-4 animate-spin" />
-                加载中...
+                {t.loading}
               </div>
             ) : (
               logs
@@ -199,14 +203,14 @@ export function LogViewerModal({
             <ChevronDown
               className={`w-3 h-3 ${autoScroll ? "animate-bounce" : ""}`}
             />
-            {autoScroll ? "自动滚动" : "手动滚动"}
+            {autoScroll ? t.autoScroll : t.manualScroll}
           </button>
         </div>
 
         {/* Footer */}
         <div className="px-5 py-2.5 border-t border-border/50 bg-muted/30 flex items-center justify-between text-[10px] text-muted-foreground">
-          <span>按 ESC 关闭 · 每 3 秒自动刷新</span>
-          <span>{logs.split("\n").length} 行</span>
+          <span>{t.footerHint}</span>
+          <span>{t.lines.replace("{count}", String(logs.split("\n").length))}</span>
         </div>
       </Card>
     </div>

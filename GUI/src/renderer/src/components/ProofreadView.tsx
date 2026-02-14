@@ -82,6 +82,7 @@ export default function ProofreadView({
   onUnsavedChangesChange,
 }: ProofreadViewProps) {
   const { alertProps, showAlert, showConfirm } = useAlertModal();
+  const pv = t.proofreadView;
 
   // 状态
   const [cacheData, setCacheData] = useState<CacheData | null>(null);
@@ -96,6 +97,9 @@ export default function ProofreadView({
   // Quality Check Panel
   const [showQualityCheck, setShowQualityCheck] = useState(false);
   const [glossary, setGlossary] = useState<Record<string, string>>({});
+  const [glossaryLoadError, setGlossaryLoadError] = useState<string | null>(
+    null,
+  );
 
   // 编辑状态
   const [editingBlockId, setEditingBlockId] = useState<number | null>(null);
@@ -108,6 +112,7 @@ export default function ProofreadView({
   // 搜索与过滤
   const [searchKeyword, setSearchKeyword] = useState("");
   const [filterWarnings, setFilterWarnings] = useState(false);
+  const [regexError, setRegexError] = useState<string | null>(null);
 
   const [currentMatchIndex, setCurrentMatchIndex] = useState(-1);
   const [matchList, setMatchList] = useState<
@@ -178,6 +183,7 @@ export default function ProofreadView({
     if (!searchKeyword || !cacheData) {
       setMatchList([]);
       setCurrentMatchIndex(-1);
+      setRegexError(null);
       return;
     }
     const matches: { blockIndex: number; type: "src" | "dst" }[] = [];
@@ -189,6 +195,7 @@ export default function ProofreadView({
         ? searchKeyword
         : searchKeyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const regex = new RegExp(pattern, flags);
+      setRegexError(null);
 
       cacheData.blocks.forEach((block) => {
         // Determine if match exists using regex
@@ -203,7 +210,13 @@ export default function ProofreadView({
         }
       });
     } catch (e) {
-      // Invalid regex, ignore
+      if (isRegex) {
+        setRegexError(e instanceof Error ? e.message : String(e));
+      } else {
+        setRegexError(null);
+      }
+      setMatchList([]);
+      setCurrentMatchIndex(-1);
     }
 
     setMatchList(matches);
@@ -373,14 +386,17 @@ export default function ProofreadView({
           const count = Object.keys(parsed).length;
           console.log(`Loaded ${count} glossary entries`);
           setGlossary(parsed);
+          setGlossaryLoadError(null);
         }
       } catch (e) {
         console.warn("Failed to load glossary:", e);
         setGlossary({});
+        setGlossaryLoadError(e instanceof Error ? e.message : String(e));
       }
     } else {
       console.log("No glossary path in cache data");
       setGlossary({});
+      setGlossaryLoadError(null);
     }
   };
 
@@ -391,7 +407,7 @@ export default function ProofreadView({
         const defaultPath =
           localStorage.getItem("config_cache_dir") || undefined;
         const result = await window.api?.selectFile({
-          title: "选择翻译缓存文件",
+          title: pv.selectCacheTitle,
           defaultPath: defaultPath,
           filters: [{ name: "Cache Files", extensions: ["cache.json"] }],
         } as any);
@@ -400,12 +416,23 @@ export default function ProofreadView({
           const data = await window.api?.loadCache(result);
           if (data) {
             await processLoadedData(data, result);
+          } else {
+            showAlert({
+              title: pv.loadFailTitle,
+              description: pv.loadFailDesc,
+              variant: "destructive",
+            });
           }
           setLoading(false);
         }
       } catch (error) {
         console.error("Failed to load cache:", error);
         setLoading(false);
+        showAlert({
+          title: pv.loadFailTitle,
+          description: String(error),
+          variant: "destructive",
+        });
       }
     };
 
@@ -428,9 +455,9 @@ export default function ProofreadView({
       // Commit in-progress edit before save (avoid stale cacheData)
       let dataToSave = cacheData;
       if (editingBlockId !== null) {
-        const newBlocks = cacheData.blocks.map((b) =>
+        const newBlocks: CacheBlock[] = cacheData.blocks.map((b) =>
           b.index === editingBlockId
-            ? { ...b, dst: editingText, status: "edited" }
+            ? { ...b, dst: editingText, status: "edited" as const }
             : b,
         );
         dataToSave = { ...cacheData, blocks: newBlocks };
@@ -472,7 +499,10 @@ export default function ProofreadView({
           });
           if (!rebuildResult?.success) {
             throw new Error(
-              `文档重建失败: ${rebuildResult?.error || "模型后端未正常返回结果"}`,
+              pv.rebuildFail.replace(
+                "{error}",
+                rebuildResult?.error || pv.rebuildNoResult,
+              ),
             );
           }
         } else {
@@ -484,7 +514,9 @@ export default function ProofreadView({
               .join("\n\n") + "\n";
           const ok = await window.api?.writeFile(resolvedOutputPath, content);
           if (!ok) {
-            throw new Error(`写入文本失败: ${resolvedOutputPath}`);
+            throw new Error(
+              pv.writeTextFail.replace("{path}", resolvedOutputPath),
+            );
           }
         }
       }
@@ -492,15 +524,15 @@ export default function ProofreadView({
       setHasUnsavedChanges(false); // Reset on save
       setLoading(false);
       showAlert({
-        title: "保存成功",
-        description: "翻译缓存与输出文件已同步。",
+        title: pv.saveSuccessTitle,
+        description: pv.saveSuccessDesc,
         variant: "success",
       });
     } catch (error) {
       console.error("Failed to save cache:", error);
       setLoading(false);
       showAlert({
-        title: "保存失败",
+        title: pv.saveFailTitle,
         description: String(error),
         variant: "destructive",
       });
@@ -521,7 +553,7 @@ export default function ProofreadView({
     if (!cacheData) return;
     try {
       const result = await window.api?.saveFile({
-        title: "导出译文",
+        title: pv.exportTitle,
         defaultPath: cacheData.outputPath,
         filters: [{ name: "Text Files", extensions: ["txt"] }],
       });
@@ -530,10 +562,18 @@ export default function ProofreadView({
           .sort((a, b) => a.index - b.index)
           .map((b) => normalizeLN(b.dst)) // Enforce formatting on export
           .join("\n\n");
-        await window.api?.writeFile(result, text);
+        const ok = await window.api?.writeFile(result, text);
+        if (!ok) {
+          throw new Error(pv.writeFileFail);
+        }
       }
     } catch (error) {
       console.error("Failed to export:", error);
+      showAlert({
+        title: pv.exportFailTitle,
+        description: String(error),
+        variant: "destructive",
+      });
     }
   };
 
@@ -570,8 +610,8 @@ export default function ProofreadView({
     // Global Lock: Enforce single-threading for manual re-translation
     if (retranslatingBlocks.size > 0 || loading) {
       showAlert({
-        title: "请等待",
-        description: "当前有正在进行的重翻或保存任务，请等待其完成。",
+        title: pv.waitTitle,
+        description: pv.waitDesc,
         variant: "destructive",
       });
       return;
@@ -581,7 +621,7 @@ export default function ProofreadView({
     if (!modelPath) {
       showAlert({
         title: t.advancedFeatures,
-        description: "请先在模型管理页面选择一个模型！",
+        description: pv.modelMissingDesc,
         variant: "destructive",
       });
       return;
@@ -638,15 +678,15 @@ export default function ProofreadView({
         });
       } else {
         showAlert({
-          title: "重翻失败",
-          description: result?.error || "Unknown error",
+          title: pv.retranslateFailTitle,
+          description: result?.error || pv.unknownError,
           variant: "destructive",
         });
       }
     } catch (error) {
       console.error("Failed to retranslate:", error);
       showAlert({
-        title: "重翻错误",
+        title: pv.retranslateErrorTitle,
         description: String(error),
         variant: "destructive",
       });
@@ -712,6 +752,11 @@ export default function ProofreadView({
       }
     } catch (e) {
       console.error(e);
+      showAlert({
+        title: pv.replaceFailTitle,
+        description: e instanceof Error ? e.message : String(e),
+        variant: "warning",
+      });
     }
   };
 
@@ -751,6 +796,11 @@ export default function ProofreadView({
         });
       } catch (e) {
         console.error(e);
+        showAlert({
+          title: pv.replaceFailTitle,
+          description: e instanceof Error ? e.message : String(e),
+          variant: "warning",
+        });
       }
     };
 
@@ -822,13 +872,13 @@ export default function ProofreadView({
       );
     if (block.status === "edited")
       return (
-        <Tooltip content="已编辑">
+        <Tooltip content={pv.tooltipEdited}>
           <div className="w-2 h-2 rounded-full bg-blue-500" />
         </Tooltip>
       );
     if (block.status === "processed")
       return (
-        <Tooltip content="已处理">
+        <Tooltip content={pv.tooltipProcessed}>
           <div>
             <Check className="w-3 h-3 text-green-500/50" />
           </div>
@@ -927,17 +977,20 @@ export default function ProofreadView({
       if (data && data.blocks) {
         await processLoadedData(data, path);
       } else {
-        const msg = !data
-          ? "文件不存在或已损坏"
-          : "内容格式不正确 (缺少 blocks)";
+        const msg = !data ? pv.fileMissing : pv.fileInvalid;
         console.error(`[Proofread] ${msg}:`, path);
         throw new Error(msg);
       }
     } catch (e) {
       console.error("Failed to load cache:", e);
       showAlert({
-        title: "无法加载校对文件",
-        description: `读取文件失败: ${path}\n原因: ${e instanceof Error ? e.message : String(e)}`,
+        title: pv.loadProofreadFailTitle,
+        description: pv.loadProofreadFailDesc
+          .replace("{path}", path)
+          .replace(
+            "{error}",
+            e instanceof Error ? e.message : String(e),
+          ),
         variant: "destructive",
       });
     } finally {
@@ -976,7 +1029,10 @@ export default function ProofreadView({
               className="gap-2"
             >
               <History className="w-5 h-5" />
-              翻译历史 ({allHistory.length})
+              {pv.historyTitleWithCount.replace(
+                "{count}",
+                String(allHistory.length),
+              )}
             </Button>
           )}
         </div>
@@ -1036,7 +1092,7 @@ export default function ProofreadView({
               <div className="px-6 py-4 border-b flex items-center justify-between">
                 <h3 className="text-lg font-semibold flex items-center gap-2">
                   <History className="w-5 h-5 text-primary" />
-                  翻译历史
+                  {pv.historyTitle}
                 </h3>
                 <button
                   onClick={() => setShowHistoryModal(false)}
@@ -1195,10 +1251,20 @@ export default function ProofreadView({
                 {cachePath.split(/[/\\]/).pop()}
               </span>
               <span className="text-[10px] text-muted-foreground flex items-center gap-2">
-                <span>{cacheData.stats.blockCount} 块</span>
-                <span>{cacheData.stats.srcLines} 行</span>
+                <span>
+                  {pv.statsBlocks.replace(
+                    "{count}",
+                    String(cacheData.stats.blockCount),
+                  )}
+                </span>
+                <span>
+                  {pv.statsLines.replace(
+                    "{count}",
+                    String(cacheData.stats.srcLines),
+                  )}
+                </span>
                 {Object.keys(glossary).length > 0 ? (
-                  <Tooltip content="已加载术语表">
+                  <Tooltip content={pv.glossaryLoaded}>
                     <span className="flex items-center gap-1 text-primary/80">
                       <Book className="w-3 h-3" />{" "}
                       {Object.keys(glossary).length}
@@ -1206,7 +1272,16 @@ export default function ProofreadView({
                   </Tooltip>
                 ) : (
                   cacheData.glossaryPath && (
-                    <Tooltip content="术语表未加载或为空">
+                    <Tooltip
+                      content={
+                        glossaryLoadError
+                          ? pv.glossaryLoadFail.replace(
+                              "{error}",
+                              glossaryLoadError,
+                            )
+                          : pv.glossaryEmpty
+                      }
+                    >
                       <span className="flex items-center gap-1 text-amber-500">
                         <AlertTriangle className="w-3 h-3" /> 0
                       </span>
@@ -1225,8 +1300,10 @@ export default function ProofreadView({
               <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
               <input
                 type="text"
-                placeholder="搜索..."
-                className="w-full pl-7 pr-3 py-1 text-sm bg-secondary/50 border rounded focus:bg-background transition-colors outline-none font-mono"
+                placeholder={pv.searchPlaceholder}
+                className={`w-full pl-7 pr-3 py-1 text-sm bg-secondary/50 border rounded focus:bg-background transition-colors outline-none font-mono ${
+                  regexError ? "border-amber-500/60 bg-amber-500/5" : "border-border"
+                }`}
                 value={searchKeyword}
                 onChange={(e) => setSearchKeyword(e.target.value)}
                 onKeyDown={(e) => {
@@ -1244,7 +1321,25 @@ export default function ProofreadView({
                   {matchList.length > 0 ? currentMatchIndex + 1 : 0}/
                   {matchList.length}
                 </span>
-                <Tooltip content="上一个匹配">
+                {regexError && (
+                  <Tooltip
+                    content={pv.regexInvalid.replace("{error}", regexError)}
+                  >
+                    <span className="inline-flex items-center gap-1 text-amber-500">
+                      <AlertTriangle className="w-3 h-3" />
+                      {pv.regexInvalidBadge}
+                    </span>
+                  </Tooltip>
+                )}
+                {!regexError && matchList.length === 0 && (
+                  <Tooltip content={pv.noMatchTooltip}>
+                    <span className="inline-flex items-center gap-1 text-muted-foreground/70">
+                      <AlertTriangle className="w-3 h-3" />
+                      {pv.noMatchBadge}
+                    </span>
+                  </Tooltip>
+                )}
+                <Tooltip content={pv.prevMatch}>
                   <button
                     onClick={prevMatch}
                     className="p-0.5 hover:bg-secondary rounded"
@@ -1252,7 +1347,7 @@ export default function ProofreadView({
                     <ChevronUp className="w-3.5 h-3.5" />
                   </button>
                 </Tooltip>
-                <Tooltip content="下一个匹配">
+                <Tooltip content={pv.nextMatch}>
                   <button
                     onClick={nextMatch}
                     className="p-0.5 hover:bg-secondary rounded"
@@ -1263,7 +1358,7 @@ export default function ProofreadView({
               </div>
             )}
             {/* Toggles */}
-            <Tooltip content="正则表达式模式">
+            <Tooltip content={pv.regexMode}>
               <button
                 onClick={() => setIsRegex(!isRegex)}
                 className={`p-1 rounded text-xs ${isRegex ? "bg-primary/20 text-primary" : "text-muted-foreground hover:bg-muted"}`}
@@ -1271,7 +1366,7 @@ export default function ProofreadView({
                 <Regex className="w-3.5 h-3.5" />
               </button>
             </Tooltip>
-            <Tooltip content="查找替换">
+            <Tooltip content={pv.findReplace}>
               <button
                 onClick={() => setShowReplace(!showReplace)}
                 className={`p-1 rounded text-xs ${showReplace ? "bg-secondary" : "text-muted-foreground hover:bg-muted"}`}
@@ -1279,7 +1374,7 @@ export default function ProofreadView({
                 <Replace className="w-3.5 h-3.5" />
               </button>
             </Tooltip>
-            <Tooltip content="只显示警告">
+            <Tooltip content={pv.onlyWarnings}>
               <button
                 onClick={() => {
                   setFilterWarnings(!filterWarnings);
@@ -1293,8 +1388,8 @@ export default function ProofreadView({
             <Tooltip
               content={
                 lineMode
-                  ? "行模式 (点击切换段落模式)"
-                  : "段落模式 (点击切换行模式)"
+                  ? pv.lineModeHint
+                  : pv.blockModeHint
               }
             >
               <button
@@ -1378,7 +1473,9 @@ export default function ProofreadView({
                 size="sm"
                 variant="outline"
                 onClick={replaceOne}
-                disabled={!searchKeyword || matchList.length === 0}
+                disabled={
+                  !searchKeyword || matchList.length === 0 || Boolean(regexError)
+                }
               >
                 <Replace className="w-3.5 h-3.5 mr-1" />
                 {t.config.proofread.replace}
@@ -1387,7 +1484,9 @@ export default function ProofreadView({
                 size="sm"
                 variant="outline"
                 onClick={replaceAll}
-                disabled={!searchKeyword || matchList.length === 0}
+                disabled={
+                  !searchKeyword || matchList.length === 0 || Boolean(regexError)
+                }
               >
                 <ReplaceAll className="w-3.5 h-3.5 mr-1" />
                 {t.config.proofread.replaceAll}
@@ -1407,13 +1506,22 @@ export default function ProofreadView({
             style={{ gridTemplateColumns: gridTemplate }}
           >
             <div className="px-4 py-2 border-r border-border/50">
-              原文 (Source)
+              {pv.sourceTitle}
             </div>
-            <div className="px-4 py-2">译文 (Translation)</div>
+            <div className="px-4 py-2">{pv.targetTitle}</div>
           </div>
 
           {/* Blocks */}
           <div className="divide-y divide-border/30">
+            {paginatedBlocks.length === 0 && (
+              <div className="py-12 flex flex-col items-center justify-center text-muted-foreground">
+                <Search className="w-10 h-10 mb-3 opacity-30" />
+                <p className="text-sm font-medium">{pv.emptyContent}</p>
+                <p className="text-xs opacity-70 mt-1">
+                  {pv.emptyContentHint}
+                </p>
+              </div>
+            )}
             {paginatedBlocks.map((block) => {
               // Calculate similarity lines for this block
               const simLines = findHighSimilarityLines(block.src, block.dst);
@@ -1453,7 +1561,7 @@ export default function ProofreadView({
                       #{block.index + 1}
                     </span>
                     <StatusIndicator block={block} />
-                    <Tooltip content="重新翻译此块">
+                    <Tooltip content={pv.retranslateBlock}>
                       <button
                         onClick={() => retranslateBlock(block.index)}
                         className={`w-5 h-5 flex items-center justify-center rounded transition-all opacity-0 group-hover:opacity-100 ${loading ? "text-muted-foreground" : "text-primary/50 hover:text-primary hover:bg-primary/10"}`}
@@ -1466,7 +1574,7 @@ export default function ProofreadView({
                     </Tooltip>
                     {/* Log button - show when block has logs */}
                     {blockLogs[block.index]?.length > 0 && (
-                      <Tooltip content="查看翻译日志">
+                      <Tooltip content={pv.viewLogs}>
                         <button
                           onClick={() => setShowLogModal(block.index)}
                           className="w-5 h-5 flex items-center justify-center rounded transition-all text-blue-500/70 hover:text-blue-500 hover:bg-blue-500/10"
@@ -1773,10 +1881,12 @@ export default function ProofreadView({
                 disabled={currentPage === 1}
                 onClick={() => setCurrentPage((p) => p - 1)}
               >
-                <ChevronLeft className="w-4 h-4 mr-1" /> Previous
+                <ChevronLeft className="w-4 h-4 mr-1" /> {pv.pagePrev}
               </Button>
               <span className="text-sm font-medium text-muted-foreground">
-                Page {currentPage} of {totalPages}
+                {pv.pageLabel
+                  .replace("{current}", String(currentPage))
+                  .replace("{total}", String(totalPages))}
               </span>
               <Button
                 variant="ghost"
@@ -1784,7 +1894,7 @@ export default function ProofreadView({
                 disabled={currentPage === totalPages}
                 onClick={() => setCurrentPage((p) => p + 1)}
               >
-                Next <ChevronRight className="w-4 h-4 ml-1" />
+                {pv.pageNext} <ChevronRight className="w-4 h-4 ml-1" />
               </Button>
             </div>
           )}
@@ -1842,10 +1952,13 @@ export default function ProofreadView({
                 </div>
                 <div>
                   <h3 className="text-sm font-medium text-zinc-100">
-                    推理细节 - 区块 {showLogModal + 1}
+                    {pv.inferenceDetailTitle.replace(
+                      "{index}",
+                      String(showLogModal + 1),
+                    )}
                   </h3>
                   <p className="text-xs text-zinc-500">
-                    Manual Retranslation Virtual Log
+                    {pv.logSubtitle}
                   </p>
                 </div>
               </div>
@@ -1865,7 +1978,7 @@ export default function ProofreadView({
               {(blockLogs[showLogModal] || []).length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-zinc-600 gap-2">
                   <Clock className="w-8 h-8 opacity-20" />
-                  <p>等待日志输出...</p>
+                  <p>{pv.logWaiting}</p>
                 </div>
               ) : (
                 (blockLogs[showLogModal] || []).map((line, i) => (
@@ -1885,7 +1998,7 @@ export default function ProofreadView({
                 className="text-zinc-400"
                 onClick={() => setShowLogModal(null)}
               >
-                关闭
+                {pv.close}
               </Button>
             </div>
           </div>

@@ -324,6 +324,8 @@ interface RecordDetailContentProps {
   isLoading: boolean;
   getRecordDetail: (id: string) => RecordDetail | null;
   getTriggerTypeLabel: (type: TriggerEvent["type"]) => string;
+  onOpenPath: (path: string) => void;
+  onOpenFolder: (path: string) => void;
 }
 
 function RecordDetailContent({
@@ -333,6 +335,8 @@ function RecordDetailContent({
   isLoading,
   getRecordDetail: getDetail,
   getTriggerTypeLabel,
+  onOpenPath,
+  onOpenFolder,
 }: RecordDetailContentProps) {
   // Get full record with details
   const detail = getDetail(record.id) || { logs: [], triggers: [], llamaLogs: [] };
@@ -358,7 +362,7 @@ function RecordDetailContent({
       <CardContent className="pt-0 border-t">
         <div className="flex items-center justify-center py-8 text-muted-foreground">
           <div className="animate-spin w-4 h-4 border-2 border-current border-t-transparent rounded-full mr-2" />
-          {lang === "en" ? "Loading..." : "加载中..."}
+          {t.common.loading}
         </div>
       </CardContent>
     );
@@ -404,7 +408,7 @@ function RecordDetailContent({
           </div>
           <div>
             <p className="text-muted-foreground text-xs">
-              {lang === "en" ? "Concurrency" : "并发"}
+              {t.historyView.stats.concurrency}
             </p>
             <p className="font-medium">{fullRecord.config.concurrency || 1}</p>
           </div>
@@ -474,14 +478,15 @@ function RecordDetailContent({
                 {triggersExpanded ? (
                   <>
                     <ChevronDown className="w-3 h-3" />
-                    {lang === "en" ? "Collapse" : "收起"}
+                    {t.common.collapse}
                   </>
                 ) : (
                   <>
                     <ChevronRight className="w-3 h-3" />
-                    {lang === "en"
-                      ? `Show all ${fullRecord.triggers.length} triggers`
-                      : `展开全部 ${fullRecord.triggers.length} 条`}
+                    {t.historyView.showAllTriggers.replace(
+                      "{count}",
+                      fullRecord.triggers.length.toString(),
+                    )}
                   </>
                 )}
               </button>
@@ -493,7 +498,10 @@ function RecordDetailContent({
         {fullRecord.logs.length > 0 && (
           <div>
             <p className="text-xs font-medium text-muted-foreground mb-2">
-              {t.dashboard.terminal} (共 {fullRecord.logs.length} 条)
+              {t.historyView.logsCount.replace(
+                "{count}",
+                fullRecord.logs.length.toString(),
+              )}
             </p>
             <div className="bg-slate-100 dark:bg-slate-900/50 rounded-lg p-3 max-h-80 overflow-y-auto font-mono text-xs text-slate-700 dark:text-slate-300 space-y-0.5 scrollbar-thin scrollbar-thumb-slate-300 dark:scrollbar-thumb-slate-700 border border-slate-200 dark:border-slate-800">
               {fullRecord.logs.map((log, i) => (
@@ -509,7 +517,10 @@ function RecordDetailContent({
         {fullRecord.llamaLogs && fullRecord.llamaLogs.length > 0 && (
           <div>
             <p className="text-xs font-medium text-muted-foreground mb-2">
-              {t.historyView.engineLogs} (共 {fullRecord.llamaLogs.length} 条)
+              {t.historyView.llamaLogsCount.replace(
+                "{count}",
+                fullRecord.llamaLogs.length.toString(),
+              )}
             </p>
             <div className="bg-slate-100 dark:bg-slate-900/50 rounded-lg p-3 max-h-80 overflow-y-auto font-mono text-xs text-slate-700 dark:text-slate-300 space-y-0.5 scrollbar-thin scrollbar-thumb-slate-300 dark:scrollbar-thumb-slate-700 border border-slate-200 dark:border-slate-800">
               {fullRecord.llamaLogs.map((log, i) => (
@@ -533,7 +544,7 @@ function RecordDetailContent({
                 variant="ghost"
                 size="sm"
                 className="h-6 px-2"
-                onClick={() => window.api?.openPath?.(fullRecord.filePath)}
+                onClick={() => onOpenPath(fullRecord.filePath)}
               >
                 <ExternalLink className="w-3 h-3" />
               </Button>
@@ -551,7 +562,7 @@ function RecordDetailContent({
                       fullRecord.filePath.lastIndexOf("/"),
                     ),
                   );
-                  window.api?.openFolder?.(folderPath);
+                  onOpenFolder(folderPath);
                 }}
               >
                 <FolderOpen className="w-3 h-3" />
@@ -569,7 +580,7 @@ function RecordDetailContent({
                   variant="ghost"
                   size="sm"
                   className="h-6 px-2"
-                  onClick={() => window.api?.openPath?.(fullRecord.outputPath!)}
+                  onClick={() => onOpenPath(fullRecord.outputPath!)}
                 >
                   <ExternalLink className="w-3 h-3" />
                 </Button>
@@ -578,21 +589,21 @@ function RecordDetailContent({
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-6 px-2"
-                  onClick={() => {
-                    const folderPath = fullRecord.outputPath!.substring(
-                      0,
-                      Math.max(
-                        fullRecord.outputPath!.lastIndexOf("\\"),
-                        fullRecord.outputPath!.lastIndexOf("/"),
-                      ),
-                    );
-                    window.api?.openFolder?.(folderPath);
-                  }}
-                >
-                  <FolderOpen className="w-3 h-3" />
-                </Button>
-              </Tooltip>
+                className="h-6 px-2"
+                onClick={() => {
+                  const folderPath = fullRecord.outputPath!.substring(
+                    0,
+                    Math.max(
+                      fullRecord.outputPath!.lastIndexOf("\\"),
+                      fullRecord.outputPath!.lastIndexOf("/"),
+                    ),
+                  );
+                  onOpenFolder(folderPath);
+                }}
+              >
+                <FolderOpen className="w-3 h-3" />
+              </Button>
+            </Tooltip>
             </div>
           )}
         </div>
@@ -614,6 +625,7 @@ export function HistoryView({ lang }: { lang: Language }) {
   const [records, setRecords] = useState<TranslationRecord[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [alertOpen, setAlertOpen] = useState(false);
+  const [pathError, setPathError] = useState<string | null>(null);
 
   // Lazy loading state for record details
   const [detailsCache, setDetailsCache] = useState<
@@ -624,6 +636,36 @@ export function HistoryView({ lang }: { lang: Language }) {
   useEffect(() => {
     setRecords(getHistory().reverse()); // Show newest first
   }, []);
+
+  const handleOpenPath = async (path: string) => {
+    if (!path) {
+      setPathError(t.historyView.openFailDesc);
+      return;
+    }
+    try {
+      const result = await window.api?.openPath?.(path);
+      if (result) {
+        setPathError(`${t.historyView.openFailDesc} ${result}`);
+      }
+    } catch (e) {
+      setPathError(`${t.historyView.openFailDesc} ${String(e)}`);
+    }
+  };
+
+  const handleOpenFolder = async (path: string) => {
+    if (!path) {
+      setPathError(t.historyView.openFailDesc);
+      return;
+    }
+    try {
+      const ok = await window.api?.openFolder?.(path);
+      if (!ok) {
+        setPathError(t.historyView.openFailDesc);
+      }
+    } catch (e) {
+      setPathError(`${t.historyView.openFailDesc} ${String(e)}`);
+    }
+  };
 
   // Handle card expansion - load details lazily
   const handleExpand = (id: string) => {
@@ -705,60 +747,38 @@ export function HistoryView({ lang }: { lang: Language }) {
       ``,
       e.configTitle,
       `${e.temp} ${fullRecord.config.temperature}`,
-      `${e.lineCheck} ${fullRecord.config.lineCheck ? (lang === "en" ? "ON" : "开启") : lang === "en" ? "OFF" : "关闭"}`,
+      `${e.lineCheck} ${fullRecord.config.lineCheck ? t.historyView.toggleOn : t.historyView.toggleOff}`,
       `${e.repPenalty} ${fullRecord.config.repPenaltyBase}`,
       `${e.maxRetries} ${fullRecord.config.maxRetries}`,
-      `Concurrency: ${fullRecord.config.concurrency || 1}`,
+      `${e.concurrency} ${fullRecord.config.concurrency || 1}`,
       ``,
     ];
 
     if (fullRecord.executionMode === "remote-api" && fullRecord.remoteInfo) {
-      const remoteTitle =
-        lang === "en"
-          ? "## Remote Info"
-          : lang === "jp"
-            ? "## リモート情報"
-            : "## 远程信息";
       const sourceLabel =
         fullRecord.remoteInfo.source === "local-daemon"
-          ? lang === "en"
-            ? "Local daemon"
-            : lang === "jp"
-              ? "ローカル常駐"
-              : "本机常驻"
-          : lang === "en"
-            ? "Remote"
-            : lang === "jp"
-              ? "リモート"
-              : "远程";
-      const serverLabel =
-        lang === "en" ? "- Server:" : lang === "jp" ? "- サーバー:" : "- 服务器:";
-      const sourceTitle =
-        lang === "en" ? "- Source:" : lang === "jp" ? "- ソース:" : "- 来源:";
-      const taskLabel =
-        lang === "en" ? "- Task ID:" : lang === "jp" ? "- タスクID:" : "- 任务ID:";
-      const modelLabel =
-        lang === "en" ? "- Remote Model:" : lang === "jp" ? "- リモートモデル:" : "- 远程模型:";
-      const versionLabel =
-        lang === "en"
-          ? "- Server Version:"
-          : lang === "jp"
-            ? "- サーバーバージョン:"
-            : "- 服务端版本:";
+          ? t.historyView.remoteSourceLocal
+          : t.historyView.remoteSourceRemote;
 
       lines.push(
-        remoteTitle,
-        `${serverLabel} ${fullRecord.remoteInfo.serverUrl}`,
-        `${sourceTitle} ${sourceLabel}`,
+        t.historyView.remoteTitle,
+        `${t.historyView.remoteServerLabel} ${fullRecord.remoteInfo.serverUrl}`,
+        `${t.historyView.remoteSourceLabel} ${sourceLabel}`,
       );
       if (fullRecord.remoteInfo.taskId) {
-        lines.push(`${taskLabel} ${fullRecord.remoteInfo.taskId}`);
+        lines.push(
+          `${t.historyView.remoteTaskLabel} ${fullRecord.remoteInfo.taskId}`,
+        );
       }
       if (fullRecord.remoteInfo.model) {
-        lines.push(`${modelLabel} ${fullRecord.remoteInfo.model}`);
+        lines.push(
+          `${t.historyView.remoteModelLabel} ${fullRecord.remoteInfo.model}`,
+        );
       }
       if (fullRecord.remoteInfo.serverVersion) {
-        lines.push(`${versionLabel} ${fullRecord.remoteInfo.serverVersion}`);
+        lines.push(
+          `${t.historyView.remoteVersionLabel} ${fullRecord.remoteInfo.serverVersion}`,
+        );
       }
       lines.push(``);
     }
@@ -898,7 +918,9 @@ export function HistoryView({ lang }: { lang: Language }) {
                           {record.fileName}
                           {record.executionMode === "remote-api" && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-normal">
-                              {record.remoteInfo?.source === "local-daemon" ? "本机常驻" : "远程"}
+                              {record.remoteInfo?.source === "local-daemon"
+                                ? t.historyView.remoteSourceLocal
+                                : t.historyView.remoteSourceRemote}
                             </span>
                           )}
                         </CardTitle>
@@ -959,6 +981,8 @@ export function HistoryView({ lang }: { lang: Language }) {
                     isLoading={loadingDetails === record.id}
                     getRecordDetail={getRecordDetail}
                     getTriggerTypeLabel={getTriggerTypeLabel}
+                    onOpenPath={handleOpenPath}
+                    onOpenFolder={handleOpenFolder}
                   />
                 )}
               </Card>
@@ -974,6 +998,16 @@ export function HistoryView({ lang }: { lang: Language }) {
         variant="destructive"
         onConfirm={handleConfirmClear}
         showCancel={true}
+      />
+      <AlertModal
+        open={Boolean(pathError)}
+        onOpenChange={(open) => {
+          if (!open) setPathError(null);
+        }}
+        title={t.historyView.openFailTitle}
+        description={pathError || ""}
+        variant="warning"
+        showCancel={false}
       />
     </div>
   );

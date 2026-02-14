@@ -30,6 +30,7 @@ import {
   Settings2,
   LayoutGrid,
   ArrowUp,
+  Layers,
 } from "lucide-react";
 import { Button, Card, Switch, Tooltip as UITooltip } from "./ui/core";
 import { FileIcon } from "./ui/FileIcon";
@@ -96,7 +97,7 @@ const texts = {
     confirmRemoveDesc: "确定要从队列中移除此文件吗？",
     confirmRemoveSelectedTitle: "确认移除已选",
     confirmRemoveSelectedDesc: "确定要移除选中的 {count} 个文件吗？",
-    supportedTypes: "支持 .txt .epub .srt .ass",
+    supportedTypes: "支持 .txt .epub .srt .ass .ssa",
     queueTitle: "翻译队列",
     emptyQueue: "队列为空",
     emptyHint: "拖放文件到上方区域，或点击按钮选择",
@@ -126,6 +127,12 @@ const texts = {
     modelOverride: "模型选择",
     moveToTop: "置顶",
     dragToReorder: "拖拽调整顺序",
+    addedNotice: "已添加 {count} 个文件",
+    ignoredUnsupported: "已忽略 {count} 个不支持格式",
+    ignoredDuplicate: "已跳过 {count} 个重复文件",
+    scanFailed: "扫描失败：{count} 个路径无法读取",
+    noValidFiles: "未发现可导入的文件",
+    busyHint: "翻译进行中，暂时无法修改队列",
 
     // Params
     glossary: "术语表",
@@ -141,6 +148,9 @@ const texts = {
     kvCacheType: "KV Cache 量化",
     alignmentMode: "辅助对齐",
     saveCot: "CoT 导出",
+    rulesProfileSection: "文本处理规则",
+    rulesPreProfile: "预处理配置组",
+    rulesPostProfile: "后处理配置组",
     on: "开",
     off: "关",
 
@@ -149,6 +159,7 @@ const texts = {
     browse: "浏览",
     reset: "重置",
     notSet: "未设置",
+    unnamedProfile: "未命名配置",
     currentGlobal: "当前全局",
     seed: "随机种子 (Seed)",
 
@@ -201,7 +212,7 @@ const texts = {
     confirmRemoveDesc: "Are you sure you want to remove this file from the queue?",
     confirmRemoveSelectedTitle: "Confirm Remove Selected",
     confirmRemoveSelectedDesc: "Are you sure you want to remove the {count} selected files?",
-    supportedTypes: "Supports .txt .epub .srt .ass",
+    supportedTypes: "Supports .txt .epub .srt .ass .ssa",
     queueTitle: "Translation Queue",
     emptyQueue: "Queue is empty",
     emptyHint: "Drop files above, or click buttons to select",
@@ -231,6 +242,12 @@ const texts = {
     modelOverride: "Model Override",
     moveToTop: "Top",
     dragToReorder: "Drag to reorder",
+    addedNotice: "Added {count} files",
+    ignoredUnsupported: "Ignored {count} unsupported files",
+    ignoredDuplicate: "Skipped {count} duplicate files",
+    scanFailed: "Scan failed: {count} paths could not be read",
+    noValidFiles: "No importable files found",
+    busyHint: "Translation is running. Queue is locked.",
 
     glossary: "Glossary",
     outputDir: "Output Directory",
@@ -245,6 +262,9 @@ const texts = {
     kvCacheType: "KV Cache Quant",
     alignmentMode: "Auxiliary Alignment",
     saveCot: "CoT Export",
+    rulesProfileSection: "Rule Profiles",
+    rulesPreProfile: "Pre-process Profile",
+    rulesPostProfile: "Post-process Profile",
     on: "On",
     off: "Off",
 
@@ -254,6 +274,7 @@ const texts = {
     reset: "Reset",
 
     notSet: "Not set",
+    unnamedProfile: "Untitled profile",
 
     presetOptions: {
       novel: "Novel Mode (Default)",
@@ -305,7 +326,7 @@ const texts = {
     confirmRemoveDesc: "このファイルをキューから削除しますか？",
     confirmRemoveSelectedTitle: "選択削除の確認",
     confirmRemoveSelectedDesc: "選択した {count} 件のファイルを削除しますか？",
-    supportedTypes: ".txt .epub .srt .ass に対応",
+    supportedTypes: ".txt .epub .srt .ass .ssa に対応",
     queueTitle: "翻訳キュー",
     emptyQueue: "キューが空です",
     emptyHint: "上にファイルをドロップ、またはボタンで選択",
@@ -335,6 +356,12 @@ const texts = {
     modelOverride: "モデル上書き",
     moveToTop: "トップ",
     dragToReorder: "ドラッグして並べ替え",
+    addedNotice: "{count} 件のファイルを追加しました",
+    ignoredUnsupported: "対応外形式 {count} 件を無視しました",
+    ignoredDuplicate: "重複 {count} 件をスキップしました",
+    scanFailed: "スキャン失敗：{count} 件のパスを読み込めませんでした",
+    noValidFiles: "追加可能なファイルが見つかりません",
+    busyHint: "翻訳中のためキューを変更できません",
 
     glossary: "用語集",
     outputDir: "出力ディレクトリ",
@@ -349,6 +376,9 @@ const texts = {
     kvCacheType: "KV Cache 量子化",
     alignmentMode: "補助アラインメント",
     saveCot: "CoT エクスポート",
+    rulesProfileSection: "ルール設定",
+    rulesPreProfile: "前処理プロファイル",
+    rulesPostProfile: "後処理プロファイル",
     on: "オン",
     off: "オフ",
 
@@ -358,6 +388,7 @@ const texts = {
     reset: "リセット",
 
     notSet: "未設定",
+    unnamedProfile: "名称未設定",
 
     presetOptions: {
       novel: "小説モード (デフォルト)",
@@ -406,6 +437,11 @@ interface RemoteModelInfo {
   sizeGb?: number;
 }
 
+interface RuleProfileSummary {
+  id: string;
+  name: string;
+}
+
 export function FileConfigModal({
   item,
   lang,
@@ -418,6 +454,25 @@ export function FileConfigModal({
   const isRemoteMode = Boolean(remoteRuntime?.isRemoteMode);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [availableRemoteModels, setAvailableRemoteModels] = useState<RemoteModelInfo[]>([]);
+  const [preProfiles, setPreProfiles] = useState<RuleProfileSummary[]>([]);
+  const [postProfiles, setPostProfiles] = useState<RuleProfileSummary[]>([]);
+
+  const loadRuleProfiles = (mode: "pre" | "post") => {
+    try {
+      const raw = localStorage.getItem(`config_rules_${mode}_profiles`);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .map((profile) => ({
+          id: String(profile?.id || ""),
+          name: String(profile?.name || t.unnamedProfile),
+        }))
+        .filter((profile) => profile.id);
+    } catch {
+      return [];
+    }
+  };
 
   // Get global defaults for display
   const globalGlossary = localStorage.getItem("config_glossary_path") || "";
@@ -438,6 +493,22 @@ export function FileConfigModal({
   const globalAlignmentMode =
     localStorage.getItem("config_alignment_mode") === "true";
   const globalSaveCot = localStorage.getItem("config_save_cot") === "true";
+  const globalPreProfileId =
+    localStorage.getItem("config_rules_pre_active_profile") || "";
+  const globalPostProfileId =
+    localStorage.getItem("config_rules_post_active_profile") || "";
+
+  useEffect(() => {
+    setPreProfiles(loadRuleProfiles("pre"));
+    setPostProfiles(loadRuleProfiles("post"));
+  }, []);
+
+  const globalPreProfileName =
+    preProfiles.find((profile) => profile.id === globalPreProfileId)?.name ||
+    t.notSet;
+  const globalPostProfileName =
+    postProfiles.find((profile) => profile.id === globalPostProfileId)?.name ||
+    t.notSet;
 
   useEffect(() => {
     let alive = true;
@@ -784,6 +855,108 @@ export function FileConfigModal({
                 </p>
               </div>
             )}
+          </div>
+
+          {/* 1.5 Rule Profile Section */}
+          <div className="space-y-4">
+            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+              {t.rulesProfileSection}
+            </h4>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label
+                    className={`text-xs font-medium flex items-center gap-1.5 ${config.useGlobalDefaults ? "text-muted-foreground" : "text-foreground"}`}
+                  >
+                    <Layers className="w-3.5 h-3.5 shrink-0 opacity-70" />
+                    {t.rulesPreProfile}
+                  </label>
+                  <span className="text-[10px] text-muted-foreground/50 tabular-nums">
+                    {t.currentGlobal}: {globalPreProfileName}
+                  </span>
+                </div>
+                <select
+                  value={
+                    !config.useGlobalDefaults && config.rulesPreProfileId
+                      ? config.rulesPreProfileId
+                      : ""
+                  }
+                  disabled={config.useGlobalDefaults}
+                  onChange={(e) =>
+                    setConfig((prev) => ({
+                      ...prev,
+                      rulesPreProfileId: e.target.value || undefined,
+                    }))
+                  }
+                  className={`
+                    w-full h-8 px-2.5 text-sm rounded-md border transition-all outline-none
+                    ${
+                      config.useGlobalDefaults
+                        ? "bg-secondary/30 border-transparent text-muted-foreground/50 cursor-not-allowed"
+                        : "bg-background/50 border-border focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
+                    }
+                  `}
+                >
+                  <option value="">
+                    {config.useGlobalDefaults
+                      ? globalPreProfileName
+                      : t.followGlobal}
+                  </option>
+                  {preProfiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label
+                    className={`text-xs font-medium flex items-center gap-1.5 ${config.useGlobalDefaults ? "text-muted-foreground" : "text-foreground"}`}
+                  >
+                    <Layers className="w-3.5 h-3.5 shrink-0 opacity-70" />
+                    {t.rulesPostProfile}
+                  </label>
+                  <span className="text-[10px] text-muted-foreground/50 tabular-nums">
+                    {t.currentGlobal}: {globalPostProfileName}
+                  </span>
+                </div>
+                <select
+                  value={
+                    !config.useGlobalDefaults && config.rulesPostProfileId
+                      ? config.rulesPostProfileId
+                      : ""
+                  }
+                  disabled={config.useGlobalDefaults}
+                  onChange={(e) =>
+                    setConfig((prev) => ({
+                      ...prev,
+                      rulesPostProfileId: e.target.value || undefined,
+                    }))
+                  }
+                  className={`
+                    w-full h-8 px-2.5 text-sm rounded-md border transition-all outline-none
+                    ${
+                      config.useGlobalDefaults
+                        ? "bg-secondary/30 border-transparent text-muted-foreground/50 cursor-not-allowed"
+                        : "bg-background/50 border-border focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
+                    }
+                  `}
+                >
+                  <option value="">
+                    {config.useGlobalDefaults
+                      ? globalPostProfileName
+                      : t.followGlobal}
+                  </option>
+                  {postProfiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
           </div>
 
           {/* 2. Paths Section - 术语表和输出目录 */}
@@ -1178,6 +1351,11 @@ export function LibraryView({
 }: LibraryViewProps) {
   const t = texts[lang];
   const { alertProps, showConfirm } = useAlertModal();
+  const [notice, setNotice] = useState<{
+    type: "info" | "warning" | "error" | "success";
+    message: string;
+  } | null>(null);
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Queue state
   const [queue, setQueue] = useState<QueueItem[]>(() => {
     try {
@@ -1219,6 +1397,23 @@ export function LibraryView({
   const [isReordering, setIsReordering] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const pushNotice = useCallback(
+    (next: { type: "info" | "warning" | "error" | "success"; message: string }) => {
+      setNotice(next);
+      if (noticeTimerRef.current) {
+        clearTimeout(noticeTimerRef.current);
+      }
+      noticeTimerRef.current = setTimeout(() => setNotice(null), 4200);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    };
+  }, []);
+
   // Persist
   useEffect(() => {
     try {
@@ -1237,11 +1432,19 @@ export function LibraryView({
     (paths: string[]) => {
       const existingPaths = new Set(queue.map((q) => q.path));
       const newItems: QueueItem[] = [];
+      let skippedUnsupported = 0;
+      let skippedDuplicate = 0;
 
       for (const path of paths) {
         const ext = "." + path.split(".").pop()?.toLowerCase();
-        if (!SUPPORTED_EXTENSIONS.includes(ext)) continue;
-        if (existingPaths.has(path)) continue;
+        if (!SUPPORTED_EXTENSIONS.includes(ext)) {
+          skippedUnsupported += 1;
+          continue;
+        }
+        if (existingPaths.has(path)) {
+          skippedDuplicate += 1;
+          continue;
+        }
 
         existingPaths.add(path);
         newItems.push({
@@ -1255,26 +1458,78 @@ export function LibraryView({
         });
       }
 
-      if (newItems.length > 0) setQueue((prev) => [...prev, ...newItems]);
+      if (newItems.length > 0) {
+        setQueue((prev) => [...prev, ...newItems]);
+      }
+
+      const messages: string[] = [];
+      if (newItems.length > 0) {
+        messages.push(
+          t.addedNotice.replace("{count}", String(newItems.length)),
+        );
+      }
+      if (skippedUnsupported > 0) {
+        messages.push(
+          t.ignoredUnsupported.replace(
+            "{count}",
+            String(skippedUnsupported),
+          ),
+        );
+      }
+      if (skippedDuplicate > 0) {
+        messages.push(
+          t.ignoredDuplicate.replace("{count}", String(skippedDuplicate)),
+        );
+      }
+
+      if (messages.length > 0) {
+        const type =
+          skippedUnsupported > 0 || skippedDuplicate > 0
+            ? "warning"
+            : "success";
+        pushNotice({ type, message: messages.join("，") });
+      } else {
+        pushNotice({ type: "info", message: t.noValidFiles });
+      }
     },
-    [queue],
+    [queue, pushNotice, t],
   );
 
   const handleAddFiles = async () => {
-    if (isRunning) return;
+    if (isRunning) {
+      pushNotice({ type: "warning", message: t.busyHint });
+      return;
+    }
     const files = await window.api?.selectFiles();
-    if (files?.length) addFiles(files);
+    if (files?.length) {
+      addFiles(files);
+    } else {
+      pushNotice({ type: "info", message: t.noValidFiles });
+    }
   };
 
   const handleAddFolder = async () => {
-    if (isRunning) return;
+    if (isRunning) {
+      pushNotice({ type: "warning", message: t.busyHint });
+      return;
+    }
     // Since window.api.selectFolderFiles assumes shallow or specific backend logic which we can't easily change from here without changing select-folder-files channel
     // Let's use selectDirectory to get path and then scanDirectory
     const path = await window.api?.selectFolder();
     if (path) {
-      const files = await window.api?.scanDirectory(path, scanSubdirs);
-      if (files && files.length > 0) {
-        addFiles(files);
+      try {
+        const files = await window.api?.scanDirectory(path, scanSubdirs);
+        if (files && files.length > 0) {
+          addFiles(files);
+        } else {
+          pushNotice({ type: "info", message: t.noValidFiles });
+        }
+      } catch (e) {
+        console.error("Scan failed for", path, e);
+        pushNotice({
+          type: "error",
+          message: t.scanFailed.replace("{count}", "1"),
+        });
       }
     }
   };
@@ -1309,6 +1564,7 @@ export function LibraryView({
 
       if (isRunning) {
         setIsDragOver(false);
+        pushNotice({ type: "warning", message: t.busyHint });
         return;
       }
 
@@ -1328,6 +1584,7 @@ export function LibraryView({
 
       if (paths.length > 0) {
         const finalPaths: string[] = [];
+        let scanErrors = 0;
         // Scan for folders using backend API to support recursion/filtering
         for (const p of paths) {
           try {
@@ -1336,19 +1593,33 @@ export function LibraryView({
               finalPaths.push(...expanded);
             }
           } catch (e) {
+            scanErrors += 1;
             console.error("Scan failed for", p, e);
           }
         }
-        if (finalPaths.length > 0) addFiles(finalPaths);
+        if (scanErrors > 0) {
+          pushNotice({
+            type: "error",
+            message: t.scanFailed.replace("{count}", String(scanErrors)),
+          });
+        }
+        if (finalPaths.length > 0) {
+          addFiles(finalPaths);
+        } else if (scanErrors === 0) {
+          pushNotice({ type: "info", message: t.noValidFiles });
+        }
       }
     },
-    [addFiles, scanSubdirs],
+    [addFiles, scanSubdirs, isRunning, pushNotice, t],
   );
 
   // Queue operations
   const handleRemove = useCallback(
     (id: string) => {
-      if (isRunning) return;
+      if (isRunning) {
+        pushNotice({ type: "warning", message: t.busyHint });
+        return;
+      }
       const item = queue.find((q) => q.id === id);
       if (!item) return;
 
@@ -1376,11 +1647,14 @@ export function LibraryView({
         },
       });
     },
-    [lang, showConfirm, isRunning, queue],
+    [lang, showConfirm, isRunning, queue, pushNotice, t],
   );
 
   const handleClearCompleted = useCallback(() => {
-    if (isRunning) return;
+    if (isRunning) {
+      pushNotice({ type: "warning", message: t.busyHint });
+      return;
+    }
     const completedCount = queue.filter((q) => q.status === "completed").length;
     if (completedCount === 0) return;
 
@@ -1402,10 +1676,17 @@ export function LibraryView({
       "Murasaki Translator",
       t.clearedCompletedNotice.replace("{count}", String(completedCount)),
     );
-  }, [queue, isRunning, lang]);
+    pushNotice({
+      type: "success",
+      message: t.clearedCompletedNotice.replace("{count}", String(completedCount)),
+    });
+  }, [queue, isRunning, lang, pushNotice, t]);
 
   const handleRemoveSelected = useCallback(() => {
-    if (isRunning) return;
+    if (isRunning) {
+      pushNotice({ type: "warning", message: t.busyHint });
+      return;
+    }
     if (selectedItems.size === 0) return;
     showConfirm({
       title: t.confirmRemoveSelectedTitle,
@@ -1419,11 +1700,14 @@ export function LibraryView({
         setSelectedItems(new Set());
       },
     });
-  }, [selectedItems, lang, showConfirm, isRunning]);
+  }, [selectedItems, lang, showConfirm, isRunning, pushNotice, t]);
 
   const handleMoveToTop = useCallback(
     (id: string) => {
-      if (isRunning) return;
+      if (isRunning) {
+        pushNotice({ type: "warning", message: t.busyHint });
+        return;
+      }
       setQueue((prev) => {
         const index = prev.findIndex((q) => q.id === id);
         if (index <= 0) return prev;
@@ -1432,11 +1716,14 @@ export function LibraryView({
         return [item, ...newQueue];
       });
     },
-    [isRunning],
+    [isRunning, pushNotice, t],
   );
 
   const handleClear = useCallback(() => {
-    if (isRunning) return;
+    if (isRunning) {
+      pushNotice({ type: "warning", message: t.busyHint });
+      return;
+    }
     showConfirm({
       title: t.clear,
       description: t.confirmClear,
@@ -1446,7 +1733,7 @@ export function LibraryView({
         setSelectedItems(new Set());
       },
     });
-  }, [t, showConfirm]);
+  }, [t, showConfirm, isRunning, pushNotice]);
 
   useEffect(() => {
     localStorage.setItem("murasaki_scan_subdirs", scanSubdirs.toString());
@@ -1611,6 +1898,28 @@ export function LibraryView({
     },
     [onNavigate, onProofreadFile],
   );
+
+  const noticeConfig = notice
+    ? {
+        success: {
+          className: "bg-emerald-500/10 border-emerald-500/30 text-emerald-600",
+          icon: Check,
+        },
+        warning: {
+          className: "bg-amber-500/10 border-amber-500/30 text-amber-600",
+          icon: AlertTriangle,
+        },
+        error: {
+          className: "bg-red-500/10 border-red-500/30 text-red-600",
+          icon: AlertTriangle,
+        },
+        info: {
+          className: "bg-blue-500/10 border-blue-500/30 text-blue-600",
+          icon: Info,
+        },
+      }[notice.type]
+    : null;
+  const NoticeIcon = noticeConfig?.icon;
 
   return (
     <div
@@ -1798,8 +2107,26 @@ export function LibraryView({
             <div className="px-4 py-2 border-b border-border/40 flex items-center justify-between shrink-0 bg-secondary/5">
               <div className="flex items-center gap-3">
                 <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-2">
-                  File Queue
+                  {t.queueTitle}
                 </span>
+              </div>
+            </div>
+          )}
+
+          {notice && noticeConfig && NoticeIcon && (
+            <div className="px-4 pt-2 pb-1">
+              <div
+                className={`flex items-start gap-2 px-3 py-2 rounded-lg border text-xs ${noticeConfig.className}`}
+              >
+                <NoticeIcon className="w-3.5 h-3.5 mt-0.5" />
+                <span className="flex-1 leading-relaxed">{notice.message}</span>
+                <button
+                  type="button"
+                  onClick={() => setNotice(null)}
+                  className="ml-auto text-current/70 hover:text-current"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
               </div>
             </div>
           )}

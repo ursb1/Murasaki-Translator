@@ -222,6 +222,17 @@ export interface ElectronAPI {
   getModels: () => Promise<string[]>;
   getModelsPath: () => Promise<string>;
   getGlossaries: () => Promise<string[]>;
+  readGlossaryFile: (filename: string) => Promise<string | null>;
+  saveGlossaryFile: (data: {
+    filename: string;
+    content: string;
+  }) => Promise<boolean>;
+  deleteGlossaryFile: (filename: string) => Promise<boolean>;
+  renameGlossaryFile: (
+    oldName: string,
+    newName: string,
+  ) => Promise<{ success: boolean; error?: string }>;
+  openGlossaryFolder: () => Promise<void>;
   createGlossaryFile: (
     arg: string | { filename: string; content?: string },
   ) => Promise<{ success: boolean; path?: string; error?: string }>;
@@ -281,8 +292,6 @@ export interface ElectronAPI {
   }) => Promise<any>;
   onLogUpdate: (callback: (chunk: string) => void) => Unsubscribe;
   onProcessExit: (callback: (payload: ProcessExitPayload) => void) => Unsubscribe;
-  removeLogListener: () => void;
-  removeProcessExitListener: () => void;
 
   // Retranslate Progress
   onRetranslateLog: (
@@ -292,7 +301,6 @@ export interface ElectronAPI {
       isError?: boolean;
     }) => void,
   ) => Unsubscribe;
-  removeRetranslateLogListener: () => void;
 
   // Environment Fix Progress
   onEnvFixProgress: (
@@ -305,7 +313,6 @@ export interface ElectronAPI {
       downloadedBytes?: number;
     }) => void,
   ) => Unsubscribe;
-  removeEnvFixProgressListener: () => void;
 
   // Server Management
   serverStatus: () => Promise<ServerStatus>;
@@ -465,7 +472,7 @@ export interface ElectronAPI {
     rules: any[],
   ) => Promise<{
     success: boolean;
-    steps: { label: string; text: string }[];
+    steps: { label: string; text: string; changed?: boolean; error?: string }[];
     error?: string;
   }>;
 
@@ -476,7 +483,6 @@ export interface ElectronAPI {
     topK?: number;
   }) => Promise<any>;
   onTermExtractProgress: (callback: (progress: number) => void) => Unsubscribe;
-  removeTermExtractProgressListener: () => void;
 
   // Remote Server
   remoteConnect: (config: {
@@ -487,17 +493,6 @@ export interface ElectronAPI {
   remoteStatus: () => Promise<RemoteApiResponse<RemoteRuntimeStatus>>;
   remoteModels: () => Promise<RemoteApiResponse<any[]>>;
   remoteGlossaries: () => Promise<RemoteApiResponse<any[]>>;
-  remoteTranslate: (options: any) => Promise<RemoteApiResponse<any>>;
-  remoteTaskStatus: (
-    taskId: string,
-    query?: { logFrom?: number; logLimit?: number },
-  ) => Promise<RemoteApiResponse<any>>;
-  remoteCancel: (taskId: string) => Promise<RemoteApiResponse<any>>;
-  remoteUpload: (filePath: string) => Promise<RemoteApiResponse<any>>;
-  remoteDownload: (
-    taskId: string,
-    savePath: string,
-  ) => Promise<RemoteApiResponse<{ success: boolean; path?: string }>>;
   remoteNetworkStatus: () => Promise<RemoteApiResponse<RemoteNetworkStatus>>;
   remoteNetworkEvents: (
     limit?: number,
@@ -528,9 +523,7 @@ export interface ElectronAPI {
   ) => Promise<any>;
   hfDownloadCancel: () => Promise<any>;
   onHfDownloadProgress: (callback: (data: any) => void) => Unsubscribe;
-  offHfDownloadProgress: () => void;
   onHfDownloadError: (callback: (data: any) => void) => Unsubscribe;
-  offHfDownloadError: () => void;
   hfVerifyModel: (orgName: string, filePath: string) => Promise<any>;
   hfCheckNetwork: () => Promise<any>;
 }

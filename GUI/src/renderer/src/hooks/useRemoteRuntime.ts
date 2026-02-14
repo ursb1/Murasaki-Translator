@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Language, translations } from "../lib/i18n";
 import type {
   RemoteApiResponse,
   RemoteDiagnostics,
@@ -10,21 +11,18 @@ import type {
 const CACHE_KEY = "remote_runtime_cache_v1";
 const POLL_INTERVAL_CONNECTED_MS = 3000;
 const POLL_INTERVAL_IDLE_MS = 9000;
-const DEFAULT_NOTICE =
-  "远程模式已启用：所有交互都会直接发送到服务器，并同步镜像保存到本地。";
-
-const createDefaultRuntime = (): RemoteRuntimeStatus => ({
+const createDefaultRuntime = (notice: string): RemoteRuntimeStatus => ({
   connected: false,
   executionMode: "local",
   session: null,
   fileScope: "isolated-remote",
   outputPolicy: "scoped-remote-dir",
-  notice: DEFAULT_NOTICE,
+  notice,
   syncMirrorPath: "",
   networkEventLogPath: "",
 });
 
-const createDefaultNetwork = (): RemoteNetworkStatus => ({
+const createDefaultNetwork = (notice: string): RemoteNetworkStatus => ({
   connected: false,
   executionMode: "local",
   session: null,
@@ -38,12 +36,12 @@ const createDefaultNetwork = (): RemoteNetworkStatus => ({
   retryCount: 0,
   uploadCount: 0,
   downloadCount: 0,
-  notice: DEFAULT_NOTICE,
+  notice,
   syncMirrorPath: "",
   networkEventLogPath: "",
 });
 
-const createDefaultDiagnostics = (): RemoteDiagnostics => ({
+const createDefaultDiagnostics = (notice: string): RemoteDiagnostics => ({
   executionMode: "local",
   connected: false,
   session: null,
@@ -51,11 +49,11 @@ const createDefaultDiagnostics = (): RemoteDiagnostics => ({
   activeTaskId: null,
   syncMirrorPath: "",
   networkEventLogPath: "",
-  notice: DEFAULT_NOTICE,
-  network: createDefaultNetwork(),
+  notice,
+  network: createDefaultNetwork(notice),
 });
 
-export interface RemoteErrorUi {
+interface RemoteErrorUi {
   title: string;
   description: string;
   hint?: string;
@@ -92,42 +90,46 @@ const sanitizeSession = (session: RemoteRuntimeStatus["session"]) => {
 
 const toRuntime = (
   payload: RemoteRuntimeStatus | undefined,
+  notice: string,
 ): RemoteRuntimeStatus => ({
-  ...createDefaultRuntime(),
+  ...createDefaultRuntime(notice),
   ...(payload || {}),
   session: sanitizeSession(payload?.session),
-  notice: payload?.notice || DEFAULT_NOTICE,
+  notice: payload?.notice || notice,
 });
 
 const toNetwork = (
   payload: RemoteNetworkStatus | undefined,
+  notice: string,
 ): RemoteNetworkStatus => ({
-  ...createDefaultNetwork(),
+  ...createDefaultNetwork(notice),
   ...(payload || {}),
   session: sanitizeSession(payload?.session),
-  notice: payload?.notice || DEFAULT_NOTICE,
+  notice: payload?.notice || notice,
 });
 
 const toDiagnostics = (
   payload: RemoteDiagnostics | undefined,
+  notice: string,
 ): RemoteDiagnostics => ({
-  ...createDefaultDiagnostics(),
+  ...createDefaultDiagnostics(notice),
   ...(payload || {}),
   session: sanitizeSession(payload?.session),
-  notice: payload?.notice || DEFAULT_NOTICE,
-  network: toNetwork(payload?.network),
+  notice: payload?.notice || notice,
+  network: toNetwork(payload?.network, notice),
 });
 
-export const mapRemoteApiError = (
+const mapRemoteApiError = (
+  t: (typeof translations)[Language]["remoteRuntime"],
   response?: RemoteApiResponse | null,
   fallbackMessage?: string,
 ): RemoteErrorUi => {
-  const fallback = fallbackMessage || "远程请求失败。";
+  const fallback = fallbackMessage || t.fallbackError;
   if (!response) {
     return {
-      title: "远程请求失败",
+      title: t.errorTitle,
       description: fallback,
-      hint: "请检查网络连通性与远程服务状态。",
+      hint: t.errorHint,
     };
   }
 
@@ -136,21 +138,21 @@ export const mapRemoteApiError = (
   const hint = response.actionHint || undefined;
   switch (code) {
     case "REMOTE_UNAUTHORIZED":
-      return { title: "鉴权失败", description, hint };
+      return { title: t.unauthorizedTitle, description, hint };
     case "REMOTE_TIMEOUT":
-      return { title: "请求超时", description, hint };
+      return { title: t.timeoutTitle, description, hint };
     case "REMOTE_NETWORK":
-      return { title: "网络不可达", description, hint };
+      return { title: t.networkTitle, description, hint };
     case "REMOTE_PROTOCOL":
-      return { title: "连接未就绪", description, hint };
+      return { title: t.protocolTitle, description, hint };
     case "REMOTE_NOT_FOUND":
-      return { title: "远程接口不存在", description, hint };
+      return { title: t.notFoundTitle, description, hint };
     default:
-      return { title: "远程请求失败", description, hint };
+      return { title: t.errorTitle, description, hint };
   }
 };
 
-const loadCachedSnapshot = (): {
+const loadCachedSnapshot = (notice: string): {
   runtime: RemoteRuntimeStatus;
   network: RemoteNetworkStatus;
   diagnostics: RemoteDiagnostics;
@@ -158,9 +160,9 @@ const loadCachedSnapshot = (): {
   lastUpdatedAt: number | null;
 } => {
   const fallback = {
-    runtime: createDefaultRuntime(),
-    network: createDefaultNetwork(),
-    diagnostics: createDefaultDiagnostics(),
+    runtime: createDefaultRuntime(notice),
+    network: createDefaultNetwork(notice),
+    diagnostics: createDefaultDiagnostics(notice),
     events: [] as RemoteNetworkEvent[],
     lastUpdatedAt: null as number | null,
   };
@@ -176,9 +178,9 @@ const loadCachedSnapshot = (): {
       updatedAt?: number;
     };
     return {
-      runtime: toRuntime(parsed.runtime),
-      network: toNetwork(parsed.network),
-      diagnostics: toDiagnostics(parsed.diagnostics),
+      runtime: toRuntime(parsed.runtime, notice),
+      network: toNetwork(parsed.network, notice),
+      diagnostics: toDiagnostics(parsed.diagnostics, notice),
       events: Array.isArray(parsed.events) ? parsed.events : [],
       lastUpdatedAt:
         typeof parsed.updatedAt === "number" ? parsed.updatedAt : null,
@@ -188,8 +190,12 @@ const loadCachedSnapshot = (): {
   }
 };
 
-export function useRemoteRuntime(): UseRemoteRuntimeResult {
-  const cached = useMemo(loadCachedSnapshot, []);
+export function useRemoteRuntime(lang: Language): UseRemoteRuntimeResult {
+  const remoteText = translations[lang].remoteRuntime;
+  const cached = useMemo(
+    () => loadCachedSnapshot(remoteText.noticeDefault),
+    [remoteText.noticeDefault],
+  );
   const [runtime, setRuntime] = useState<RemoteRuntimeStatus>(cached.runtime);
   const [network, setNetwork] = useState<RemoteNetworkStatus>(cached.network);
   const [diagnostics, setDiagnostics] = useState<RemoteDiagnostics>(
@@ -249,9 +255,12 @@ export function useRemoteRuntime(): UseRemoteRuntimeResult {
             api.remoteDiagnostics(),
           ]);
 
-        const nextRuntime = toRuntime(statusResult?.data);
-        const nextNetwork = toNetwork(networkResult?.data);
-        const nextDiagnostics = toDiagnostics(diagnosticsResult?.data);
+        const nextRuntime = toRuntime(statusResult?.data, remoteText.noticeDefault);
+        const nextNetwork = toNetwork(networkResult?.data, remoteText.noticeDefault);
+        const nextDiagnostics = toDiagnostics(
+          diagnosticsResult?.data,
+          remoteText.noticeDefault,
+        );
 
         let nextEvents = networkEventsRef.current;
         if (withEvents) {
@@ -265,7 +274,7 @@ export function useRemoteRuntime(): UseRemoteRuntimeResult {
         }
 
         if (!statusResult?.ok) {
-          setLastError(statusResult?.message || "获取远程状态失败。");
+          setLastError(statusResult?.message || remoteText.statusFetchFailed);
         } else {
           setLastError(null);
         }
@@ -290,14 +299,14 @@ export function useRemoteRuntime(): UseRemoteRuntimeResult {
         setRefreshing(false);
       }
     },
-    [persistCache],
+    [persistCache, remoteText.noticeDefault, remoteText.statusFetchFailed],
   );
 
   const connect = useCallback(
     async (url: string, apiKey?: string): Promise<RemoteApiResponse> => {
       const api = window.api;
       if (!api) {
-        return { ok: false, message: "渲染进程 API 不可用。" };
+        return { ok: false, message: remoteText.apiUnavailable };
       }
       const response = await api.remoteConnect({
         url: url.trim(),
@@ -306,18 +315,18 @@ export function useRemoteRuntime(): UseRemoteRuntimeResult {
       await refresh(true);
       return response;
     },
-    [refresh],
+    [refresh, remoteText.apiUnavailable],
   );
 
   const disconnect = useCallback(async (): Promise<RemoteApiResponse> => {
     const api = window.api;
     if (!api) {
-      return { ok: false, message: "渲染进程 API 不可用。" };
+      return { ok: false, message: remoteText.apiUnavailable };
     }
     const response = await api.remoteDisconnect();
     await refresh(true);
     return response;
-  }, [refresh]);
+  }, [refresh, remoteText.apiUnavailable]);
 
   useEffect(() => {
     let cancelled = false;
@@ -349,10 +358,11 @@ export function useRemoteRuntime(): UseRemoteRuntimeResult {
     lastError,
     lastUpdatedAt,
     isRemoteMode: runtime.executionMode === "remote" && runtime.connected,
-    notice: runtime.notice || network.notice || DEFAULT_NOTICE,
+    notice: runtime.notice || network.notice || remoteText.noticeDefault,
     refresh,
     connect,
     disconnect,
-    mapApiError: mapRemoteApiError,
+    mapApiError: (response, fallbackMessage) =>
+      mapRemoteApiError(remoteText, response, fallbackMessage),
   };
 }

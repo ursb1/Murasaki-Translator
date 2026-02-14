@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Download,
   X,
@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { Button } from "./ui/core";
 import { cn } from "../lib/utils";
+import { translations } from "../lib/i18n";
 
 interface HFRepo {
   id: string;
@@ -44,120 +45,6 @@ interface HFDownloadModalProps {
   mode?: "local" | "remote";
 }
 
-const t = {
-  zh: {
-    title: "从 HuggingFace 下载",
-    loading: "正在获取...",
-    selectRepo: "选择模型仓库",
-    selectFile: "选择要下载的文件",
-    noRepos: "未找到 GGUF 模型仓库",
-    noFiles: "仓库中没有 GGUF 文件",
-    download: "开始下载",
-    cancel: "取消",
-    back: "返回",
-    downloading: "下载中...",
-    resuming: "续传中...",
-    checking: "检查文件...",
-    skipped: "文件已存在，跳过",
-    downloadsLabel: "下载量",
-    complete: "下载完成！",
-    error: "下载失败",
-    retry: "重试",
-    done: "完成",
-    networkError: "网络错误，请检查代理设置",
-    checkNetwork: "测试连接",
-    networkOk: "连接正常",
-    networkFailed: "无法连接",
-    networkIdle: "等待测速...",
-    direct: "直连",
-    mirror: "镜像",
-    mirrorDesc: "国内用户如果直连较慢，可尝试切换到镜像源",
-    sourceLabel: "下载源:",
-    downloadTip: "提示：模型文件较大，请耐心等待。支持断点续传。",
-    tipTitle: "下载提示",
-    vramTitle: "显存需求",
-    vram8b: "6G 最低 / 8G+ 推荐",
-    vram14b: "10G 最低 / 12G+ 推荐",
-    model: "模型",
-    minVram: "最低显存",
-    recVram: "推荐显存",
-  },
-  en: {
-    title: "Download from HuggingFace",
-    loading: "Loading...",
-    selectRepo: "Select Model Repository",
-    selectFile: "Select file to download",
-    noRepos: "No GGUF model repositories found",
-    noFiles: "No GGUF files in repository",
-    download: "Start Download",
-    cancel: "Cancel",
-    back: "Back",
-    downloading: "Downloading...",
-    resuming: "Resuming...",
-    checking: "Checking file...",
-    skipped: "File exists, skipped",
-    downloadsLabel: "downloads",
-    complete: "Download Complete!",
-    error: "Download Failed",
-    retry: "Retry",
-    done: "Done",
-    networkError: "Network error, check proxy settings",
-    checkNetwork: "Test Connection",
-    networkOk: "Connected",
-    networkFailed: "Connection Failed",
-    networkIdle: "Waiting for check...",
-    direct: "Direct",
-    mirror: "Mirror",
-    mirrorDesc: "Switch to mirror if direct connection is slow",
-    sourceLabel: "Source:",
-    downloadTip: "Tip: Model files are large . Resume download supported.",
-    tipTitle: "Download Tip",
-    vramTitle: "VRAM Requirements",
-    vram8b: "6G min / 8G+ rec",
-    vram14b: "10G min / 12G+ rec",
-    model: "Model",
-    minVram: "Min VRAM",
-    recVram: "Rec. VRAM",
-  },
-  jp: {
-    title: "HuggingFace からダウンロード",
-    loading: "読み込み中...",
-    selectRepo: "モデルリポジトリを選択",
-    selectFile: "ダウンロードするファイルを選択",
-    noRepos: "GGUF モデルリポジトリが見つかりません",
-    noFiles: "リポジトリに GGUF ファイルがありません",
-    download: "ダウンロード開始",
-    cancel: "キャンセル",
-    back: "戻る",
-    downloading: "ダウンロード中...",
-    resuming: "再開中...",
-    checking: "ファイル確認中...",
-    skipped: "ファイル存在、スキップ",
-    downloadsLabel: "ダウンロード",
-    complete: "ダウンロード完了！",
-    error: "ダウンロード失敗",
-    retry: "再試行",
-    done: "完了",
-    networkError: "ネットワークエラー、プロキシ設定を確認してください",
-    checkNetwork: "接続テスト",
-    networkOk: "接続成功",
-    networkFailed: "接続失敗",
-    networkIdle: "測定待ち...",
-    direct: "直接",
-    mirror: "ミラー",
-    mirrorDesc: "直接接続が遅い場合はミラーに切り替え",
-    sourceLabel: "ダウンロード元:",
-    downloadTip: "モデルファイルは大きい。レジュームダウンロード対応。",
-    tipTitle: "ダウンロードのヒント",
-    vramTitle: "VRAM 要件",
-    vram8b: "6GB 最低 / 8GB+ 推奨",
-    vram14b: "10GB 最低 / 12GB+ 推奨",
-    model: "モデル",
-    minVram: "最低 VRAM",
-    recVram: "推奨 VRAM",
-  },
-};
-
 // Mirror sources
 const MIRRORS = {
   direct: { label: "HuggingFace", url: "https://huggingface.co" },
@@ -172,7 +59,7 @@ export function HFDownloadModal({
   lang,
   mode = "local",
 }: HFDownloadModalProps) {
-  const text = t[lang] || t.zh;
+  const text = translations[lang].hfDownloadModal;
   const isRemote = mode === "remote";
 
   // Step management: 'repos' -> 'files' -> 'downloading' -> 'complete'
@@ -188,6 +75,10 @@ export function HFDownloadModal({
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [inlineNotice, setInlineNotice] = useState<string | null>(null);
+  const inlineNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
   const [remoteDownloadId, setRemoteDownloadId] = useState<string | null>(null);
 
@@ -479,6 +370,14 @@ export function HFDownloadModal({
       }
     } catch (e) {
       console.error("Failed to cancel download:", e);
+      setInlineNotice(text.cancelFail);
+      if (inlineNoticeTimerRef.current) {
+        clearTimeout(inlineNoticeTimerRef.current);
+      }
+      inlineNoticeTimerRef.current = setTimeout(
+        () => setInlineNotice(null),
+        4200,
+      );
     }
     setStep("files");
     setProgress(null);
@@ -502,6 +401,14 @@ export function HFDownloadModal({
     setRemoteDownloadId(null);
     onClose();
   };
+
+  useEffect(() => {
+    return () => {
+      if (inlineNoticeTimerRef.current) {
+        clearTimeout(inlineNoticeTimerRef.current);
+      }
+    };
+  }, []);
 
   if (!isOpen) return null;
 
@@ -611,6 +518,12 @@ export function HFDownloadModal({
             </span>
           </div>
         </div>
+
+        {inlineNotice && (
+          <div className="px-5 py-2 border-b border-border/40 bg-amber-500/10 text-amber-700 text-xs">
+            {inlineNotice}
+          </div>
+        )}
 
         {/* Info Bar - Simplified Minimalist Layout */}
         <div className="px-6 py-3 bg-background border-b border-border/40">
@@ -835,3 +748,4 @@ export function HFDownloadModal({
     </div>
   );
 }
+

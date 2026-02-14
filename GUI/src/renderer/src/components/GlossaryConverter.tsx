@@ -200,7 +200,7 @@ export function GlossaryConverter({
       onClose();
     } catch (e) {
       showAlert({
-        title: "保存失败",
+        title: t.glossaryConverter.saveFailTitle,
         description: (e as Error).message,
         variant: "destructive",
       });

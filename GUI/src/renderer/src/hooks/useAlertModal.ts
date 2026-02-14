@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 
-export interface AlertConfig {
+interface AlertConfig {
   open: boolean;
   title: string;
   description: string | React.ReactNode;

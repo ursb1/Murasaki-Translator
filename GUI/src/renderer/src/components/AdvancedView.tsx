@@ -20,6 +20,7 @@ import {
 import { translations, Language } from "../lib/i18n";
 import { AlertModal } from "./ui/AlertModal";
 import { useAlertModal } from "../hooks/useAlertModal";
+import { emitToast } from "../lib/toast";
 
 interface AdvancedViewProps {
   lang: Language;
@@ -27,6 +28,7 @@ interface AdvancedViewProps {
 
 export function AdvancedView({ lang }: AdvancedViewProps) {
   const t = translations[lang];
+  const av = t.advancedView;
   const [saved, setSaved] = useState(false);
   const { alertProps } = useAlertModal();
 
@@ -228,6 +230,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
       }
     } catch (e) {
       console.error(e);
+      setSpecs({ error: String(e) });
     }
     setLoadingSpecs(false);
   };
@@ -242,6 +245,10 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
       }
     } catch (e) {
       console.error(e);
+      emitToast({
+        variant: "warning",
+        message: t.advancedView.modelInfoFail,
+      });
     }
   };
 
@@ -320,7 +327,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
           {/* --- Model Engine Settings Section --- */}
           <div className="space-y-4">
             <h3 className="text-lg font-semibold flex items-center gap-2 border-b pb-2">
-              模型与推理 (Model & Inference)
+              {av.modelInferenceTitle}
             </h3>
 
             {/* ===== GPU & 显存设置 - 一体化大卡片 ===== */}
@@ -329,7 +336,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                 {/* --- GPU 配置 --- */}
                 <div className="space-y-3">
                   <div className="text-sm font-semibold border-b pb-2">
-                    GPU 配置 (GPU Configuration)
+                    {av.gpuConfigTitle}
                   </div>
                   <div
                     className={`grid gap-4 ${deviceMode === "auto" ? "grid-cols-3" : "grid-cols-1"}`}
@@ -352,7 +359,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                       </select>
                       {deviceMode === "cpu" && (
                         <p className="text-xs text-amber-600">
-                          ⚠️ CPU 推理非常慢
+                          {av.cpuWarning}
                         </p>
                       )}
                     </div>
@@ -385,7 +392,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                             onChange={(e) => setGpuLayers(e.target.value)}
                           >
                             <option value="-1">
-                              {t.advancedView.gpuLayersAll || "全部 (All)"}
+                              {av.gpuLayersAll}
                             </option>
                             <option value="0">0 (CPU Only)</option>
                             <option value="16">16</option>
@@ -395,7 +402,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                             <option value="64">64</option>
                           </select>
                           <p className="text-xs text-muted-foreground">
-                            {t.advancedView.gpuLayersDesc || "建议保持默认"}
+                            {av.gpuLayersDesc}
                           </p>
                         </div>
                       </>
@@ -425,7 +432,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                         <div className="bg-secondary/40 px-4 py-3 border-b border-border/50 flex items-center gap-2">
                           <Sparkles className="w-4 h-4 text-primary" />
                           <h4 className="font-bold text-sm text-foreground">
-                            CoT 效率与上下文调优
+                            {av.cotTuningTitle}
                           </h4>
                         </div>
 
@@ -438,14 +445,10 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                               </div>
                               <div>
                                 <h5 className="font-semibold text-foreground mb-1">
-                                  效率原理 (Efficiency)
+                                  {av.efficiencyTitle}
                                 </h5>
                                 <p className="text-muted-foreground leading-relaxed">
-                                  CoT 占比与{" "}
-                                  <span className="text-foreground font-medium">
-                                    Batch Size
-                                  </span>{" "}
-                                  成反比。Batch 越大，纯文本生成效率越高。
+                                  {av.efficiencyDesc}
                                 </p>
                               </div>
                             </div>
@@ -455,19 +458,18 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                           <div className="space-y-2">
                             <div className="p-2.5 rounded-lg bg-secondary/20 border border-border/50 hover:bg-secondary/40 transition-colors">
                               <span className="block text-[10px] uppercase tracking-wider text-muted-foreground font-bold mb-0.5">
-                                Context (总预算)
+                                {av.contextBudgetLabel}
                               </span>
                               <div className="text-foreground/90">
-                                包含了 术语表 + Prompt + CoT思维链 + 译文
-                                的总和。
+                                {av.contextBudgetDesc}
                               </div>
                             </div>
                             <div className="p-2.5 rounded-lg bg-secondary/20 border border-border/50 hover:bg-secondary/40 transition-colors">
                               <span className="block text-[10px] uppercase tracking-wider text-muted-foreground font-bold mb-0.5">
-                                Batch Size (切片)
+                                {av.batchSizeLabel}
                               </span>
                               <div className="text-foreground/90">
-                                模型单次吞吐的文本长度，直接决定长句连贯性。
+                                {av.batchSizeDesc}
                               </div>
                             </div>
                           </div>
@@ -481,17 +483,17 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                               <div className="flex justify-between items-center mb-2">
                                 <span className="font-semibold text-amber-600 dark:text-amber-500 flex items-center gap-1.5">
                                   <div className="w-1.5 h-1.5 rounded-full bg-amber-500"></div>
-                                  推荐配置 (Recommended)
+                                  {av.recommendedConfigTitle}
                                 </span>
                                 <span className="text-[10px] bg-amber-500/10 text-amber-600 px-1.5 py-0.5 rounded border border-amber-500/20">
-                                  High Efficiency
+                                  {av.recommendedBadge}
                                 </span>
                               </div>
 
                               <div className="flex items-end gap-3 mb-2">
                                 <div className="flex-1">
                                   <div className="text-[10px] text-muted-foreground mb-1">
-                                    最优 Batch Size (Optimal)
+                                    {av.optimalBatchTitle}
                                   </div>
                                   <div className="text-2xl font-mono font-bold text-foreground leading-none">
                                     1024{" "}
@@ -507,15 +509,15 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                               </div>
 
                               <p className="text-[10px] text-muted-foreground/80 leading-snug">
-                                此区间是兼顾{" "}
+                                {av.recommendedRangePrefix}{" "}
                                 <strong className="text-foreground font-medium">
-                                  逻辑推理(CoT)
+                                  {av.recommendedRangeCoT}
                                 </strong>{" "}
-                                与{" "}
+                                {av.recommendedRangeMid}{" "}
                                 <strong className="text-foreground font-medium">
-                                  长文连贯性
+                                  {av.recommendedRangeLong}
                                 </strong>{" "}
-                                的最佳平衡点。
+                                {av.recommendedRangeSuffix}
                               </p>
                             </div>
                           </div>
@@ -547,7 +549,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                         {ctxSize}
                       </span>
                       <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider mt-1">
-                        Per-Slot Context
+                        {av.perSlotContext}
                       </span>
                     </div>
 
@@ -582,51 +584,66 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                       const effective = Math.min(4096, theoretical);
 
                       // Dynamic text generation based on effective chunk size
-                      let labelText = `最佳 (Optimal)`;
-                      let subText = `单块 ≈ ${effective} 字`;
+                      let labelText = av.batchLabelOptimal;
+                      let subText = av.batchSubApprox.replace(
+                        "{count}",
+                        String(effective),
+                      );
                       let badgeStyle =
                         "text-emerald-600 bg-emerald-500/10 border-emerald-500/20";
                       let icon = <Sparkles className="w-3 h-3" />;
 
                       if (isHardLimited) {
-                        labelText = `单块超限 (Capped)`;
-                        subText = `理论单块 > 4096 字 | 实际将截断至 4096 字`;
+                        labelText = av.batchLabelCapped;
+                        subText = av.batchSubCapped;
                         badgeStyle =
                           "text-red-600 bg-red-500/10 border-red-500/20";
                         icon = <Zap className="w-3 h-3" />;
                       } else if (isNearLimit) {
-                        labelText = `接近上限 (Near Limit)`;
-                        subText = `单块 3072-4096 字 | 已进入硬上限前风险区，请降低上下文`;
+                        labelText = av.batchLabelNearLimit;
+                        subText = av.batchSubNearLimit;
                         badgeStyle =
                           "text-amber-600 bg-amber-500/10 border-amber-500/20";
                         icon = <Info className="w-3 h-3" />;
                       } else if (effective > 2048) {
-                        labelText = `偏大 (Large)`;
-                        subText = `单块 ≈ ${effective} 字 | 可翻译更长片段，但翻译效果会大幅下降`;
+                        labelText = av.batchLabelLarge;
+                        subText = av.batchSubLarge.replace(
+                          "{count}",
+                          String(effective),
+                        );
                         badgeStyle =
                           "text-orange-600 bg-orange-500/10 border-orange-500/20";
                         icon = <Info className="w-3 h-3" />;
                       } else if (effective >= 1024 && effective <= 1536) {
-                        labelText = `推荐区间 (Recommended)`;
-                        subText = `单块 ≈ ${effective} 字 | 质量与效率最佳平衡`;
+                        labelText = av.batchLabelRecommended;
+                        subText = av.batchSubRecommended.replace(
+                          "{count}",
+                          String(effective),
+                        );
                         badgeStyle =
                           "text-emerald-600 bg-emerald-500/10 border-emerald-500/20";
                         icon = <Sparkles className="w-3 h-3" />;
                       } else if (effective > 1536 && effective <= 2048) {
-                        labelText = `可用区间 (Usable)`;
-                        subText = `单块 ≈ ${effective} 字 | 可用，建议优先控制在 1024-1536`;
+                        labelText = av.batchLabelUsable;
+                        subText = av.batchSubUsable.replace(
+                          "{count}",
+                          String(effective),
+                        );
                         badgeStyle =
                           "text-teal-600 bg-teal-500/10 border-teal-500/20";
                         icon = <Info className="w-3 h-3" />;
                       } else if (effective >= 512 && effective < 1024) {
-                        labelText = `偏小 (Small)`;
-                        subText = `单块 ≈ ${effective} 字 | 可用，但上下文利用率偏低`;
+                        labelText = av.batchLabelSmall;
+                        subText = av.batchSubSmall.replace(
+                          "{count}",
+                          String(effective),
+                        );
                         badgeStyle =
                           "text-blue-600 bg-blue-500/10 border-blue-500/20";
                         icon = <Info className="w-3 h-3" />;
                       } else {
-                        labelText = `过小 (Too Small)`;
-                        subText = `单块 < 512 字 | 分块过碎，建议适度增大上下文`;
+                        labelText = av.batchLabelTooSmall;
+                        subText = av.batchSubTooSmall;
                         badgeStyle =
                           "text-amber-600 bg-amber-500/10 border-amber-500/20";
                         icon = <Zap className="w-3 h-3" />;
@@ -747,12 +764,18 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                           <span>
                             <strong>
                               {isHardLimited
-                                ? "Context 硬上限告警："
-                                : "Context 风险区提示："}
+                                ? av.contextWarningHardTitle
+                                : av.contextWarningSoftTitle}
                             </strong>{" "}
                             {isHardLimited
-                              ? `理论单块约 ${theoretical} 字，已超过 4096 硬上限，实际将按 4096 字处理。`
-                              : `理论单块约 ${effective} 字，位于 3072-4096 风险区，建议回调上下文以提升稳定性。`}
+                              ? av.contextWarningHardDesc.replace(
+                                "{theoretical}",
+                                String(theoretical),
+                              )
+                              : av.contextWarningSoftDesc.replace(
+                                "{effective}",
+                                String(effective),
+                              )}
                           </span>
                         </p>
                       )
@@ -764,8 +787,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-semibold">
-                          {t.advancedView?.concurrency ||
-                            "并发任务数 (Parallel)"}
+                          {av.concurrency}
                         </span>
                         <div className="group relative flex items-center ml-1 z-[60]">
                           <HelpCircle className="w-3.5 h-3.5 text-muted-foreground/70 hover:text-primary cursor-help transition-colors" />
@@ -779,11 +801,11 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                               <div className="flex items-center gap-2">
                                 <Zap className="w-3.5 h-3.5 text-primary" />
                                 <span className="font-bold">
-                                  显卡并发推荐表
+                                  {av.concurrencyGuideTitle}
                                 </span>
                               </div>
                               <span className="text-[10px] text-muted-foreground bg-background/50 px-1.5 py-0.5 rounded border">
-                                Ref: 8B Q4KM @ 4k Ctx
+                                {av.concurrencyGuideRef}
                               </span>
                             </div>
                             <div className="p-0">
@@ -791,13 +813,13 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                                 <thead>
                                   <tr className="bg-muted/30 text-[10px] text-muted-foreground uppercase tracking-wider">
                                     <th className="p-2 pl-4 font-medium">
-                                      显存
+                                      {av.concurrencyGuideVram}
                                     </th>
                                     <th className="p-2 font-medium">
-                                      参考型号
+                                      {av.concurrencyGuideModel}
                                     </th>
                                     <th className="p-2 text-center font-medium text-emerald-600">
-                                      推荐
+                                      {av.concurrencyGuideRecommend}
                                     </th>
                                   </tr>
                                 </thead>
@@ -890,8 +912,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                               </table>
                             </div>
                             <div className="bg-muted/30 px-4 py-2 border-t border-border/50 text-[10px] text-muted-foreground italic leading-snug">
-                              并发数过高可能导致推理速度下降，实际推理速度由显卡
-                              FLOPS 和显存带宽以及并发数量共同决定。
+                              {av.concurrencyGuideFootnote}
                             </div>
                           </div>
                         </div>
@@ -967,7 +988,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                         >
                           <div className="flex flex-col">
                             <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">
-                              并发总吞吐估算 (Total Throughput)
+                              {av.throughputEstimate}
                             </span>
                             <div className="flex items-baseline gap-1.5 mt-1">
                               <span
@@ -1061,7 +1082,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                               >
                                 <div className="flex flex-col">
                                   <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">
-                                    显存占用估算 (VRAM Est.)
+                                    {av.vramEstimate}
                                   </span>
                                   <div className="flex items-baseline gap-1.5 mt-1">
                                     <span
@@ -1120,19 +1141,23 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                           <Info className="w-4 h-4 shrink-0 mt-0.5 opacity-80" />
                           <div className="space-y-1.5 flex-1">
                             <span className="text-[11px] font-bold uppercase tracking-wider opacity-90">
-                              系统细节与建议 (System Advisory)
+                              {av.systemAdvisoryTitle}
                             </span>
                             <ul className="text-[10px] space-y-1 leading-relaxed opacity-80 list-disc pl-3">
                               {concurrency > 1 && concurrency <= 4 && (
                                 <li className="text-primary font-medium italic">
-                                  并发模式已开启 (x{concurrency}
-                                  )。相比单线程模式，吞吐量将大幅提升，但翻译质量会稍微下降。对翻译质量要求高的文本建议保持单线程模式
+                                  {av.systemAdvisoryNormal.replace(
+                                    "{concurrency}",
+                                    String(concurrency),
+                                  )}
                                 </li>
                               )}
                               {concurrency > 4 && (
                                 <li className="text-orange-600 dark:text-orange-400 font-bold italic">
-                                  高并发模式 (x{concurrency}
-                                  )：可能影响系统稳定性，翻译质量将面临下降风险。除非显存足够大，否则不建议使用
+                                  {av.systemAdvisoryHigh.replace(
+                                    "{concurrency}",
+                                    String(concurrency),
+                                  )}
                                 </li>
                               )}
                             </ul>
@@ -1149,17 +1174,17 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
             <Card>
               <CardContent className="pt-6 space-y-6">
                 <h3 className="text-sm font-semibold border-b pb-2 flex items-center gap-2">
-                  分块与负载均衡 (Chunking & Balancing)
+                  {av.chunkingTitle}
                 </h3>
 
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <div className="space-y-0.5">
                       <div className="text-sm font-medium">
-                        启用尾部均衡 (Tail Balancing)
+                        {av.tailBalanceTitle}
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        避免最后一个分块过短，自动重新分配末尾负载
+                        {av.tailBalanceDesc}
                       </p>
                     </div>
                     <Switch
@@ -1174,7 +1199,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                       <div className="space-y-3">
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-medium text-muted-foreground">
-                            均衡块数 (Range)
+                            {av.balanceCountLabel}
                           </span>
                           <span className="text-xs font-mono bg-secondary px-2 rounded">
                             Last {balanceCount} Blocks
@@ -1196,7 +1221,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                       <div className="space-y-3">
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-medium text-muted-foreground">
-                            触发阈值 (Trigger Threshold)
+                            {av.balanceThresholdLabel}
                           </span>
                           <span className="text-xs font-mono bg-secondary px-2 rounded">
                             {Math.round(balanceThreshold * 100)}%
@@ -1213,8 +1238,10 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                           className="w-full"
                         />
                         <p className="text-[10px] text-muted-foreground">
-                          当最后一个块长度小于目标长度的{" "}
-                          {Math.round(balanceThreshold * 100)}% 时触发重平衡
+                          {av.balanceThresholdDesc.replace(
+                            "{percent}",
+                            String(Math.round(balanceThreshold * 100)),
+                          )}
                         </p>
                       </div>
                     </div>
@@ -1227,7 +1254,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
           {/* --- Inference Quality Control  --- */}
           <div className="space-y-4 pt-4">
             <h3 className="text-lg font-semibold flex items-center gap-2 border-b pb-2">
-              推理质量控制 (Inference Quality Control )
+              {av.inferenceQualityTitle}
               <span className="text-[10px] bg-blue-500/10 text-blue-600 px-2 py-0.5 rounded font-normal">
                 {t.advancedView.recommendDefault}
               </span>
@@ -1238,7 +1265,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                 {/* Granular High-Fidelity Settings */}
                 <div className="space-y-4">
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
-                    Detailed Inference Options
+                    {av.inferenceOptionsTitle}
                   </p>
 
                   {/* 1. Flash Attention */}
@@ -1246,7 +1273,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                     <div className="space-y-0.5">
                       <Label className="text-sm">Flash Attention (-fa)</Label>
                       <p className="text-[10px] text-muted-foreground">
-                        提升并发数值稳定性，降低长文本显存占用 (需 RTX 20+ GPU)
+                        {av.flashAttnDesc}
                       </p>
                     </div>
                     <Switch
@@ -1258,9 +1285,9 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                   {/* 2. Seed Locking */}
                   <div className="flex items-center justify-between gap-4">
                     <div className="space-y-0.5 flex-1">
-                      <Label className="text-sm">锁定随机种子 (Seed)</Label>
+                      <Label className="text-sm">{av.seedLockTitle}</Label>
                       <p className="text-[10px] text-muted-foreground">
-                        固定采样种子以复现结果 (留空为随机)
+                        {av.seedLockDesc}
                       </p>
                     </div>
                     <Input
@@ -1279,14 +1306,14 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="space-y-0.5">
-                        <Label className="text-sm">KV Cache 精度选择</Label>
+                        <Label className="text-sm">{av.kvCacheTitle}</Label>
                         <p className="text-[10px] text-muted-foreground">
-                          F16 为原生质量；Q8_0 用于节约显存
+                          {av.kvCacheDesc}
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] text-muted-foreground">
-                          自动 (Auto)
+                          {av.autoLabel}
                         </span>
                         <Switch
                           checked={autoKvSwitch}
@@ -1301,26 +1328,26 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                         {
                           id: "f16",
                           label: "F16",
-                          sub: "原生质量",
-                          hint: "默认推荐",
+                          sub: av.kvCacheOptions.f16.sub,
+                          hint: av.kvCacheOptions.f16.hint,
                         },
                         {
                           id: "q8_0",
                           label: "Q8_0",
-                          sub: "节约显存",
-                          hint: "显存受限可选",
+                          sub: av.kvCacheOptions.q8_0.sub,
+                          hint: av.kvCacheOptions.q8_0.hint,
                         },
                         {
                           id: "q5_1",
                           label: "Q5_1",
-                          sub: "高效型",
-                          hint: "显存紧促可选",
+                          sub: av.kvCacheOptions.q5_1.sub,
+                          hint: av.kvCacheOptions.q5_1.hint,
                         },
                         {
                           id: "q4_0",
                           label: "Q4_0",
-                          sub: "极限型",
-                          hint: "极限显存方案",
+                          sub: av.kvCacheOptions.q4_0.sub,
+                          hint: av.kvCacheOptions.q4_0.hint,
                         },
                       ].map((opt) => (
                         <button
@@ -1356,9 +1383,9 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                   <div className="space-y-4 pt-2">
                     <div className="flex items-center justify-between">
                       <div className="space-y-0.5">
-                        <Label className="text-sm">物理同步 (Batch Sync)</Label>
+                        <Label className="text-sm">{av.batchSyncTitle}</Label>
                         <p className="text-[10px] text-muted-foreground">
-                          强制 b=ub，确保预处理完整性与单线程一致性
+                          {av.batchSyncDesc}
                         </p>
                       </div>
                       <Switch
@@ -1373,7 +1400,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
                               <span className="text-[10px] font-bold uppercase text-foreground/80">
-                                批处理大小 (BATCH SIZE)
+                                {av.batchSizeTitle}
                               </span>
                               {autoBatchSwitch && (
                                 <span className="text-[8px] px-1.5 bg-primary/20 text-primary rounded-sm font-bold uppercase tracking-tighter">
@@ -1383,7 +1410,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                             </div>
                             <div className="flex items-center gap-2">
                               <span className="text-[10px] text-muted-foreground mr-1 italic">
-                                智能推荐
+                                {av.smartRecommend}
                               </span>
                               <Switch
                                 checked={autoBatchSwitch}
@@ -1413,8 +1440,10 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                               </span>
                             </div>
                             <p className="text-[9px] text-muted-foreground leading-relaxed italic border-l-2 border-primary/20 pl-2">
-                              <strong>重要提示：</strong>当并发=1时，建议设为
-                              2048；并发 {">"} 1时建议维持 1024。
+                              <strong>{av.batchSizeHintTitle}</strong>{" "}
+                              {av.batchSizeHint
+                                .replace("{single}", "2048")
+                                .replace("{multi}", "1024")}
                             </p>
                           </div>
                         </div>
@@ -1473,7 +1502,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                         {t.advancedView.maxRetries}
                       </span>
                       <span className="text-[10px] bg-blue-500/10 text-blue-600 px-1.5 py-0.5 rounded">
-                        {t.advancedView.globalLabel || "全局"}
+                        {av.globalLabel}
                       </span>
                     </div>
                     <input
@@ -1522,7 +1551,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                       />
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      此参数同时用于行数升温和术语降温
+                      {av.retryTempBoostHint}
                     </p>
                   </div>
                 </div>
@@ -1530,10 +1559,10 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                 {/* Validation Rules Sub-header */}
                 <div className="flex items-center gap-2 border-t pt-4">
                   <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                    {t.advancedView.validationRules || "验证规则"}
+                    {av.validationRules}
                   </span>
                   <span className="text-[10px] text-muted-foreground">
-                    {t.advancedView.validationRulesDesc || "(触发重试的条件)"}
+                    {av.validationRulesDesc}
                   </span>
                 </div>
 
@@ -1558,32 +1587,26 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                       {/* 1. Strict Mode Policy (Priority) */}
                       <div className="space-y-2">
                         <label className="text-xs text-muted-foreground flex items-center justify-between font-medium">
-                          <span>严格对齐模式 (Strict Mode)</span>
+                          <span>{av.strictModeLabel}</span>
                         </label>
                         <select
                           className="w-full border border-border p-1.5 rounded bg-secondary text-foreground text-xs"
                           value={strictMode}
                           onChange={(e) => setStrictMode(e.target.value)}
                         >
-                          <option value="off">
-                            关闭 (使用阈值 / Use Tolerance)
-                          </option>
-                          <option value="subs">
-                            自动 (仅字幕文件强制 / Subs Only)
-                          </option>
-                          <option value="all">
-                            强制开启 (所有文件 / Always On)
-                          </option>
+                          <option value="off">{av.strictModeOff}</option>
+                          <option value="subs">{av.strictModeSubs}</option>
+                          <option value="all">{av.strictModeAll}</option>
                         </select>
                         <p className="text-[10px] text-muted-foreground italic leading-relaxed">
                           {strictMode === "off" ? (
-                            "手动设置允许的行数误差范围。"
+                            av.strictModeOffDesc
                           ) : strictMode === "subs" ? (
-                            "字幕文件强制行数一致，其他文件使用下方阈值。"
+                            av.strictModeSubsDesc
                           ) : (
                             <span className="text-amber-500 font-medium flex items-start gap-1">
                               <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
-                              非字幕或代码等特殊场景不建议开启。模型合并、拆分段落属于正常优化，强制对齐可能增加重试风险。开启该选项后，如果行数有任何不一致，都会触发重试。
+                              {av.strictModeAllDesc}
                             </span>
                           )}
                         </p>
@@ -1597,8 +1620,8 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                           <div className="space-y-1">
                             <label className="text-xs text-muted-foreground">
                               {strictMode === "subs"
-                                ? t.advancedView.absTolerance + " (非字幕)"
-                                : t.advancedView.absTolerance}
+                                ? `${av.absTolerance}${av.nonSubtitleSuffix}`
+                                : av.absTolerance}
                             </label>
                             <input
                               type="number"
@@ -1616,8 +1639,8 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                           <div className="space-y-1">
                             <label className="text-xs text-muted-foreground">
                               {strictMode === "subs"
-                                ? t.advancedView.pctTolerance + " (非字幕)"
-                                : t.advancedView.pctTolerance}
+                                ? `${av.pctTolerance}${av.nonSubtitleSuffix}`
+                                : av.pctTolerance}
                             </label>
                             <input
                               type="number"
@@ -1735,8 +1758,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                     />
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    检测译文中术语表翻译的命中率。输出精确命中达到阈值，或 CoT
-                    中日文术语覆盖达到阈值即通过。
+                    {av.coverageDesc}
                   </p>
 
                   {enableCoverageCheck && (
@@ -1745,7 +1767,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                       <div className="grid grid-cols-3 gap-3">
                         <div className="space-y-1">
                           <label className="text-xs text-muted-foreground">
-                            输出命中阈值 (%)
+                            {av.outputHitThreshold}
                           </label>
                           <input
                             type="number"
@@ -1773,7 +1795,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                         </div>
                         <div className="space-y-1">
                           <label className="text-xs text-muted-foreground">
-                            CoT覆盖阈值 (%)
+                            {av.cotCoverageThreshold}
                           </label>
                           <input
                             type="number"
@@ -1831,7 +1853,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                       <div className="space-y-3 pt-4 border-t border-dashed mt-4">
                         <div className="flex items-center justify-between">
                           <span className="text-sm font-medium">
-                            Prompt 反馈注入
+                            {av.promptFeedback}
                           </span>
                           <Switch
                             checked={retryPromptFeedback}
@@ -1845,7 +1867,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                           />
                         </div>
                         <p className="text-xs text-muted-foreground">
-                          重试时在提示词中明确告知模型遗漏了哪些术语
+                          {av.promptFeedbackDesc}
                         </p>
                       </div>
                     </div>

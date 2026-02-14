@@ -14,7 +14,7 @@ import { spawn, ChildProcess } from "child_process";
 import { randomUUID } from "crypto";
 import fs from "fs";
 import { ServerManager } from "./serverManager";
-import { getLlamaServerPath, detectPlatform, clearGpuCache } from "./platform";
+import { getLlamaServerPath, detectPlatform } from "./platform";
 import { TranslateOptions } from "./remoteClient";
 
 let pythonProcess: ChildProcess | null = null;
@@ -54,6 +54,46 @@ const MAX_MAIN_LOGS = 1000;
 const originalConsoleLog = console.log;
 const originalConsoleWarn = console.warn;
 const originalConsoleError = console.error;
+
+const requestRemoteTaskCancel = (reason?: string): boolean => {
+  if (!remoteTranslationBridge) return false;
+  translationStopRequested = true;
+  const bridge = remoteTranslationBridge;
+  bridge.cancelRequested = true;
+  const reasonTag = reason ? ` (${reason})` : "";
+  console.log(`[Stop] Cancelling remote task${reasonTag}: ${bridge.taskId}`);
+  mainWindow?.webContents.send(
+    "log-update",
+    `System: Cancelling remote task${reasonTag}...\n`,
+  );
+  const cancellingTaskId = bridge.taskId;
+  setTimeout(() => {
+    if (
+      remoteTranslationBridge &&
+      remoteTranslationBridge.taskId === cancellingTaskId &&
+      remoteTranslationBridge.cancelRequested
+    ) {
+      remoteTranslationBridge = null;
+      if (remoteActiveTaskId === cancellingTaskId) {
+        remoteActiveTaskId = null;
+      }
+      mainWindow?.webContents.send("process-exit", {
+        code: 1,
+        signal: null,
+        stopRequested: true,
+        runId: activeRunId || undefined,
+      });
+    }
+  }, 8000);
+  void bridge.client.cancelTask(bridge.taskId).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    mainWindow?.webContents.send(
+      "log-update",
+      `ERR: Failed to cancel remote task immediately: ${message}\n`,
+    );
+  });
+  return true;
+};
 
 const safeStringify = (value: unknown): string => {
   const seen = new WeakSet<object>();
@@ -604,37 +644,6 @@ ipcMain.handle(
   },
 );
 
-// Select folder for cache file browsing
-ipcMain.handle(
-  "select-folder",
-  async (_event, options?: { title?: string; defaultPath?: string }) => {
-    const { canceled, filePaths } = await dialog.showOpenDialog({
-      title: options?.title || "选择文件夹",
-      defaultPath: options?.defaultPath,
-      properties: ["openDirectory"],
-    });
-    if (canceled) return null;
-    return filePaths[0];
-  },
-);
-
-// List cache files in a directory
-
-ipcMain.handle("list-cache-files", async (_event, folderPath: string) => {
-  try {
-    const files = fs.readdirSync(folderPath);
-    return files
-      .filter((f) => f.endsWith(".cache.json"))
-      .map((f) => ({
-        name: f,
-        path: join(folderPath, f),
-      }));
-  } catch (e) {
-    console.error("[IPC] list-cache-files error:", e);
-    return [];
-  }
-});
-
 // Multi-file selection for batch translation
 ipcMain.handle("select-files", async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog({
@@ -695,7 +704,6 @@ ipcMain.handle("server-warmup", async () => {
 // --- Remote Server IPC ---
 import {
   RemoteClient,
-  clearRemoteClient,
   RemoteClientObserver,
   RemoteNetworkEvent,
 } from "./remoteClient";
@@ -1222,10 +1230,7 @@ ipcMain.handle(
 
 ipcMain.handle("remote-disconnect", async () => {
   if (remoteTranslationBridge) {
-    const bridge = remoteTranslationBridge;
-    remoteTranslationBridge = null;
-    remoteActiveTaskId = null;
-    void bridge.client.cancelTask(bridge.taskId).catch(() => undefined);
+    requestRemoteTaskCancel("disconnect");
   }
   remoteClient = null;
   remoteSession = null;
@@ -1233,11 +1238,8 @@ ipcMain.handle("remote-disconnect", async () => {
   remoteAuthRequired = undefined;
   remoteVersion = undefined;
   remoteStatusCache = {};
-  remoteActiveTaskId = null;
   remoteNetworkStats.wsConnected = false;
   remoteNetworkStats.inFlightRequests = 0;
-  remoteClient = null;
-  clearRemoteClient();
   return {
     ok: true,
     message: "Disconnected",
@@ -1319,127 +1321,6 @@ ipcMain.handle("remote-glossaries", async () => {
     return buildRemoteErrorResponse(e, "Failed to fetch remote glossaries");
   }
 });
-
-ipcMain.handle(
-  "remote-translate",
-  async (_event, options: TranslateOptions) => {
-    if (!remoteClient) {
-      return {
-        ok: false,
-        code: "REMOTE_PROTOCOL",
-        message: "Not connected to remote server",
-      };
-    }
-    try {
-      const { taskId, status } = await remoteClient.createTranslation(options);
-      remoteActiveTaskId = taskId;
-      return {
-        ok: true,
-        data: { taskId, status },
-      };
-    } catch (e) {
-      return buildRemoteErrorResponse(e, "Failed to create remote translation task");
-    }
-  },
-);
-
-ipcMain.handle(
-  "remote-task-status",
-  async (
-    _event,
-    taskId: string,
-    query?: { logFrom?: number; logLimit?: number },
-  ) => {
-    if (!remoteClient) {
-      return {
-        ok: false,
-        code: "REMOTE_PROTOCOL",
-        message: "Not connected to remote server",
-      };
-    }
-    try {
-      const status = await remoteClient.getTaskStatus(taskId, query);
-      if (
-        remoteActiveTaskId === taskId &&
-        ["completed", "failed", "cancelled"].includes(status.status)
-      ) {
-        remoteActiveTaskId = null;
-      }
-      return {
-        ok: true,
-        data: status,
-      };
-    } catch (e) {
-      return buildRemoteErrorResponse(e, "Failed to fetch remote task status");
-    }
-  },
-);
-
-ipcMain.handle("remote-cancel", async (_event, taskId: string) => {
-  if (!remoteClient) {
-    return {
-      ok: false,
-      code: "REMOTE_PROTOCOL",
-      message: "Not connected to remote server",
-    };
-  }
-  try {
-    const result = await remoteClient.cancelTask(taskId);
-    if (remoteActiveTaskId === taskId) {
-      remoteActiveTaskId = null;
-    }
-    return {
-      ok: true,
-      data: result,
-    };
-  } catch (e) {
-    return buildRemoteErrorResponse(e, "Failed to cancel remote task");
-  }
-});
-
-ipcMain.handle("remote-upload", async (_event, filePath: string) => {
-  if (!remoteClient) {
-    return {
-      ok: false,
-      code: "REMOTE_PROTOCOL",
-      message: "Not connected to remote server",
-    };
-  }
-  try {
-    const uploaded = await remoteClient.uploadFile(filePath);
-    return {
-      ok: true,
-      data: uploaded,
-    };
-  } catch (e) {
-    return buildRemoteErrorResponse(e, "Failed to upload file to remote server");
-  }
-});
-
-ipcMain.handle(
-  "remote-download",
-  async (_event, taskId: string, savePath: string) => {
-    if (!remoteClient) {
-      return {
-        ok: false,
-        code: "REMOTE_PROTOCOL",
-        message: "Not connected to remote server",
-      };
-    }
-    try {
-      await remoteClient.downloadResult(taskId, savePath);
-      return {
-        ok: true,
-        data: { success: true, path: savePath },
-      };
-    } catch (e) {
-      return buildRemoteErrorResponse(
-        e,
-        "Failed to download result from remote server",
-      );
-    }
-  },
-);
 
 ipcMain.handle("remote-network-status", async () => {
   return {
@@ -2297,6 +2178,71 @@ ipcMain.handle("read-server-log", async () => {
   }
 });
 
+// Rule System - Test Rules
+ipcMain.removeHandler("test-rules");
+ipcMain.handle("test-rules", async (_event, payload) => {
+  try {
+    const middlewareDir = getMiddlewarePath();
+    const pythonInfo = getScriptPythonInfo();
+    const scriptPath = join(middlewareDir, "test_rules.py");
+
+    if (!fs.existsSync(scriptPath)) {
+      return { success: false, error: "test_rules.py not found" };
+    }
+
+    const inputPayload = {
+      text: payload?.text || "",
+      rules: Array.isArray(payload?.rules) ? payload.rules : [],
+      source_text: payload?.text || "",
+    };
+
+    return await new Promise((resolve) => {
+      const proc = spawnPythonProcess(pythonInfo, [scriptPath], {
+        cwd: middlewareDir,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+
+      let stdout = "";
+      let stderr = "";
+
+      proc.stdout?.on("data", (data) => {
+        stdout += data.toString();
+      });
+
+      proc.stderr?.on("data", (data) => {
+        stderr += data.toString();
+      });
+
+      proc.on("close", (code) => {
+        const parsed =
+          extractLastJsonObject<any>(stdout) ||
+          extractLastJsonObject<any>(stderr);
+        if (parsed) {
+          resolve(parsed);
+          return;
+        }
+
+        resolve({
+          success: false,
+          error:
+            stderr ||
+            stdout ||
+            `Process exited with code ${code ?? "unknown"}`,
+        });
+      });
+
+      try {
+        proc.stdin?.write(JSON.stringify(inputPayload), "utf-8");
+        proc.stdin?.end();
+      } catch (e) {
+        resolve({ success: false, error: String(e) });
+      }
+    });
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+});
+
 ipcMain.handle("get-models", async () => {
   // Models are now in Documents/MurasakiTranslator/models
   const userDataPath = getUserDataPath();
@@ -2495,19 +2441,6 @@ ipcMain.handle("get-hardware-specs", async () => {
   } finally {
     hardwareSpecsInFlight = null;
   }
-});
-
-// 刷新 GPU 检测（清理缓存并重新探测）
-ipcMain.handle("refresh-gpu-detection", async () => {
-  clearGpuCache();
-  const platformInfo = detectPlatform();
-  console.log("[Platform] GPU detection refreshed:", platformInfo);
-  return {
-    os: platformInfo.os,
-    arch: platformInfo.arch,
-    backend: platformInfo.backend,
-    binaryDir: platformInfo.binaryDir,
-  };
 });
 
 ipcMain.handle("check-env-component", async (_event, component: string) => {
@@ -2847,59 +2780,6 @@ ipcMain.handle("fix-env-component", async (_event, component: string) => {
           errorOutput,
         });
       }
-    });
-  });
-});
-
-ipcMain.handle("test-rules", async (_event, { text, rules }) => {
-  const middlewareDir = getMiddlewarePath();
-  const scriptPath = join(middlewareDir, "test_rules.py");
-  const pythonCmd = getPythonPath();
-
-  return new Promise((resolve) => {
-    if (!fs.existsSync(scriptPath)) {
-      resolve({ success: false, error: `Test script missing: ${scriptPath}` });
-      return;
-    }
-
-    const proc = spawnPythonProcess(pythonCmd, ["test_rules.py"], {
-      cwd: middlewareDir,
-      // env merged in helper
-    });
-
-    let output = "";
-    let errorOutput = "";
-
-    proc.stdout?.on("data", (d) => (output += d.toString()));
-    proc.stderr?.on("data", (d) => (errorOutput += d.toString()));
-
-    // Send data to stdin
-    if (proc.stdin) {
-      proc.stdin.write(JSON.stringify({ text, rules }));
-      proc.stdin.end();
-    }
-
-    proc.on("close", (code) => {
-      if (code !== 0) {
-        resolve({
-          success: false,
-          error: `Python error (code ${code}): ${errorOutput}`,
-        });
-        return;
-      }
-      try {
-        const result = JSON.parse(output);
-        resolve(result);
-      } catch (e) {
-        resolve({
-          success: false,
-          error: `Invalid JSON from Python: ${output}`,
-        });
-      }
-    });
-
-    proc.on("error", (err) => {
-      resolve({ success: false, error: `Failed to spawn: ${err.message}` });
     });
   });
 });
@@ -4561,37 +4441,7 @@ ipcMain.on(
 
 ipcMain.on("stop-translation", () => {
   if (remoteTranslationBridge) {
-    translationStopRequested = true;
-    const bridge = remoteTranslationBridge;
-    bridge.cancelRequested = true;
-    console.log(`[Stop] Cancelling remote task: ${bridge.taskId}`);
-    mainWindow?.webContents.send("log-update", "System: Cancelling remote task...\n");
-    const cancellingTaskId = bridge.taskId;
-    setTimeout(() => {
-      if (
-        remoteTranslationBridge &&
-        remoteTranslationBridge.taskId === cancellingTaskId &&
-        remoteTranslationBridge.cancelRequested
-      ) {
-        remoteTranslationBridge = null;
-        if (remoteActiveTaskId === cancellingTaskId) {
-          remoteActiveTaskId = null;
-        }
-        mainWindow?.webContents.send("process-exit", {
-          code: 1,
-          signal: null,
-          stopRequested: true,
-          runId: activeRunId || undefined,
-        });
-      }
-    }, 8000);
-    void bridge.client.cancelTask(bridge.taskId).catch((error: unknown) => {
-      const message = error instanceof Error ? error.message : String(error);
-      mainWindow?.webContents.send(
-        "log-update",
-        `ERR: Failed to cancel remote task immediately: ${message}\n`,
-      );
-    });
+    requestRemoteTaskCancel();
     return;
   }
 

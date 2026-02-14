@@ -18,6 +18,7 @@ import {
   ShieldX,
   ShieldQuestion,
   Loader2,
+  AlertTriangle,
 } from "lucide-react";
 import { Button } from "./ui/core";
 import { translations, Language } from "../lib/i18n";
@@ -52,6 +53,7 @@ export function ModelView({
   );
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [loading, setLoading] = useState(false);
+  const [modelsError, setModelsError] = useState<string | null>(null);
   const [downloadTab, setDownloadTab] = useState<"ms" | "hf" | "bd">("hf");
   const [showGuide, setShowGuide] = useState(false);
   const [showHFModal, setShowHFModal] = useState(false);
@@ -69,6 +71,7 @@ export function ModelView({
   const [verifyStatus, setVerifyStatus] = useState<
     Record<string, VerifyStatus>
   >({});
+  const [verifyErrors, setVerifyErrors] = useState<Record<string, string>>({});
 
   // Cache key for verification results
   const VERIFY_CACHE_KEY = "model_verification_cache";
@@ -99,6 +102,7 @@ export function ModelView({
 
   const fetchModels = async () => {
     setLoading(true);
+    setModelsError(null);
     try {
       // @ts-ignore
       const files = await window.api.getModels();
@@ -138,6 +142,7 @@ export function ModelView({
       }
     } catch (e) {
       console.error(e);
+      setModelsError(String(e) || "Unknown error");
     }
     setLoading(false);
   };
@@ -214,11 +219,16 @@ export function ModelView({
   // Verify model integrity against HuggingFace
   const verifyModel = async (model: string, sizeGB: number) => {
     setVerifyStatus((prev) => ({ ...prev, [model]: "verifying" }));
+    setVerifyErrors((prev) => ({ ...prev, [model]: "" }));
     try {
       // @ts-ignore - Get models directory path
       const modelsDir = await window.api?.getModelsPath?.();
       if (!modelsDir) {
         setVerifyStatus((prev) => ({ ...prev, [model]: "unknown" }));
+        setVerifyErrors((prev) => ({
+          ...prev,
+          [model]: t.modelView.modelsPathUnavailable,
+        }));
         return;
       }
 
@@ -233,6 +243,10 @@ export function ModelView({
       let status: VerifyStatus = "unknown";
       if (result?.error) {
         status = "unknown";
+        setVerifyErrors((prev) => ({
+          ...prev,
+          [model]: String(result.error),
+        }));
       } else if (result?.status === "valid") {
         status = "valid";
       } else if (result?.status === "invalid") {
@@ -246,6 +260,10 @@ export function ModelView({
     } catch (e) {
       console.error("Verification failed:", e);
       setVerifyStatus((prev) => ({ ...prev, [model]: "unknown" }));
+      setVerifyErrors((prev) => ({
+        ...prev,
+        [model]: String(e),
+      }));
     }
   };
 
@@ -304,13 +322,13 @@ export function ModelView({
                   onClick={() => setModelScope("local")}
                   className={`px-4 py-1.5 text-xs font-semibold rounded-md transition-all ${modelScope === "local" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}
                 >
-                  {lang === "en" ? "Local" : lang === "jp" ? "ローカル" : "本地"}
+                  {t.modelView.scopeLocal}
                 </button>
                 <button
                   onClick={() => setModelScope("remote")}
                   className={`px-4 py-1.5 text-xs font-semibold rounded-md transition-all ${modelScope === "remote" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}
                 >
-                  {lang === "en" ? "Remote" : lang === "jp" ? "リモート" : "远程"}
+                  {t.modelView.scopeRemote}
                 </button>
               </div>
               {remoteRuntime?.runtime?.session?.url && (
@@ -490,7 +508,7 @@ export function ModelView({
                             onClick={() => setShowHFModal(true)}
                           >
                             <Download className="w-4 h-4 mr-2" />
-                            一键下载
+                            {t.modelView.downloadOneClick}
                           </Button>
                           <Button
                             variant="ghost"
@@ -504,7 +522,7 @@ export function ModelView({
                             }
                           >
                             <ExternalLink className="w-3 h-3 mr-1" />
-                            打开仓库页面
+                            {t.modelView.openRepo}
                           </Button>
                         </div>
                       )}
@@ -546,7 +564,10 @@ export function ModelView({
                 <div className="flex items-center gap-4">
                   <h3 className="font-bold text-lg flex items-center gap-2">
                     <HardDrive className="w-5 h-5 text-muted-foreground" />
-                    远程模型 ({remoteModels.length})
+                    {t.modelView.remoteModelsTitle.replace(
+                      "{count}",
+                      String(remoteModels.length),
+                    )}
                   </h3>
                 </div>
                 <div className="flex items-center gap-2">
@@ -556,7 +577,7 @@ export function ModelView({
                     onClick={() => setShowRemoteHFModal(true)}
                     className="h-8 text-xs"
                   >
-                    远程下载
+                    {t.modelView.remoteDownload}
                   </Button>
                   <Button
                     variant="ghost"
@@ -575,9 +596,11 @@ export function ModelView({
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-4 pb-10">
                 {remoteModels.length === 0 ? (
                   <div className="col-span-full flex flex-col items-center justify-center py-12 border-2 border-dashed border-border/50 rounded-xl bg-secondary/5">
-                    <p className="font-medium text-muted-foreground">暂无远程模型</p>
+                    <p className="font-medium text-muted-foreground">
+                      {t.modelView.noRemoteModels}
+                    </p>
                     <p className="text-xs text-muted-foreground/60 mt-1">
-                      请在远程服务器下载或同步模型后刷新列表
+                      {t.modelView.noRemoteModelsHint}
                     </p>
                     <div className="flex items-center gap-3 mt-4">
                       <Button variant="outline" size="sm" onClick={fetchRemoteModels}>
@@ -589,7 +612,7 @@ export function ModelView({
                         className="bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 text-white border-0 shadow-md hover:scale-105 transition-all"
                         onClick={() => setShowRemoteHFModal(true)}
                       >
-                        远程下载
+                        {t.modelView.remoteDownload}
                       </Button>
                     </div>
                   </div>
@@ -659,6 +682,24 @@ export function ModelView({
               </Button>
             </div>
 
+            {modelsError && (
+              <div className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-600">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                <span className="flex-1">
+                  {t.modelView.loadFailed}: {modelsError}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={fetchModels}
+                >
+                  <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                  {t.modelView.refresh}
+                </Button>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-4 pb-10">
               {models.length === 0 ? (
                 <div className="col-span-full flex flex-col items-center justify-center py-16 border-2 border-dashed border-border/50 rounded-xl bg-secondary/5 group/empty transition-colors hover:border-purple-500/30">
@@ -688,7 +729,7 @@ export function ModelView({
                       onClick={() => setShowHFModal(true)}
                     >
                       <Download className="w-3.5 h-3.5 mr-1.5" />
-                      一键下载官方模型
+                      {t.modelView.downloadOfficial}
                     </Button>
                   </div>
                 </div>
@@ -773,17 +814,27 @@ export function ModelView({
                                             ? "bg-yellow-500/10 text-yellow-600 border-yellow-500/20"
                                             : "bg-secondary/50 text-muted-foreground border-border hover:bg-secondary hover:text-foreground"
                                   }`}
-                                  title={
-                                    verifyStatus[model] === "verifying"
-                                      ? "校验中..."
-                                      : verifyStatus[model] === "valid"
-                                        ? "文件完整，与官方版本一致"
-                                        : verifyStatus[model] === "invalid"
-                                          ? "文件不完整，与官方版本大小不符"
-                                          : verifyStatus[model] === "unknown"
-                                            ? "无法匹配官方文件，可能是非官方版本"
-                                            : "点击校验完整性"
-                                  }
+                                  title={(() => {
+                                    const verifyText = t.modelView.verify;
+                                    if (verifyStatus[model] === "verifying") {
+                                      return verifyText.verifyingTitle;
+                                    }
+                                    if (verifyStatus[model] === "valid") {
+                                      return verifyText.validTitle;
+                                    }
+                                    if (verifyStatus[model] === "invalid") {
+                                      return verifyText.invalidTitle;
+                                    }
+                                    if (verifyStatus[model] === "unknown") {
+                                      return verifyErrors[model]
+                                        ? verifyText.failedTitle.replace(
+                                          "{error}",
+                                          verifyErrors[model],
+                                        )
+                                        : verifyText.unknownTitle;
+                                    }
+                                    return verifyText.promptTitle;
+                                  })()}
                                 >
                                   {verifyStatus[model] === "verifying" ? (
                                     <Loader2 className="w-2.5 h-2.5 animate-spin" />
@@ -795,14 +846,14 @@ export function ModelView({
                                     <ShieldQuestion className="w-2.5 h-2.5" />
                                   )}
                                   {verifyStatus[model] === "valid"
-                                    ? "完整"
+                                    ? t.modelView.verify.validLabel
                                     : verifyStatus[model] === "invalid"
-                                      ? "不完整"
+                                      ? t.modelView.verify.invalidLabel
                                       : verifyStatus[model] === "verifying"
-                                        ? "校验中"
+                                        ? t.modelView.verify.verifyingLabel
                                         : verifyStatus[model] === "unknown"
-                                          ? "未知"
-                                          : "校验"}
+                                          ? t.modelView.verify.unknownLabel
+                                          : t.modelView.verify.actionLabel}
                                 </button>
                               </div>
                             )}

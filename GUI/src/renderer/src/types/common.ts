@@ -25,6 +25,8 @@ export interface FileConfig {
   // Features
   alignmentMode?: boolean;
   saveCot?: boolean;
+  rulesPreProfileId?: string;
+  rulesPostProfileId?: string;
   flashAttn?: boolean;
   kvCacheType?: string;
   useLargeBatch?: boolean;

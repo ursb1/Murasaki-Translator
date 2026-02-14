@@ -218,20 +218,3 @@ export function getVariants(char: string): Set<string> | undefined {
   return VARIANT_MAP.get(char);
 }
 
-// 检查两个 CJK 字符是否匹配（包括异体字）
-export function isCJKMatch(a: string, b: string): boolean {
-  if (a === b) return true;
-  const variants = VARIANT_MAP.get(a);
-  return variants ? variants.has(b) : false;
-}
-
-// 标准化字符（简化版：直接返回原字符，因为我们用 Set 匹配）
-export function normalizeToSimplified(char: string): string {
-  // 如果有变体，返回变体集合中的第一个（通常是简体）
-  const variants = VARIANT_MAP.get(char);
-  if (variants && variants.size > 0) {
-    // 返回第一个变体
-    return variants.values().next().value || char;
-  }
-  return char;
-}

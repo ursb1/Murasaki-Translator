@@ -1,6 +1,7 @@
 import React from "react";
 import { Card, Button } from "./core";
 import { AlertTriangle, Info, CheckCircle2, X, RefreshCw } from "lucide-react";
+import { translations, Language } from "../../lib/i18n";
 
 interface AlertModalProps {
   open: boolean;
@@ -15,6 +16,7 @@ interface AlertModalProps {
   showIcon?: boolean;
   closeOnConfirm?: boolean;
   confirmLoading?: boolean;
+  confirmLoadingText?: string;
 }
 
 export function AlertModal({
@@ -24,14 +26,32 @@ export function AlertModal({
   description,
   variant = "default",
   onConfirm,
-  confirmText = "确定",
-  cancelText = "取消",
+  confirmText,
+  cancelText,
   showCancel = false,
   showIcon = true,
   closeOnConfirm = true,
   confirmLoading = false,
+  confirmLoadingText,
 }: AlertModalProps) {
   if (!open) return null;
+
+  const resolveLang = (): Language => {
+    const stored = localStorage.getItem("app_lang");
+    if (stored === "zh" || stored === "en" || stored === "jp") {
+      return stored;
+    }
+    const nav = (navigator?.language || "").toLowerCase();
+    if (nav.startsWith("ja")) return "jp";
+    if (nav.startsWith("en")) return "en";
+    return "zh";
+  };
+
+  const lang = resolveLang();
+  const t = translations[lang];
+  const resolvedConfirmText = confirmText ?? t.common.confirm;
+  const resolvedCancelText = cancelText ?? t.common.cancel;
+  const resolvedLoadingText = confirmLoadingText ?? t.common.processing;
 
   const getIcon = () => {
     switch (variant) {
@@ -102,7 +122,7 @@ export function AlertModal({
         <div className="p-6 pt-0 flex justify-end gap-2">
           {showCancel && (
             <Button variant="outline" onClick={() => onOpenChange(false)}>
-              {cancelText}
+              {resolvedCancelText}
             </Button>
           )}
           <Button
@@ -116,10 +136,10 @@ export function AlertModal({
             {confirmLoading ? (
               <>
                 <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                检测中...
+                {resolvedLoadingText}
               </>
             ) : (
-              confirmText
+              resolvedConfirmText
             )}
           </Button>
         </div>
