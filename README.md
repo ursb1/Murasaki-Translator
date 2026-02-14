@@ -153,14 +153,6 @@ ssh -N -L 8000:127.0.0.1:8000 user@your-server
 - `Server URL`: `http://127.0.0.1:8000`
 - `API Key`: 你部署时设置的 `API_KEY`
 
-需要替换的字段：
-- `MODEL_PAGE_URL` / `MODEL_URL`：换成你要下载的模型地址
-- `MODEL_PATH`：模型实际保存路径
-- `API_KEY`：换成强度足够的密钥
-- `user@your-server`：你的 SSH 用户名与服务器地址
-- `--port`：端口冲突时请更换
-- `--host`：需要局域网/公网访问时可改为 `0.0.0.0`
-
 ### 性能参考
 在 **GeForce RTX 4080 Laptop** 环境下，运行 **4-bit 量化模型**，4个并发任务：
 - **平均速度**: ~200 字/s
