@@ -1611,6 +1611,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       const pickCustom = <T,>(customValue: T | undefined, globalValue: T): T =>
         customValue !== undefined ? customValue : globalValue;
 
+      const normalizedChunkMode: "doc" | "line" = "doc";
+
       const resolveRulesFromProfile = (
         mode: "pre" | "post",
         profileId?: string,
@@ -1687,6 +1689,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
             : parseInt(localStorage.getItem("config_gpu") || "-1", 10) || -1,
         ctxSize: ctxValue.toString(),
         chunkSize: calculatedChunkSize.toString(),
+        chunkMode: normalizedChunkMode,
         outputDir:
           customConfig.outputDir !== undefined
             ? customConfig.outputDir
@@ -1894,13 +1897,14 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       remoteInfoRef.current = null;
 
       const finalConfig = { ...config, highFidelity: undefined };
+      const recordModelLabel =
+        effectiveModelPath.split(/[/\\]/).pop() || effectiveModelPath;
 
       const newRecord: TranslationRecord = {
         id: recordId,
         fileName: inputPath.split(/[/\\]/).pop() || inputPath,
         filePath: inputPath,
-        modelName:
-          effectiveModelPath.split(/[/\\]/).pop() || effectiveModelPath,
+        modelName: recordModelLabel,
         startTime: new Date().toISOString(),
         status: "running",
         totalBlocks: 0,

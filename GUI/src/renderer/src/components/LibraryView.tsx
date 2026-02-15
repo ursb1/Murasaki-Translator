@@ -253,6 +253,7 @@ const texts = {
     browse: "浏览",
     reset: "重置",
     notSet: "未设置",
+    masked: "已隐藏",
     unnamedProfile: "未命名配置",
     currentGlobal: "当前全局",
     seed: "随机种子 (Seed)",
@@ -419,6 +420,7 @@ const texts = {
     reset: "Reset",
 
     notSet: "Not set",
+    masked: "Hidden",
     unnamedProfile: "Untitled profile",
 
     presetOptions: {
@@ -583,6 +585,7 @@ const texts = {
     reset: "リセット",
 
     notSet: "未設定",
+    masked: "非表示",
     unnamedProfile: "名称未設定",
 
     presetOptions: {
@@ -796,7 +799,7 @@ export function FileConfigModal({
     onChange: (val: string) => void;
     placeholder?: string;
     onBrowse?: () => void;
-    type?: "text" | "number";
+    type?: "text" | "number" | "password";
     min?: number;
     max?: number;
     step?: number;

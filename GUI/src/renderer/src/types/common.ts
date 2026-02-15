@@ -46,6 +46,7 @@ export interface FileConfig {
   balanceCount?: number;
   seed?: number;
   preset?: string;
+  chunkMode?: "doc" | "line";
 
   // System
   executionMode?: "local" | "remote";

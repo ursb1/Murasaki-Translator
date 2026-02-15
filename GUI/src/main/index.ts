@@ -17,6 +17,8 @@ import fs from "fs";
 import { ServerManager } from "./serverManager";
 import { getLlamaServerPath, detectPlatform } from "./platform";
 import { TranslateOptions } from "./remoteClient";
+import { registerPipelineV2Profiles } from "./pipelineV2Profiles";
+import { registerPipelineV2Runner } from "./pipelineV2Runner";
 
 let pythonProcess: ChildProcess | null = null;
 let translationStopRequested = false;
@@ -443,6 +445,22 @@ app.whenReady().then(() => {
   });
 
   createWindow();
+  registerPipelineV2Profiles({
+    getPythonPath,
+    getMiddlewarePath,
+  });
+  registerPipelineV2Runner({
+    getPythonPath,
+    getMiddlewarePath,
+    sendLog: ({ runId, message, level }) => {
+      if (!mainWindow) return;
+      mainWindow.webContents.send("pipelinev2-log", {
+        runId,
+        message,
+        level: level || "info",
+      });
+    },
+  });
 
   app.on("activate", function () {
     // On macOS it's common to re-create a window in the app when the

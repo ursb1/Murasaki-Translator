@@ -9,6 +9,7 @@ import { GlossaryView } from "./components/GlossaryView";
 import { HistoryView } from "./components/HistoryView";
 import { LibraryView } from "./components/LibraryView";
 import ProofreadView from "./components/ProofreadView";
+import { ApiManagerView } from "./components/ApiManagerView";
 
 import { Language, translations } from "./lib/i18n";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -24,6 +25,7 @@ import { ToastHost } from "./components/ui/ToastHost";
 export type View =
   | "dashboard"
   | "library"
+  | "api_manager"
   | "settings"
   | "model"
   | "glossary"
@@ -57,6 +59,7 @@ function AppContent() {
       const validViews: View[] = [
         "dashboard",
         "library",
+        "api_manager",
         "settings",
         "model",
         "service",
@@ -140,6 +143,7 @@ function AppContent() {
       {view === "pre" && <RuleEditor lang={lang} mode="pre" />}
       {view === "post" && <RuleEditor lang={lang} mode="post" />}
       {view === "advanced" && <AdvancedView lang={lang} />}
+      {view === "api_manager" && <ApiManagerView lang={lang} />}
       {view === "history" && (
         <HistoryView lang={lang} onNavigate={handleSwitchView} />
       )}

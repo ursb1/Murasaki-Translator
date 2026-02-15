@@ -13,6 +13,7 @@ import {
   ClipboardCheck,
   Layers,
   Server,
+  Globe,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { Tooltip } from "./ui/core";
@@ -62,6 +63,7 @@ export function Sidebar({ lang, setLang, view, setView }: SidebarProps) {
     { icon: ClipboardCheck, label: t.nav.proofread, id: "proofread" },
     // 配置
     { icon: Bot, label: t.nav.model, id: "model" },
+    { icon: Globe, label: t.nav.apiManager, id: "api_manager" },
     { icon: BookOpen, label: t.nav.glossary, id: "glossary" },
     // 文本处理
     { icon: FileInput, label: t.nav.pre, id: "pre" },

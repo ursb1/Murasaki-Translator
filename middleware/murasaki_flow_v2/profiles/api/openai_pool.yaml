@@ -1,0 +1,6 @@
+id: openai_pool
+name: OpenAI Pool
+type: pool
+strategy: round_robin
+members:
+  - openai_default

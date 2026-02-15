@@ -62,6 +62,28 @@ const api = {
       config,
       runId,
     }),
+  pipelineV2ProfilesPath: () => ipcRenderer.invoke("pipelinev2-profiles-path"),
+  pipelineV2ProfilesList: (kind: string) =>
+    ipcRenderer.invoke("pipelinev2-profiles-list", kind),
+  pipelineV2ProfilesLoad: (kind: string, id: string) =>
+    ipcRenderer.invoke("pipelinev2-profiles-load", kind, id),
+  pipelineV2ProfilesSave: (kind: string, id: string, yamlText: string) =>
+    ipcRenderer.invoke("pipelinev2-profiles-save", kind, id, yamlText),
+  pipelineV2ProfilesDelete: (kind: string, id: string) =>
+    ipcRenderer.invoke("pipelinev2-profiles-delete", kind, id),
+  pipelineV2Status: () => ipcRenderer.invoke("pipelinev2-status"),
+  pipelineV2Retry: () => ipcRenderer.invoke("pipelinev2-retry"),
+  pipelineV2ApiTest: (payload: {
+    baseUrl: string;
+    apiKey?: string;
+    timeoutMs?: number;
+  }) => ipcRenderer.invoke("pipelinev2-api-test", payload),
+  pipelineV2Run: (payload: {
+    filePath: string;
+    pipelineId: string;
+    profilesDir: string;
+    outputPath?: string;
+  }) => ipcRenderer.invoke("pipelinev2-run", payload),
   getHardwareSpecs: () => ipcRenderer.invoke("get-hardware-specs"),
   stopTranslation: () => ipcRenderer.send("stop-translation"),
   getGlossaries: () => ipcRenderer.invoke("get-glossaries"),
@@ -77,6 +99,8 @@ const api = {
     ipcRenderer.send("show-notification", { title, body }),
   onLogUpdate: (callback: (log: string) => void) =>
     addIpcListener("log-update", callback),
+  onPipelineV2Log: (callback: (data: any) => void) =>
+    addIpcListener("pipelinev2-log", callback),
   onProcessExit: (callback: (payload: ProcessExitPayload) => void) =>
     addIpcListener("process-exit", (payload: any) => {
       if (typeof payload === "number" || payload === null) {

@@ -1,0 +1,13 @@
+id: prompt_default
+name: Default Prompt
+system_template: |
+  You are a professional translator. Preserve meaning and tone. Do not add extra content.
+user_template: |
+  {{context_before}}
+  {{source}}
+  {{context_after}}
+  {{glossary}}
+context:
+  before_lines: 0
+  after_lines: 0
+  joiner: "\n"

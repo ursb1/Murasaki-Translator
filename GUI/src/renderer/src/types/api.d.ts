@@ -20,6 +20,7 @@ export interface TranslationConfig {
   lineCheck: boolean;
   lineToleranceAbs: number;
   lineTolerancePct: number;
+  chunkMode?: "doc" | "line";
   anchorCheck: boolean;
   anchorCheckRetries: number;
   saveCot: boolean;
@@ -303,6 +304,53 @@ export interface ElectronAPI {
     config: any,
     runId?: string,
   ) => void;
+  pipelineV2ProfilesPath: () => Promise<string>;
+  pipelineV2ProfilesList: (
+    kind: string,
+  ) => Promise<{ id: string; name: string; filename: string }[]>;
+  pipelineV2ProfilesLoad: (
+    kind: string,
+    id: string,
+  ) => Promise<{ id: string; name: string; yaml: string; data: any } | null>;
+  pipelineV2ProfilesSave: (
+    kind: string,
+    id: string,
+    yamlText: string,
+  ) => Promise<{ ok: boolean; id?: string; error?: string; warnings?: string[] }>;
+  pipelineV2ProfilesDelete: (
+    kind: string,
+    id: string,
+  ) => Promise<{ ok: boolean }>;
+  pipelineV2Status: () => Promise<{
+    mode: "server" | "local";
+    ok: boolean;
+    error?: string;
+    detail?: string;
+  }>;
+  pipelineV2Retry: () => Promise<{
+    mode: "server" | "local";
+    ok: boolean;
+    error?: string;
+    detail?: string;
+  }>;
+  pipelineV2ApiTest: (payload: {
+    baseUrl: string;
+    apiKey?: string;
+    timeoutMs?: number;
+  }) => Promise<{
+    ok: boolean;
+    status?: number;
+    latencyMs?: number;
+    url?: string;
+    message?: string;
+    modelCount?: number;
+  }>;
+  pipelineV2Run: (payload: {
+    filePath: string;
+    pipelineId: string;
+    profilesDir: string;
+    outputPath?: string;
+  }) => Promise<{ ok: boolean; runId: string; code?: number }>;
   stopTranslation: () => void;
   retranslateBlock: (options: {
     src: string;
@@ -311,6 +359,9 @@ export interface ElectronAPI {
     config: any;
   }) => Promise<any>;
   onLogUpdate: (callback: (chunk: string) => void) => Unsubscribe;
+  onPipelineV2Log: (
+    callback: (data: { runId: string; message: string; level?: string }) => void,
+  ) => Unsubscribe;
   onProcessExit: (callback: (payload: ProcessExitPayload) => void) => Unsubscribe;
 
   // Retranslate Progress
