@@ -210,6 +210,11 @@ export const validateProfileLocal = async (
         result.errors.push("missing_any_parsers");
       }
     }
+    if (parserType === "python") {
+      if (!data.options?.script && !data.options?.path) {
+        result.errors.push("missing_script");
+      }
+    }
   }
 
   if (kind === "policy") {

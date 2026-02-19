@@ -11,7 +11,6 @@ type TemplateSelectorItem = {
   desc: string;
   group: string;
   yaml: string;
-  isCore?: boolean;
   custom?: boolean;
 };
 
@@ -20,7 +19,6 @@ type TemplateSelectorStrings = {
   searchPlaceholder: string;
   empty: string;
   close: string;
-  coreBadge: string;
   customBadge: string;
   groups: Record<string, string>;
   footerHint: string;
@@ -173,11 +171,6 @@ export function TemplateSelector({
                           <span className="text-sm font-medium text-foreground truncate">
                             {item.title}
                           </span>
-                          {item.isCore && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">
-                              {strings.coreBadge}
-                            </span>
-                          )}
                           {item.custom && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">
                               {strings.customBadge}

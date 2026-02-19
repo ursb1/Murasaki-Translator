@@ -789,7 +789,7 @@ export const translations = {
       runFilePlaceholder: "请选择输入文件",
       browse: "浏览",
       runPipeline: "Pipeline ID",
-      runPipelinePlaceholder: "例如 pipeline_default",
+      runPipelinePlaceholder: "例如 pipeline_demo",
       runPipelineSelectPlaceholder: "从列表选择 Pipeline",
       runPipelineManual: "或手动输入 ID / 文件名",
       run: "开始运行",
@@ -842,7 +842,7 @@ export const translations = {
       strategyKindTitle: "分段策略",
       scheme: {
         title: "方案选择",
-        desc: "选择接口、提示词、解析器与分段策略",
+        desc: "创建新的API翻译方案",
         fields: {
           provider: "接口",
           prompt: "提示词",
@@ -939,10 +939,10 @@ export const translations = {
         mistral: { label: "Mistral", desc: "官方接口" },
         anthropic: { label: "Anthropic", desc: "官方接口" },
         zhipu: { label: "Zhipu", desc: "GLM 接口" },
-        alibaba: { label: "Alibaba", desc: "Qwen 接口" },
-        moonshot: { label: "Moonshot", desc: "官方接口" },
+        alibaba: { label: "Aliyun", desc: "Qwen 接口" },
+        moonshot: { label: "Moonshot", desc: "KIMI 接口" },
         silicon: { label: "SiliconFlow", desc: "第三方接口" },
-        volc: { label: "Volcengine", desc: "官方接口" },
+        volc: { label: "Volcengine", desc: "第三方接口" },
         openrouter: { label: "OpenRouter", desc: "第三方接口" },
       },
       groups: {
@@ -1022,6 +1022,34 @@ export const translations = {
       searchPlaceholder: "搜索配置...",
       emptySelectionTitle: "未选择配置",
       emptySelectionDesc: "从左侧列表选择配置，或点击“新建”开始。",
+      pipelineEmptyBadge: "方案引导",
+      pipelineEmptyTitle: "开始创建翻译方案",
+      pipelineEmptyDesc: "按以下 4 步完成配置，然后返回方案选择。",
+      pipelineEmptyFallbackTitle: "配置步骤",
+      pipelineEmptyFallbackDesc: "完成该步骤以继续",
+      pipelineEmptyFallbackAction: "立即配置",
+      pipelineEmptySteps: [
+        {
+          title: "配置接口",
+          desc: "选择 API 与模型/密钥",
+          action: "去接口",
+        },
+        {
+          title: "配置提示词",
+          desc: "设置翻译风格与上下文",
+          action: "去提示词",
+        },
+        {
+          title: "配置解析器",
+          desc: "定义输出解析方式",
+          action: "去解析器",
+        },
+        {
+          title: "选择分段策略",
+          desc: "确定分行或分块方式",
+          action: "去分段",
+        },
+      ],
       untitledProfile: "未命名配置",
       actionDuplicate: "复制配置",
       actionDelete: "删除配置",
@@ -1036,6 +1064,7 @@ export const translations = {
       idToggleShow: "自定义配置 ID",
       idToggleHide: "隐藏配置 ID",
       syncFromYaml: "从 YAML 同步",
+      syncFromYamlOk: "已同步到可视化",
       editorYamlHint: "该类型仅支持 YAML 编辑",
       editorHint: "可直接编辑 YAML，高级字段可在此配置。",
       formTitle: "模型配置",
@@ -1377,9 +1406,6 @@ export const translations = {
       templatesSearchEmpty: "未找到相关模板",
       templatesClose: "关闭",
       templatesFooterHint: "按 ESC 关闭",
-      templatesCoreBadge: "核心",
-      templatesCoreTitle: "核心模板",
-      templatesCoreDesc: "常用配置的最小集合",
       templatesMoreTitle: "更多模板",
       templatesMoreDesc: "进阶或特殊场景",
       templatesManageShow: "管理",
@@ -1406,113 +1432,40 @@ export const translations = {
         general: "通用",
       },
       templateItems: {
-        api_openai_basic: {
-          title: "OpenAI 兼容基础",
-          desc: "适配 /v1/chat/completions 的基础模板",
-        },
-        pipeline_default: {
-          title: "默认API方案",
-          desc: "基础接口 + 提示词 + 解析器组合",
+        prompt_jsonl_line: {
+          title: "行模式·JSONL",
+          desc: "逐行 JSONL 对齐输出",
         },
         prompt_plain_line: {
-          title: "纯行提示词",
-          desc: "直接逐行输出译文",
+          title: "行模式·纯文本",
+          desc: "逐行输出译文，不使用 JSONL",
         },
         prompt_block_plain: {
-          title: "块模式提示词",
+          title: "块模式·段落翻译",
           desc: "整段翻译，source_format=plain",
         },
-        prompt_json_object: {
-          title: "JSON 对象提示词",
-          desc: "输出 JSON 对象（translation 字段）",
-        },
-        prompt_json_array: {
-          title: "JSON 数组提示词",
-          desc: "输出 JSON 数组",
-        },
-        prompt_jsonl_line: {
-          title: "JSONL 行提示词",
-          desc: "输出 JSONL（每行一条）",
-        },
         prompt_glossary_focus: {
-          title: "术语优先",
-          desc: "强调术语表优先级",
+          title: "行模式·术语优先",
+          desc: "严格优先使用术语表",
+        },
+        parser_jsonl_object: {
+          title: "JSONL 行解析",
+          desc: "解析 JSONL 每行对象",
         },
         parser_plain: {
           title: "纯文本解析",
           desc: "直接提取文本",
         },
         parser_any_default: {
-          title: "多解析级联",
-          desc: "按顺序尝试多个解析器，直到成功",
-        },
-        parser_line_strict: {
-          title: "行严格解析",
-          desc: "逐行严格解析器",
-        },
-        parser_line_strict_first: {
-          title: "行严格-取首行",
-          desc: "多行时仅取第一行",
-        },
-        parser_line_strict_error: {
-          title: "行严格-多行报错",
-          desc: "多行时直接报错",
-        },
-        parser_tagged_line: {
-          title: "行号标记解析",
-          desc: "解析带行号标记的输出",
-        },
-        parser_tagged_line_sorted: {
-          title: "行号标记解析（按序）",
-          desc: "按行号排序输出",
-        },
-        parser_tagged_line_bracket: {
-          title: "括号标记解析",
-          desc: "解析 [[LN:x]] 标记行",
-        },
-        parser_json_array: {
-          title: "JSON 数组解析",
-          desc: "解析 JSON 数组",
-        },
-        parser_json_object: {
-          title: "JSON 对象解析",
-          desc: "从 JSON 对象提取译文",
-        },
-        parser_jsonl_object: {
-          title: "JSONL 逐行解析",
-          desc: "解析 JSONL 每行对象",
-        },
-        parser_regex_json_key: {
-          title: "正则提取 JSON 字段",
-          desc: "正则提取 translation 字段",
-        },
-        parser_regex_codeblock: {
-          title: "正则提取代码块",
-          desc: "从代码块中提取译文",
-        },
-        parser_regex_xml_tag: {
-          title: "正则提取 XML 标签",
-          desc: "提取 <translation> 标签内容",
+          title: "智能级联解析",
+          desc: "按顺序尝试多个解析器",
         },
         parser_regex_custom: {
           title: "自定义正则解析",
           desc: "用正则提取指定分组",
         },
-        policy_tolerant: {
-          title: "默认行配置",
-          desc: "默认的行数对齐与校验规则",
-        },
-        chunk_line_default: {
-          title: "默认分行策略",
-          desc: "默认逐行分块策略",
-        },
-        chunk_legacy_doc: {
-          title: "默认分块策略",
-          desc: "默认文档分块策略",
-        },
       },
       profileNames: {
-        pipeline_default: "默认API方案",
         prompt_default: "默认提示词",
         prompt_tagged_line: "行号标记提示词",
         parser_plain: "纯文本解析",
@@ -1700,7 +1653,7 @@ export const translations = {
           extraParamsLabel: "额外参数 (JSON)",
         },
         placeholders: {
-          id: "例如 pipeline_default",
+          id: "例如 pipeline_demo",
           name: "显示名称",
           provider: "选择 API 配置",
           prompt: "选择提示词配置",
@@ -2382,7 +2335,7 @@ export const translations = {
         timeoutLabel: "超时（秒）",
       },
       placeholders: {
-        id: "例如 openai_default",
+        id: "例如 api_demo",
         name: "例如 OpenAI 主账户",
         baseUrl: "https://api.openai.com/v1",
         apiKey: "可留空",
@@ -3655,7 +3608,7 @@ export const translations = {
       runFilePlaceholder: "Select input file",
       browse: "Browse",
       runPipeline: "Pipeline ID",
-      runPipelinePlaceholder: "e.g. pipeline_default",
+      runPipelinePlaceholder: "e.g. pipeline_demo",
       runPipelineSelectPlaceholder: "Select from list",
       runPipelineManual: "Or enter ID / filename",
       run: "Run",
@@ -3899,6 +3852,34 @@ export const translations = {
       searchPlaceholder: "Search profiles...",
       emptySelectionTitle: "No profile selected",
       emptySelectionDesc: "Choose one on the left or create a new profile.",
+      pipelineEmptyBadge: "Scheme Guide",
+      pipelineEmptyTitle: "Build Your Translation Scheme",
+      pipelineEmptyDesc: "Complete these 4 steps, then return to choose a scheme.",
+      pipelineEmptyFallbackTitle: "Configure Step",
+      pipelineEmptyFallbackDesc: "Finish this step to continue",
+      pipelineEmptyFallbackAction: "Configure",
+      pipelineEmptySteps: [
+        {
+          title: "Configure Interface",
+          desc: "Pick API, model, and credentials",
+          action: "Go to API",
+        },
+        {
+          title: "Configure Prompt",
+          desc: "Set translation style and context",
+          action: "Go to Prompt",
+        },
+        {
+          title: "Configure Parser",
+          desc: "Define how outputs are parsed",
+          action: "Go to Parser",
+        },
+        {
+          title: "Pick Segmentation",
+          desc: "Choose line or block strategy",
+          action: "Go to Strategy",
+        },
+      ],
       untitledProfile: "Untitled profile",
       actionDuplicate: "Duplicate profile",
       actionDelete: "Delete profile",
@@ -3913,6 +3894,7 @@ export const translations = {
       idToggleShow: "Customize Config ID",
       idToggleHide: "Hide Config ID",
       syncFromYaml: "Sync From YAML",
+      syncFromYamlOk: "Synced to visual editor",
       editorYamlHint: "This type is edited in YAML only.",
       editorHint: "Edit YAML directly for advanced fields.",
       formTitle: "Model Configuration",
@@ -4264,9 +4246,6 @@ export const translations = {
       templatesSearchEmpty: "No matching templates",
       templatesClose: "Close",
       templatesFooterHint: "Press ESC to close",
-      templatesCoreBadge: "Core",
-      templatesCoreTitle: "Core Templates",
-      templatesCoreDesc: "Minimal set for common flows",
       templatesMoreTitle: "More Templates",
       templatesMoreDesc: "Advanced or special cases",
       templatesManageShow: "Manage",
@@ -4294,113 +4273,40 @@ export const translations = {
         general: "General",
       },
       templateItems: {
-        api_openai_basic: {
-          title: "OpenAI Compatible Basic",
-          desc: "Baseline template for /v1/chat/completions",
-        },
-        pipeline_default: {
-          title: "Default API Scheme",
-          desc: "Base interface + prompt + parser combination",
+        prompt_jsonl_line: {
+          title: "Line JSONL Prompt",
+          desc: "Line-by-line JSONL output",
         },
         prompt_plain_line: {
-          title: "Plain Line Prompt",
-          desc: "Return plain translated lines",
+          title: "Line Plain Prompt",
+          desc: "Plain line output without JSONL",
         },
         prompt_block_plain: {
-          title: "Block Prompt",
-          desc: "Translate paragraphs as a whole (source_format=plain)",
-        },
-        prompt_json_object: {
-          title: "JSON Object Prompt",
-          desc: "Return JSON with translation field",
-        },
-        prompt_json_array: {
-          title: "JSON Array Prompt",
-          desc: "Return a JSON array",
-        },
-        prompt_jsonl_line: {
-          title: "JSONL Line Prompt",
-          desc: "Return JSONL per line",
+          title: "Block Paragraph Prompt",
+          desc: "Paragraph translation (source_format=plain)",
         },
         prompt_glossary_focus: {
-          title: "Glossary Focus",
-          desc: "Emphasize glossary priority",
-        },
-        parser_plain: {
-          title: "Plain Parser",
-          desc: "Extract plain text",
-        },
-        parser_any_default: {
-          title: "Parser Cascade",
-          desc: "Try parsers in order until one succeeds",
-        },
-        parser_line_strict: {
-          title: "Line Strict Parser",
-          desc: "Strict line-by-line parser",
-        },
-        parser_line_strict_first: {
-          title: "Line Strict First",
-          desc: "Use first line when multiple",
-        },
-        parser_line_strict_error: {
-          title: "Line Strict Error",
-          desc: "Error on multi-line output",
-        },
-        parser_tagged_line: {
-          title: "Tagged Line Parser",
-          desc: "Parse tagged line output",
-        },
-        parser_tagged_line_sorted: {
-          title: "Tagged Line Parser (Sorted)",
-          desc: "Sort by line number",
-        },
-        parser_tagged_line_bracket: {
-          title: "Bracket Tagged Parser",
-          desc: "Parse [[LN:x]] tagged lines",
-        },
-        parser_json_array: {
-          title: "JSON Array Parser",
-          desc: "Parse JSON array output",
-        },
-        parser_json_object: {
-          title: "Json Object Parser",
-          desc: "Extract translation from JSON object",
+          title: "Glossary-First Line Prompt",
+          desc: "Prioritize glossary terms",
         },
         parser_jsonl_object: {
-          title: "JSONL Parser",
+          title: "JSONL Line Parser",
           desc: "Parse JSONL objects per line",
         },
-        parser_regex_json_key: {
-          title: "Regex JSON Key Parser",
-          desc: "Extract translation field by regex",
+        parser_plain: {
+          title: "Plain Text Parser",
+          desc: "Extract raw text",
         },
-        parser_regex_codeblock: {
-          title: "Regex Codeblock Parser",
-          desc: "Extract content from code blocks",
-        },
-        parser_regex_xml_tag: {
-          title: "Regex XML Tag Parser",
-          desc: "Extract <translation> tag content",
+        parser_any_default: {
+          title: "Smart Cascade Parser",
+          desc: "Try parsers in order until success",
         },
         parser_regex_custom: {
           title: "Custom Regex Parser",
-          desc: "Extract the named group via regex",
-        },
-        policy_tolerant: {
-          title: "Default Line Config",
-          desc: "Baseline line alignment and checks",
-        },
-        chunk_line_default: {
-          title: "Default Line Chunk",
-          desc: "Default line-by-line chunking",
-        },
-        chunk_legacy_doc: {
-          title: "Default Chunk Strategy",
-          desc: "Default document chunking strategy",
+          desc: "Extract named group via regex",
         },
       },
       profileNames: {
-        pipeline_default: "Default API Scheme",
         prompt_default: "Default Prompt",
         prompt_tagged_line: "Tagged Line Prompt",
         parser_plain: "Plain Parser",
@@ -4590,7 +4496,7 @@ export const translations = {
           extraParamsLabel: "Extra Params (JSON)",
         },
         placeholders: {
-          id: "e.g. pipeline_default",
+          id: "e.g. pipeline_demo",
           name: "Display name",
           provider: "Select API profile",
           prompt: "Select Prompt profile",
@@ -5283,7 +5189,7 @@ export const translations = {
         timeoutLabel: "Timeout (sec)",
       },
       placeholders: {
-        id: "e.g. openai_default",
+        id: "e.g. api_demo",
         name: "e.g. OpenAI Primary",
         baseUrl: "https://api.openai.com/v1",
         apiKey: "Optional",
@@ -6529,7 +6435,7 @@ export const translations = {
       runFilePlaceholder: "入力ファイルを選択",
       browse: "参照",
       runPipeline: "Pipeline ID",
-      runPipelinePlaceholder: "例: pipeline_default",
+      runPipelinePlaceholder: "例: pipeline_demo",
       runPipelineSelectPlaceholder: "リストから選択",
       runPipelineManual: "または ID / ファイル名を入力",
       run: "実行",
@@ -6774,6 +6680,34 @@ export const translations = {
       searchPlaceholder: "設定を検索...",
       emptySelectionTitle: "設定が未選択です",
       emptySelectionDesc: "左の一覧から選択するか、新規作成してください。",
+      pipelineEmptyBadge: "スキームガイド",
+      pipelineEmptyTitle: "翻訳スキームを作成",
+      pipelineEmptyDesc: "次の 4 ステップを完了してスキームを選択してください。",
+      pipelineEmptyFallbackTitle: "設定ステップ",
+      pipelineEmptyFallbackDesc: "このステップを完了してください",
+      pipelineEmptyFallbackAction: "設定する",
+      pipelineEmptySteps: [
+        {
+          title: "API 設定",
+          desc: "API・モデル・認証情報を選択",
+          action: "API へ",
+        },
+        {
+          title: "プロンプト設定",
+          desc: "翻訳スタイルと文脈を設定",
+          action: "Prompt へ",
+        },
+        {
+          title: "パーサー設定",
+          desc: "出力の解析方法を定義",
+          action: "Parser へ",
+        },
+        {
+          title: "分割戦略",
+          desc: "行/ブロックの方式を選択",
+          action: "Strategy へ",
+        },
+      ],
       untitledProfile: "無題のプロファイル",
       actionDuplicate: "複製",
       actionDelete: "削除",
@@ -6788,6 +6722,7 @@ export const translations = {
       idToggleShow: "設定 ID をカスタマイズ",
       idToggleHide: "設定 ID を非表示",
       syncFromYaml: "YAML から同期",
+      syncFromYamlOk: "ビジュアルに同期しました",
       editorYamlHint: "この種類は YAML のみ編集できます。",
       editorHint: "高度な項目は YAML を直接編集してください。",
       formTitle: "モデル設定",
@@ -7136,9 +7071,6 @@ export const translations = {
       templatesSearchEmpty: "一致するテンプレートがありません",
       templatesClose: "閉じる",
       templatesFooterHint: "ESC で閉じる",
-      templatesCoreBadge: "コア",
-      templatesCoreTitle: "コアテンプレート",
-      templatesCoreDesc: "よく使う最小セット",
       templatesMoreTitle: "追加テンプレート",
       templatesMoreDesc: "高度・特殊なケース向け",
       templatesManageShow: "管理",
@@ -7166,113 +7098,40 @@ export const translations = {
         general: "一般",
       },
       templateItems: {
-        api_openai_basic: {
-          title: "OpenAI 互換ベーシック",
-          desc: "/v1/chat/completions 用の基本テンプレート",
-        },
-        pipeline_default: {
-          title: "デフォルトAPI構成",
-          desc: "基本インターフェース + プロンプト + パーサーの組み合わせ",
+        prompt_jsonl_line: {
+          title: "行モード・JSONL",
+          desc: "行ごとにJSONLで出力",
         },
         prompt_plain_line: {
-          title: "Plain Line Prompt",
-          desc: "プレーンな行出力",
+          title: "行モード・プレーン",
+          desc: "JSONLなしで行単位出力",
         },
         prompt_block_plain: {
-          title: "ブロック翻訳プロンプト",
-          desc: "段落をまとめて翻訳（source_format=plain）",
-        },
-        prompt_json_object: {
-          title: "JSON Object Prompt",
-          desc: "translation フィールド付き JSON",
-        },
-        prompt_json_array: {
-          title: "JSON Array Prompt",
-          desc: "JSON 配列出力",
-        },
-        prompt_jsonl_line: {
-          title: "JSONL Line Prompt",
-          desc: "行ごとの JSONL 出力",
+          title: "ブロック・段落翻訳",
+          desc: "段落全体を翻訳（source_format=plain）",
         },
         prompt_glossary_focus: {
-          title: "用語集優先",
-          desc: "用語集の優先度を強調",
-        },
-        parser_plain: {
-          title: "Plain Parser",
-          desc: "そのまま抽出",
-        },
-        parser_any_default: {
-          title: "Parser Cascade",
-          desc: "複数パーサーを順に試行",
-        },
-        parser_line_strict: {
-          title: "Line Strict Parser",
-          desc: "行単位の厳格パーサー",
-        },
-        parser_line_strict_first: {
-          title: "Line Strict First",
-          desc: "複数行時は先頭のみ",
-        },
-        parser_line_strict_error: {
-          title: "Line Strict Error",
-          desc: "複数行でエラー",
-        },
-        parser_tagged_line: {
-          title: "Tagged Line Parser",
-          desc: "タグ付き行の解析",
-        },
-        parser_tagged_line_sorted: {
-          title: "Tagged Line Parser (Sorted)",
-          desc: "行番号で並び替え",
-        },
-        parser_tagged_line_bracket: {
-          title: "Bracket Tagged Parser",
-          desc: "[[LN:x]] 行を解析",
-        },
-        parser_json_array: {
-          title: "JSON Array Parser",
-          desc: "JSON 配列を解析",
-        },
-        parser_json_object: {
-          title: "Json Object Parser",
-          desc: "JSON オブジェクトから訳文を抽出",
+          title: "行モード・用語優先",
+          desc: "用語集の訳を優先",
         },
         parser_jsonl_object: {
-          title: "JSONL Parser",
-          desc: "JSONL 行の解析",
+          title: "JSONL 行解析",
+          desc: "JSONLの各行を解析",
         },
-        parser_regex_json_key: {
-          title: "Regex JSON Key Parser",
-          desc: "translation フィールドを正規表現で抽出",
+        parser_plain: {
+          title: "プレーン解析",
+          desc: "テキストをそのまま抽出",
         },
-        parser_regex_codeblock: {
-          title: "Regex Codeblock Parser",
-          desc: "コードブロックから抽出",
-        },
-        parser_regex_xml_tag: {
-          title: "Regex XML Tag Parser",
-          desc: "<translation> タグを抽出",
+        parser_any_default: {
+          title: "スマートカスケード解析",
+          desc: "順に解析を試行",
         },
         parser_regex_custom: {
-          title: "カスタム正規表現パーサー",
-          desc: "正規表現の指定グループを抽出",
-        },
-        policy_tolerant: {
-          title: "デフォルト行設定",
-          desc: "標準の行揃えと検査",
-        },
-        chunk_line_default: {
-          title: "デフォルト行分割",
-          desc: "行単位のデフォルト分割",
-        },
-        chunk_legacy_doc: {
-          title: "デフォルト分割",
-          desc: "デフォルトの文書分割戦略",
+          title: "カスタム正規表現解析",
+          desc: "正規表現で指定グループ抽出",
         },
       },
       profileNames: {
-        pipeline_default: "デフォルトAPI構成",
         prompt_default: "デフォルト Prompt",
         prompt_tagged_line: "行タグ Prompt",
         parser_plain: "プレーン Parser",
@@ -7463,7 +7322,7 @@ export const translations = {
           extraParamsLabel: "Extra Params (JSON)",
         },
         placeholders: {
-          id: "例: pipeline_default",
+          id: "例: pipeline_demo",
           name: "表示名",
           provider: "API Profile を選択",
           prompt: "Prompt Profile を選択",
@@ -8159,7 +8018,7 @@ export const translations = {
         timeoutLabel: "タイムアウト（秒）",
       },
       placeholders: {
-        id: "例: openai_default",
+        id: "例: api_demo",
         name: "例: OpenAI メイン",
         baseUrl: "https://api.openai.com/v1",
         apiKey: "任意",

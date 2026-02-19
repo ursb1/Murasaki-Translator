@@ -65,7 +65,12 @@ const PRUNE_PROFILE_IDS: Partial<Record<ProfileKind, Set<string>>> = {
 
   policy: new Set(["line_strict", "line_quality", "line_strict_pad", "line_strict_align"]),
 
-  chunk: new Set(["chunk_line_strict", "chunk_line_loose", "chunk_line_keep"]),
+  chunk: new Set([
+    "chunk_line_strict",
+    "chunk_line_loose",
+    "chunk_line_keep",
+    "chunk_line_default",
+  ]),
 
   pipeline: new Set([
 
@@ -84,9 +89,6 @@ type PatchNameEntry = { name: string; aliases?: string[] };
 const PATCH_PROFILE_NAMES: Partial<
   Record<ProfileKind, Record<string, PatchNameEntry>>
 > = {
-  api: {
-    openai_default: { name: "OpenAI 默认接口", aliases: ["OpenAI Default"] },
-  },
   prompt: {
     prompt_default: { name: "默认提示词", aliases: ["Default Prompt"] },
     prompt_tagged_line: { name: "行号标记提示词", aliases: ["Tagged Line Prompt"] },
@@ -162,16 +164,6 @@ const PROMPT_DEFAULT_PATCH = {
   ]),
 };
 
-
-const API_DEFAULT_PATCH = {
-  id: "openai_default",
-  model: "gpt-4.1-mini",
-  topP: 0.95,
-  maxTokens: 4096,
-  concurrency: 0,
-  rpm: 3600,
-  legacyModels: new Set<string>([]),
-};
 
 export const getPipelineV2ProfilesDir = () =>
   join(app.getPath("userData"), "pipeline_v2_profiles");
@@ -716,88 +708,6 @@ const patchAndPruneProfiles = async (
       }
 
       if (policyChanged) {
-
-        changed = true;
-
-      }
-
-    }
-
-    if (kind === "api" && id === API_DEFAULT_PATCH.id) {
-
-      const currentModel = String(nextData.model || "").trim();
-
-      if (!currentModel || API_DEFAULT_PATCH.legacyModels.has(currentModel)) {
-
-        nextData = { ...nextData, model: API_DEFAULT_PATCH.model };
-
-        changed = true;
-
-      }
-
-      const rawParams = nextData.params;
-
-      const nextParams =
-
-        rawParams &&
-
-          typeof rawParams === "object" &&
-
-          !Array.isArray(rawParams)
-
-          ? { ...rawParams }
-
-          : {};
-
-      let paramsChanged = false;
-
-      if (nextParams.top_p === undefined) {
-
-        nextParams.top_p = API_DEFAULT_PATCH.topP;
-
-        paramsChanged = true;
-
-      }
-
-      if (nextParams.max_tokens === undefined) {
-
-        nextParams.max_tokens = API_DEFAULT_PATCH.maxTokens;
-
-        paramsChanged = true;
-
-      }
-
-      if (paramsChanged) {
-
-        nextData = { ...nextData, params: nextParams };
-
-        changed = true;
-
-      }
-
-      const currentConcurrency = nextData.concurrency;
-
-      if (
-
-        currentConcurrency === undefined ||
-
-        currentConcurrency === null ||
-
-        currentConcurrency === ""
-
-      ) {
-
-        nextData = { ...nextData, concurrency: API_DEFAULT_PATCH.concurrency };
-
-        changed = true;
-
-      }
-
-      const currentRpm = nextData.rpm;
-
-      if (currentRpm === undefined || currentRpm === null || currentRpm === "") {
-
-        nextData = { ...nextData, rpm: API_DEFAULT_PATCH.rpm };
 
         changed = true;
 

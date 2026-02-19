@@ -24,6 +24,7 @@ from murasaki_flow_v2.parsers.base import ParserError
 from murasaki_flow_v2.providers.base import ProviderError
 from murasaki_flow_v2.utils.adaptive_concurrency import AdaptiveConcurrency
 from murasaki_flow_v2.utils.line_format import extract_line_for_policy, parse_jsonl_entries
+from murasaki_flow_v2.utils import processing as v2_processing
 
 
 class PipelineRunner:
@@ -36,34 +37,48 @@ class PipelineRunner:
         self.line_policies = PolicyRegistry(store)
         self.chunk_policies = ChunkPolicyRegistry(store)
 
-    def _load_glossary(self, glossary_path: Optional[str]) -> str:
-        if not glossary_path:
+    def _format_glossary_text(self, data: Any) -> str:
+        if isinstance(data, dict):
+            return "\n".join([f"{k}: {v}" for k, v in data.items()])
+        if isinstance(data, list):
+            lines = []
+            for item in data:
+                if isinstance(item, dict):
+                    src = item.get("src") or item.get("source") or ""
+                    dst = item.get("dst") or item.get("target") or ""
+                    if src or dst:
+                        lines.append(f"{src}: {dst}")
+                else:
+                    lines.append(str(item))
+            return "\n".join(lines)
+        return str(data).strip()
+
+    def _load_glossary(self, glossary_spec: Any) -> str:
+        if glossary_spec is None:
             return ""
-        if not os.path.exists(glossary_path):
-            return ""
-        try:
-            with open(glossary_path, "r", encoding="utf-8") as f:
-                raw = f.read()
+        if isinstance(glossary_spec, (dict, list)):
+            return self._format_glossary_text(glossary_spec)
+        if isinstance(glossary_spec, str):
+            raw = glossary_spec.strip()
+            if not raw:
+                return ""
+            if os.path.exists(raw):
+                try:
+                    with open(raw, "r", encoding="utf-8") as f:
+                        content = f.read()
+                    try:
+                        data = json.loads(content)
+                        return self._format_glossary_text(data)
+                    except json.JSONDecodeError:
+                        return content.strip()
+                except Exception:
+                    return ""
             try:
                 data = json.loads(raw)
+                return self._format_glossary_text(data)
             except json.JSONDecodeError:
-                return raw.strip()
-            if isinstance(data, dict):
-                return "\n".join([f"{k}: {v}" for k, v in data.items()])
-            if isinstance(data, list):
-                lines = []
-                for item in data:
-                    if isinstance(item, dict):
-                        src = item.get("src") or item.get("source") or ""
-                        dst = item.get("dst") or item.get("target") or ""
-                        if src or dst:
-                            lines.append(f"{src}: {dst}")
-                    else:
-                        lines.append(str(item))
-                return "\n".join(lines)
-            return raw.strip()
-        except Exception:
-            return ""
+                return raw
+        return ""
 
     def _extract_source_lines(self, items: List[Dict[str, Any]]) -> List[str]:
         lines: List[str] = []
@@ -105,6 +120,40 @@ class PipelineRunner:
             text = block.prompt_text
             if text.endswith("\n"):
                 block.prompt_text = text[:-1]
+
+    @staticmethod
+    def _should_apply_line_policy(
+        pipeline: Dict[str, Any],
+        line_policy: Optional[Any],
+        chunk_type: str,
+    ) -> bool:
+        if not line_policy or chunk_type != "line":
+            return False
+        apply_flag = pipeline.get("apply_line_policy")
+        if apply_flag is False:
+            return False
+        return True
+
+    @staticmethod
+    def _apply_protection_to_lines(
+        lines: List[str],
+        start: int,
+        end: int,
+        protector: Optional[Any],
+    ) -> Tuple[List[str], Optional[Any]]:
+        if not protector or start >= end:
+            return lines, protector
+        segment = "\n".join(lines[start:end])
+        if segment:
+            protected_segment = protector.protect(segment)
+            protected_lines = protected_segment.split("\n")
+        else:
+            protected_lines = []
+        if len(protected_lines) != (end - start):
+            return lines, None
+        merged = list(lines)
+        merged[start:end] = protected_lines
+        return merged, protector
 
     def _build_context(
         self,
@@ -225,12 +274,10 @@ class PipelineRunner:
             or chunk_policy.profile.get("type")
             or ""
         )
-        apply_line_policy = bool(
-            pipeline.get("apply_line_policy") or chunk_type == "line"
+        apply_line_policy = self._should_apply_line_policy(
+            pipeline, line_policy, chunk_type
         )
-        line_policy_per_line = bool(
-            line_policy and apply_line_policy and chunk_type == "line"
-        )
+        line_policy_per_line = apply_line_policy
         line_policy_errors: List[Dict[str, Any]] = []
         _lpe_lock = threading.Lock()
 
@@ -239,43 +286,43 @@ class PipelineRunner:
         source_lines = self._extract_source_lines(items)
         blocks = chunk_policy.chunk(items)
 
-        glossary_text = self._load_glossary(pipeline.get("glossary"))
+        processing_cfg = pipeline.get("processing") or {}
+        if not isinstance(processing_cfg, dict):
+            processing_cfg = {}
+        processing_enabled = bool(processing_cfg)
+        glossary_spec = processing_cfg.get("glossary")
+        if glossary_spec is None:
+            glossary_spec = pipeline.get("glossary")
+        glossary_text = self._load_glossary(glossary_spec)
 
         settings = pipeline.get("settings") or {}
         max_retries = int(settings.get("max_retries") or 0)
         adaptive: Optional[AdaptiveConcurrency] = None
 
-        compat_cfg = pipeline.get("v1_compat") or {}
-        compat_processor = None
-        if compat_cfg:
-            try:
-                from murasaki_flow_v2.utils import v1_compat as v1_compat
-            except Exception as exc:
-                raise RuntimeError("v1_compat_unavailable") from exc
+        processing_processor = None
+        rules_pre_spec = processing_cfg.get("rules_pre")
+        rules_post_spec = processing_cfg.get("rules_post")
+        if rules_pre_spec is None:
+            rules_pre_spec = pipeline.get("rules_pre")
+        if rules_post_spec is None:
+            rules_post_spec = pipeline.get("rules_post")
+        if rules_pre_spec or rules_post_spec:
+            processing_enabled = True
+        source_lang = (
+            str(processing_cfg.get("source_lang") or "ja").strip() or "ja"
+        )
+        enable_quality = processing_cfg.get("enable_quality")
+        if enable_quality is None:
+            enable_quality = False
+        enable_text_protect = processing_cfg.get("text_protect")
+        if enable_text_protect is None:
+            enable_text_protect = False
+        strict_line_count = bool(processing_cfg.get("strict_line_count"))
 
-            rules_pre_path = str(compat_cfg.get("rules_pre") or "").strip()
-            rules_post_path = str(compat_cfg.get("rules_post") or "").strip()
-            glossary_path = str(
-                compat_cfg.get("glossary") or pipeline.get("glossary") or ""
-            ).strip()
-            source_lang = str(compat_cfg.get("source_lang") or "ja").strip() or "ja"
-            enable_quality = compat_cfg.get("enable_quality")
-            if enable_quality is None:
-                enable_quality = bool(compat_cfg)
-            enable_text_protect = compat_cfg.get("text_protect")
-            if enable_text_protect is None:
-                enable_text_protect = bool(compat_cfg)
-            strict_line_count = bool(compat_cfg.get("strict_line_count"))
-
-            pre_rules = (
-                v1_compat.load_rules(rules_pre_path) if rules_pre_path else []
-            )
-            post_rules = (
-                v1_compat.load_rules(rules_post_path) if rules_post_path else []
-            )
-            glossary_dict = (
-                v1_compat.load_glossary(glossary_path) if glossary_path else {}
-            )
+        if processing_enabled:
+            pre_rules = v2_processing.load_rules(rules_pre_spec)
+            post_rules = v2_processing.load_rules(rules_post_spec)
+            glossary_dict = v2_processing.load_glossary(glossary_spec)
             if (
                 pre_rules
                 or post_rules
@@ -283,8 +330,8 @@ class PipelineRunner:
                 or enable_text_protect
                 or enable_quality
             ):
-                compat_processor = v1_compat.V1CompatProcessor(
-                    v1_compat.V1CompatOptions(
+                processing_processor = v2_processing.ProcessingProcessor(
+                    v2_processing.ProcessingOptions(
                         rules_pre=pre_rules,
                         rules_post=post_rules,
                         glossary=glossary_dict,
@@ -296,9 +343,13 @@ class PipelineRunner:
                 )
 
         prompt_source_lines = source_lines
-        if compat_processor and compat_processor.has_pre_rules and source_lines:
+        if (
+            processing_processor
+            and processing_processor.has_pre_rules
+            and source_lines
+        ):
             prompt_source_lines = [
-                compat_processor.apply_pre(line) for line in source_lines
+                processing_processor.apply_pre(line) for line in source_lines
             ]
 
         translated_blocks: List[Optional[TextBlock]] = [None] * len(blocks)
@@ -327,10 +378,14 @@ class PipelineRunner:
             source_text = block.prompt_text
             source_format = str(context_cfg.get("source_format") or "").strip().lower()
             use_jsonl = source_format == "jsonl" and chunk_type == "line"
-            if not use_jsonl and compat_processor:
-                source_text = compat_processor.apply_pre(source_text)
+            if not use_jsonl and processing_processor:
+                source_text = processing_processor.apply_pre(source_text)
 
-            protector = compat_processor.create_protector() if compat_processor else None
+            protector = (
+                processing_processor.create_protector()
+                if processing_processor
+                else None
+            )
             if protector and not use_jsonl:
                 source_text = protector.protect(source_text)
 
@@ -348,7 +403,10 @@ class PipelineRunner:
                 context_after = self._build_jsonl_range(
                     active_source_lines, end, after_end
                 )
-                source_text = self._build_jsonl_range(active_source_lines, start, end)
+                protected_lines, protector = self._apply_protection_to_lines(
+                    active_source_lines, start, end, protector
+                )
+                source_text = self._build_jsonl_range(protected_lines, start, end)
                 if block.metadata:
                     target_line_ids = self._filter_target_line_ids(
                         block.metadata, start, end
@@ -379,11 +437,11 @@ class PipelineRunner:
                     else:
                         parsed = parser.parse(response.text)
                         translated = parsed.text.strip("\n")
-                    if compat_processor:
-                        # BUG-5: jsonl 模式下不传入 protector，保持 protect/restore 对称
-                        effective_protector = protector if not use_jsonl else None
-                        translated = compat_processor.apply_post(
-                            translated, src_text=block.prompt_text, protector=effective_protector
+                    if processing_processor:
+                        translated = processing_processor.apply_post(
+                            translated,
+                            src_text=block.prompt_text,
+                            protector=protector,
                         )
                     last_translation = translated
                     if (
@@ -541,10 +599,10 @@ class PipelineRunner:
             base, ext = os.path.splitext(input_path)
             output_path = f"{base}_translated{ext}"
 
-        if compat_processor and compat_processor.options.enable_quality:
+        if processing_processor and processing_processor.options.enable_quality:
             output_lines = [b.prompt_text for b in translated_blocks]
             if source_lines and len(output_lines) == len(source_lines):
-                warnings = compat_processor.check_quality(
+                warnings = processing_processor.check_quality(
                     source_lines, output_lines
                 )
                 if warnings:

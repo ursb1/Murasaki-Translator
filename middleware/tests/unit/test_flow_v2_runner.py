@@ -153,6 +153,20 @@ def test_flow_v2_runner_load_glossary_file(tmp_path):
     assert "term1" in result and "value1" in result
 
 
+@pytest.mark.unit
+def test_flow_v2_runner_load_glossary_inline_dict(tmp_path):
+    runner = _make_runner(tmp_path)
+    result = runner._load_glossary({"foo": "bar"})
+    assert "foo" in result and "bar" in result
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_load_glossary_inline_json(tmp_path):
+    runner = _make_runner(tmp_path)
+    result = runner._load_glossary("{\"foo\": \"bar\"}")
+    assert "foo" in result and "bar" in result
+
+
 # ---------------------------------------------------------------------------
 # _resolve_source_window
 # ---------------------------------------------------------------------------
@@ -192,6 +206,48 @@ def test_flow_v2_runner_build_jsonl_range_normal(tmp_path):
     result = runner._build_jsonl_range(["a", "b", "c"], 0, 2)
     assert '"1"' in result and '"2"' in result and '"3"' not in result
 
+
+# ---------------------------------------------------------------------------
+# Line policy gating
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_should_apply_line_policy_default():
+    assert PipelineRunner._should_apply_line_policy({}, object(), "line") is True
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_should_apply_line_policy_disabled():
+    pipeline = {"apply_line_policy": False}
+    assert PipelineRunner._should_apply_line_policy(pipeline, object(), "line") is False
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_should_apply_line_policy_non_line_chunk():
+    assert PipelineRunner._should_apply_line_policy({}, object(), "legacy") is False
+
+
+# ---------------------------------------------------------------------------
+# JSONL protection helpers
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_apply_protection_to_lines():
+    try:
+        from murasaki_translator.core.text_protector import TextProtector
+    except ImportError:
+        pytest.skip("TextProtector not available")
+
+    lines = ["foo {bar}", "baz"]
+    protector = TextProtector()
+    protected, used = PipelineRunner._apply_protection_to_lines(
+        lines, 0, 2, protector
+    )
+    assert used is protector
+    assert len(protected) == len(lines)
+    assert protected[0] != lines[0]
 
 # ---------------------------------------------------------------------------
 # JSONL source window / parse (migrated from test_flow_v2_runner_jsonl)
@@ -294,19 +350,22 @@ def test_flow_v2_runner_concurrent_list_append_with_lock():
 
 
 # ---------------------------------------------------------------------------
-# V1CompatProcessor lock separation
+# ProcessingProcessor lock separation
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
-def test_flow_v2_runner_v1_compat_lock_separation():
+def test_flow_v2_runner_processing_lock_separation():
     try:
-        from murasaki_flow_v2.utils.v1_compat import V1CompatProcessor, V1CompatOptions
+        from murasaki_flow_v2.utils.processing import (
+            ProcessingProcessor,
+            ProcessingOptions,
+        )
     except ImportError:
-        pytest.skip("v1_compat dependencies not available")
+        pytest.skip("processing dependencies not available")
 
-    processor = V1CompatProcessor(
-        V1CompatOptions(
+    processor = ProcessingProcessor(
+        ProcessingOptions(
             rules_pre=[],
             rules_post=[],
             glossary={},

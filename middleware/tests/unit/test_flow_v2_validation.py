@@ -198,3 +198,86 @@ def test_flow_v2_validation_parser_prompt_mismatch(tmp_path):
     }
     result = validate_profile("pipeline", data, store=store)
     assert "parser_requires_tagged_prompt" in result.errors
+
+
+@pytest.mark.unit
+def test_flow_v2_validation_parser_requires_json_prompt(tmp_path):
+    store = ProfileStore(str(tmp_path))
+    store.ensure_dirs(["api", "prompt", "parser", "policy", "chunk", "pipeline"])
+    (tmp_path / "api" / "api1.yaml").write_text(
+        "id: api1\ntype: openai_compat\nbase_url: https://api.example.com/v1\nmodel: demo\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "prompt" / "prompt_plain.yaml").write_text(
+        "id: prompt_plain\nuser_template: \"{{source}}\"\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "parser" / "parser_json.yaml").write_text(
+        "id: parser_json\ntype: json_object\noptions:\n  path: translation\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "policy" / "line_policy.yaml").write_text(
+        "id: line_policy\ntype: tolerant\noptions: {}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "chunk" / "line_chunk.yaml").write_text(
+        "id: line_chunk\nchunk_type: line\noptions: {}\n",
+        encoding="utf-8",
+    )
+    data = {
+        "id": "pipe1",
+        "provider": "api1",
+        "prompt": "prompt_plain",
+        "parser": "parser_json",
+        "chunk_policy": "line_chunk",
+        "apply_line_policy": True,
+        "line_policy": "line_policy",
+    }
+    result = validate_profile("pipeline", data, store=store)
+    assert "parser_requires_json_prompt" in result.errors
+
+
+@pytest.mark.unit
+def test_flow_v2_validation_parser_requires_jsonl_prompt(tmp_path):
+    store = ProfileStore(str(tmp_path))
+    store.ensure_dirs(["api", "prompt", "parser", "policy", "chunk", "pipeline"])
+    (tmp_path / "api" / "api1.yaml").write_text(
+        "id: api1\ntype: openai_compat\nbase_url: https://api.example.com/v1\nmodel: demo\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "prompt" / "prompt_plain.yaml").write_text(
+        "id: prompt_plain\nuser_template: \"{{source}}\"\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "parser" / "parser_jsonl.yaml").write_text(
+        "id: parser_jsonl\ntype: jsonl\noptions:\n  path: translation\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "policy" / "line_policy.yaml").write_text(
+        "id: line_policy\ntype: tolerant\noptions: {}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "chunk" / "line_chunk.yaml").write_text(
+        "id: line_chunk\nchunk_type: line\noptions: {}\n",
+        encoding="utf-8",
+    )
+    data = {
+        "id": "pipe1",
+        "provider": "api1",
+        "prompt": "prompt_plain",
+        "parser": "parser_jsonl",
+        "chunk_policy": "line_chunk",
+        "apply_line_policy": True,
+        "line_policy": "line_policy",
+    }
+    result = validate_profile("pipeline", data, store=store)
+    assert "parser_requires_jsonl_prompt" in result.errors
+
+
+@pytest.mark.unit
+def test_flow_v2_validation_parser_missing_python_script():
+    result = validate_profile(
+        "parser",
+        {"id": "parser_python", "type": "python", "options": {}},
+    )
+    assert "missing_script" in result.errors

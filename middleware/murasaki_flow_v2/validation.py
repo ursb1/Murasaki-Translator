@@ -78,12 +78,12 @@ def _validate_prompt_parser(
     if parser_type == "tagged_line":
         if "@@" not in text and "[[" not in text:
             result.errors.append("parser_requires_tagged_prompt")
-        if parser_type in {"json_object", "json_array"}:
-            if "json" not in text:
-                result.errors.append("parser_requires_json_prompt")
-        if parser_type == "jsonl":
-            if "jsonl" not in text and "json lines" not in text and "jsonline" not in text:
-                result.errors.append("parser_requires_jsonl_prompt")
+    if parser_type in {"json_object", "json_array"}:
+        if "json" not in text:
+            result.errors.append("parser_requires_json_prompt")
+    if parser_type == "jsonl":
+        if "jsonl" not in text and "json lines" not in text and "jsonline" not in text:
+            result.errors.append("parser_requires_jsonl_prompt")
 
 
 def validate_profile(

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+﻿import { describe, it, expect } from "vitest";
 import { translations } from "../i18n";
 
 const requiredPaths: Array<string[]> = [
@@ -271,9 +271,6 @@ const requiredPaths: Array<string[]> = [
   ["apiManager", "templatesSearchEmpty"],
   ["apiManager", "templatesClose"],
   ["apiManager", "templatesFooterHint"],
-  ["apiManager", "templatesCoreBadge"],
-  ["apiManager", "templatesCoreTitle"],
-  ["apiManager", "templatesCoreDesc"],
   ["apiManager", "templatesMoreTitle"],
   ["apiManager", "templatesMoreDesc"],
   ["apiManager", "templatesToggleShow"],
@@ -283,18 +280,10 @@ const requiredPaths: Array<string[]> = [
   ["apiManager", "templateGroups", "tagged"],
   ["apiManager", "templateGroups", "regex"],
   ["apiManager", "templateGroups", "general"],
-  ["apiManager", "templateItems", "api_openai_basic", "title"],
-  ["apiManager", "templateItems", "api_openai_basic", "desc"],
-  ["apiManager", "templateItems", "pipeline_default", "title"],
-  ["apiManager", "templateItems", "pipeline_default", "desc"],
   ["apiManager", "templateItems", "prompt_plain_line", "title"],
   ["apiManager", "templateItems", "prompt_plain_line", "desc"],
   ["apiManager", "templateItems", "prompt_block_plain", "title"],
   ["apiManager", "templateItems", "prompt_block_plain", "desc"],
-  ["apiManager", "templateItems", "prompt_json_object", "title"],
-  ["apiManager", "templateItems", "prompt_json_object", "desc"],
-  ["apiManager", "templateItems", "prompt_json_array", "title"],
-  ["apiManager", "templateItems", "prompt_json_array", "desc"],
   ["apiManager", "templateItems", "prompt_jsonl_line", "title"],
   ["apiManager", "templateItems", "prompt_jsonl_line", "desc"],
   ["apiManager", "templateItems", "prompt_glossary_focus", "title"],
@@ -303,38 +292,10 @@ const requiredPaths: Array<string[]> = [
   ["apiManager", "templateItems", "parser_plain", "desc"],
   ["apiManager", "templateItems", "parser_any_default", "title"],
   ["apiManager", "templateItems", "parser_any_default", "desc"],
-  ["apiManager", "templateItems", "parser_line_strict", "title"],
-  ["apiManager", "templateItems", "parser_line_strict", "desc"],
-  ["apiManager", "templateItems", "parser_line_strict_first", "title"],
-  ["apiManager", "templateItems", "parser_line_strict_first", "desc"],
-  ["apiManager", "templateItems", "parser_line_strict_error", "title"],
-  ["apiManager", "templateItems", "parser_line_strict_error", "desc"],
-  ["apiManager", "templateItems", "parser_tagged_line", "title"],
-  ["apiManager", "templateItems", "parser_tagged_line", "desc"],
-  ["apiManager", "templateItems", "parser_tagged_line_sorted", "title"],
-  ["apiManager", "templateItems", "parser_tagged_line_sorted", "desc"],
-  ["apiManager", "templateItems", "parser_tagged_line_bracket", "title"],
-  ["apiManager", "templateItems", "parser_tagged_line_bracket", "desc"],
-  ["apiManager", "templateItems", "parser_json_array", "title"],
-  ["apiManager", "templateItems", "parser_json_array", "desc"],
-  ["apiManager", "templateItems", "parser_json_object", "title"],
-  ["apiManager", "templateItems", "parser_json_object", "desc"],
   ["apiManager", "templateItems", "parser_jsonl_object", "title"],
   ["apiManager", "templateItems", "parser_jsonl_object", "desc"],
-  ["apiManager", "templateItems", "parser_regex_json_key", "title"],
-  ["apiManager", "templateItems", "parser_regex_json_key", "desc"],
-  ["apiManager", "templateItems", "parser_regex_codeblock", "title"],
-  ["apiManager", "templateItems", "parser_regex_codeblock", "desc"],
-  ["apiManager", "templateItems", "parser_regex_xml_tag", "title"],
-  ["apiManager", "templateItems", "parser_regex_xml_tag", "desc"],
   ["apiManager", "templateItems", "parser_regex_custom", "title"],
   ["apiManager", "templateItems", "parser_regex_custom", "desc"],
-  ["apiManager", "templateItems", "policy_tolerant", "title"],
-  ["apiManager", "templateItems", "policy_tolerant", "desc"],
-  ["apiManager", "templateItems", "chunk_line_default", "title"],
-  ["apiManager", "templateItems", "chunk_line_default", "desc"],
-  ["apiManager", "templateItems", "chunk_legacy_doc", "title"],
-  ["apiManager", "templateItems", "chunk_legacy_doc", "desc"],
   ["apiManager", "previewTitle"],
   ["apiManager", "previewDesc"],
   ["apiManager", "previewEmpty"],
@@ -590,13 +551,37 @@ describe("apiManager view i18n", () => {
 
   it("uses neutral strategy placeholder for new pipelines", () => {
     expect(translations.zh.apiManager.scheme.placeholders.strategy).toBe(
-      "选择分段策略",
+      "閫夋嫨鍒嗘绛栫暐",
     );
     expect(translations.en.apiManager.scheme.placeholders.strategy).toBe(
       "Select segmentation strategy",
     );
     expect(translations.jp.apiManager.scheme.placeholders.strategy).toBe(
-      "分割戦略を選択",
+      "鍒嗗壊鎴︾暐銈掗伕鎶?,
     );
   });
+
+  it("removes references to default api/pipeline ids", () => {
+    const serialized = JSON.stringify(translations);
+    expect(serialized).not.toContain("openai_default");
+    expect(serialized).not.toContain("pipeline_default");
+  });
+
+  it("keeps template library limited to prompt/parser defaults", () => {
+    const expected = [
+      "parser_any_default",
+      "parser_jsonl_object",
+      "parser_plain",
+      "parser_regex_custom",
+      "prompt_block_plain",
+      "prompt_glossary_focus",
+      "prompt_jsonl_line",
+      "prompt_plain_line",
+    ].sort();
+    for (const lang of Object.values(translations)) {
+      const keys = Object.keys(lang.apiManager.templateItems || {}).sort();
+      expect(keys).toEqual(expected);
+    }
+  });
 });
+

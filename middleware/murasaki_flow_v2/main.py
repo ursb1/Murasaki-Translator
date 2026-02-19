@@ -32,26 +32,40 @@ def main() -> int:
 
     store = ProfileStore(args.profiles_dir)
     pipeline_profile = store.load_profile("pipeline", args.pipeline)
-    runtime_compat: dict[str, object] = {}
+    processing_cfg: dict[str, object] = {}
+    processing_requested = False
     if args.rules_pre:
-        runtime_compat["rules_pre"] = args.rules_pre
+        processing_cfg["rules_pre"] = args.rules_pre
+        processing_requested = True
     if args.rules_post:
-        runtime_compat["rules_post"] = args.rules_post
-    if args.glossary:
-        runtime_compat["glossary"] = args.glossary
-        pipeline_profile["glossary"] = args.glossary
-    if args.source_lang:
-        runtime_compat["source_lang"] = args.source_lang
+        processing_cfg["rules_post"] = args.rules_post
+        processing_requested = True
     if args.enable_quality:
-        runtime_compat["enable_quality"] = True
+        processing_cfg["enable_quality"] = True
+        processing_requested = True
     if args.disable_quality:
-        runtime_compat["enable_quality"] = False
+        processing_cfg["enable_quality"] = False
+        processing_requested = True
     if args.text_protect:
-        runtime_compat["text_protect"] = True
+        processing_cfg["text_protect"] = True
+        processing_requested = True
     if args.no_text_protect:
-        runtime_compat["text_protect"] = False
-    if runtime_compat:
-        pipeline_profile["v1_compat"] = runtime_compat
+        processing_cfg["text_protect"] = False
+        processing_requested = True
+
+    existing_processing = (
+        pipeline_profile.get("processing")
+        if isinstance(pipeline_profile.get("processing"), dict)
+        else {}
+    )
+    if args.source_lang and (processing_requested or existing_processing):
+        processing_cfg["source_lang"] = args.source_lang
+    if args.glossary:
+        pipeline_profile["glossary"] = args.glossary
+        if processing_requested or existing_processing:
+            processing_cfg["glossary"] = args.glossary
+    if processing_requested or existing_processing:
+        pipeline_profile["processing"] = {**existing_processing, **processing_cfg}
 
     print(f"[FlowV2] Provider: {pipeline_profile.get('provider')}")
     print(f"[FlowV2] Prompt: {pipeline_profile.get('prompt')}")

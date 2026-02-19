@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import yaml from "js-yaml";
 import type { ComponentProps, ComponentType, ReactNode } from "react";
 import {
@@ -7,9 +7,6 @@ import {
   Label,
   Tooltip,
   Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
 } from "./ui/core";
 import { translations, Language } from "../lib/i18n";
 import { emitToast } from "../lib/toast";
@@ -30,6 +27,7 @@ import {
   Search,
   ChevronRight,
   ChevronDown,
+  ChevronLeft,
   Code2,
   Zap,
   Cpu,
@@ -39,12 +37,22 @@ import {
   Percent,
   Hash,
   Repeat,
-  BookOpen,
   Scissors,
+  Loader2,
+  ArrowRight,
+  Check,
 } from "lucide-react";
+import { Switch } from "./ui/core";
 import { cn } from "../lib/utils";
 import { createUniqueProfileId, slugifyProfileId } from "../lib/profileId";
 import { isParserProfileBlank } from "../lib/parserProfile";
+import { normalizeChunkType } from "../lib/chunkProfile";
+import { buildPipelineSummary, type PipelineSummary } from "../lib/pipelineProfile";
+import {
+  buildPromptLegacyParts,
+  shouldPreserveLegacyPromptParts,
+  type PromptLegacyParts,
+} from "../lib/promptProfile";
 import { KVEditor } from "./api-manager/shared/KVEditor";
 import { FormSection } from "./api-manager/shared/FormSection";
 import { TemplateSelector } from "./api-manager/shared/TemplateSelector";
@@ -90,6 +98,37 @@ type InputAffixProps = Omit<ComponentProps<typeof BaseInput>, "prefix"> & {
   suffix?: ReactNode;
   containerClassName?: string;
 };
+
+const CheckCard = ({
+  checked,
+  onChange,
+  label,
+  description,
+  className,
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  label: string;
+  description?: string;
+  className?: string;
+}) => (
+  <div
+    className={cn(
+      "flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-background/60 px-3 py-3",
+      className,
+    )}
+  >
+    <div className="flex-1">
+      <div className="text-sm font-medium">{label}</div>
+      {description && (
+        <div className="text-xs text-muted-foreground mt-0.5 max-w-[90%]">
+          {description}
+        </div>
+      )}
+    </div>
+    <Switch checked={checked} onCheckedChange={onChange} />
+  </div>
+);
 
 const InputAffix = ({
   prefix,
@@ -365,11 +404,9 @@ const parserRuleTypes: ParserRuleType[] = [
 ];
 
 const DEFAULT_PROFILE_NAME_ALIASES: Record<string, string[]> = {
-  pipeline_default: ["Default API Scheme", "Default API Pipeline"],
   prompt_default: ["Default Prompt"],
   prompt_tagged_line: ["Tagged Line Prompt"],
   prompt_plain_line: ["Plain Line Prompt"],
-  prompt_block_plain: ["Block Prompt", "Block Plain Prompt"],
   prompt_json_object: ["JSON Object Prompt"],
   prompt_json_array: ["JSON Array Prompt"],
   prompt_jsonl_line: ["JSONL Line Prompt"],
@@ -590,9 +627,6 @@ const createParserRuleTemplate = (
 // --- Presets Data ---
 
 type PresetId = keyof (typeof translations)["zh"]["apiManager"]["presets"];
-type TemplateId =
-  keyof (typeof translations)["zh"]["apiManager"]["templateItems"];
-
 type TemplateEntry = {
   id: string;
   yaml: string;
@@ -860,50 +894,46 @@ const API_PRESETS_DATA: ApiPreset[] = [
 
 const TEMPLATE_LIBRARY: Record<ProfileKind, TemplateEntry[]> = {
   api: [],
-  pipeline: [
-    {
-      id: "pipeline_default",
-      yaml: `id: pipeline_default
-name: Default API Scheme
-provider: ""
-prompt: ""
-parser: ""
-line_policy: ""
-chunk_policy: ""
-apply_line_policy: false
-settings:
-  temperature: 0.3
-  max_retries: 2`,
-    },
-  ],
+  pipeline: [],
   prompt: [
+    {
+      id: "prompt_jsonl_line",
+      yaml: `id: prompt_jsonl_line
+name: 行模式·JSONL
+system_template: |
+  你是一位精通二次元文化的资深轻小说翻译家，请将日文翻译成流畅、优美的中文。
+  1、严格按照输入行数进行输出，不得拆分或合并行。
+  2、原文中的控制代码须在译文中原样保留。
+  3、只翻译 {{source}} 中的内容，上下文仅用于理解。
+
+  请使用 JSONL 输出，不要附加解释或多余文本:
+  jsonline{"<序号>":"<译文文本>"}
+user_template: |
+  参考术语表:{{glossary}}
+  参考上文(无需翻译):{{context_before}}
+  请翻译:{{source}}
+  参考下文(无需翻译):{{context_after}}
+context:
+  before_lines: 3
+  after_lines: 0
+  joiner: "\\n"
+  source_format: jsonl
+  source_lines: 5`,
+    },
     {
       id: "prompt_plain_line",
       yaml: `id: prompt_plain_line
-name: Plain Line Prompt
+name: 行模式·纯文本
 system_template: |
-  You are a professional translator.
-  Translate each line independently.
+  你是一名专业翻译，请逐行翻译日文为中文。
+  保持行数一致，不要添加行号或额外说明。
+  只输出译文，顺序与输入保持一致。
 user_template: |
+  参考术语表:{{glossary}}
+  参考上文(无需翻译):{{context_before}}
+  请逐行翻译:
   {{source}}
-context:
-  before_lines: 0
-  after_lines: 0
-  joiner: "\\n"`,
-    },
-    {
-      id: "prompt_block_plain",
-      yaml: `id: prompt_block_plain
-name: Block Prompt
-system_template: |
-  You are a professional translator.
-  Translate the paragraph as a whole.
-user_template: |
-  Glossary:{{glossary}}
-  Context (no translate):{{context_before}}
-  Please translate:
-  {{source}}
-  Context (no translate):{{context_after}}
+  参考下文(无需翻译):{{context_after}}
 context:
   before_lines: 3
   after_lines: 0
@@ -911,69 +941,32 @@ context:
   source_format: plain`,
     },
     {
-      id: "prompt_json_object",
-      yaml: `id: prompt_json_object
-name: JSON Object Prompt
-system_template: |
-  You are a professional translator.
-  Return JSON with key "translation".
-user_template: |
-  {{source}}
-context:
-  before_lines: 0
-  after_lines: 0
-  joiner: "\\n"`,
-    },
-    {
-      id: "prompt_json_array",
-      yaml: `id: prompt_json_array
-name: JSON Array Prompt
-system_template: |
-  You are a professional translator.
-  Return a JSON array of translated lines.
-user_template: |
-  {{source}}
-context:
-  before_lines: 0
-  after_lines: 0
-  joiner: "\\n"`,
-    },
-    {
-      id: "prompt_jsonl_line",
-      yaml: `id: prompt_jsonl_line
-name: JSONL Line Prompt
-system_template: |
-  Return JSONL. Each line: {\"line\": <line_number>, \"translation\": \"...\"}.
-user_template: |
-  {{source}}
-context:
-  before_lines: 0
-  after_lines: 0
-  joiner: "\\n"`,
-    },
-    {
       id: "prompt_glossary_focus",
       yaml: `id: prompt_glossary_focus
-name: Glossary Focus Prompt
+name: 行模式·术语优先
 system_template: |
-  You are a professional translator.
-  Keep terminology consistent with the glossary.
-  Output only translated text.
-  Prefer glossary terms when provided.
+  你是一名术语敏感的翻译，请严格优先使用术语表中的译法。
+  输出需逐行对齐，不得合并或拆分行。
+  使用 JSONL 输出，不要附加解释或多余文本:
+  jsonline{"<序号>":"<译文文本>"}
 user_template: |
-  {{glossary}}
-  {{source}}
+  术语表(优先使用):{{glossary}}
+  参考上文(无需翻译):{{context_before}}
+  请翻译:{{source}}
+  参考下文(无需翻译):{{context_after}}
 context:
-  before_lines: 0
+  before_lines: 3
   after_lines: 0
-  joiner: "\\n"`,
+  joiner: "\\n"
+  source_format: jsonl
+  source_lines: 5`,
     },
   ],
   parser: [
     {
       id: "parser_jsonl_object",
       yaml: `id: parser_jsonl_object
-name: JSONL 多行解析
+name: JSONL 行解析
 type: jsonl
 options:
   path: translation`,
@@ -981,13 +974,13 @@ options:
     {
       id: "parser_plain",
       yaml: `id: parser_plain
-name: Plain Text Parser
+name: 纯文本解析
 type: plain`,
     },
     {
       id: "parser_any_default",
       yaml: `id: parser_any_default
-name: 多解析级联（JSONL优先）
+name: 智能级联解析
 type: any
 options:
   parsers:
@@ -1006,7 +999,7 @@ options:
     {
       id: "parser_regex_custom",
       yaml: `id: parser_regex_custom
-name: Custom Regex Parser
+name: 自定义正则解析
 type: regex
 options:
   pattern: "(?s)TRANSLATION:\\\\s*(?P<content>.*)$"
@@ -1015,55 +1008,17 @@ options:
     - dotall`,
     },
   ],
-  policy: [
-    {
-      id: "policy_tolerant",
-      yaml: `id: line_tolerant
-name: 默认分行策略
-type: strict
-options:
-  on_mismatch: retry
-  trim: true
-  similarity_threshold: 0.8
-  checks:
-    - similarity`,
-    },
-  ],
-  chunk: [
-    {
-      id: "chunk_line_default",
-      yaml: `id: chunk_line_default
-name: 默认分行策略
-chunk_type: line
-options:
-  strict: false
-  keep_empty: false`,
-    },
-    {
-      id: "chunk_legacy_doc",
-      yaml: `id: chunk_legacy_doc
-name: 默认分块策略
-chunk_type: legacy
-options:
-  mode: doc
-  target_chars: 1200
-  max_chars: 2000`,
-    },
-  ],
+  policy: [],
+  chunk: [],
 };
 
-const TEMPLATE_CORE_IDS: Record<ProfileKind, TemplateId[]> = {
-  api: [],
-  pipeline: ["pipeline_default"],
-  prompt: ["prompt_plain_line", "prompt_block_plain"],
-  parser: [
-    "parser_jsonl_object",
-    "parser_plain",
-    "parser_any_default",
-    "parser_regex_custom",
-  ],
-  policy: ["policy_tolerant"],
-  chunk: ["chunk_line_default", "chunk_legacy_doc"],
+const TEMPLATE_LIBRARY_ENABLED: Record<ProfileKind, boolean> = {
+  api: false,
+  pipeline: false,
+  prompt: true,
+  parser: true,
+  policy: false,
+  chunk: false,
 };
 
 // --- Validation Logic ---
@@ -1459,18 +1414,6 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       ? texts.strategyKindTitle
       : texts.kinds[targetKind] || targetKind;
 
-  const getKindIcon = (targetKind: ProfileKind) => {
-    switch (targetKind) {
-      case "api": return Server;
-      case "pipeline": return Workflow;
-      case "prompt": return MessageSquare;
-      case "parser": return FileJson;
-      case "policy": return BookOpen;
-      case "chunk": return Scissors;
-      default: return null;
-    }
-  };
-
   const loadJson = <T,>(key: string, fallback: T): T => {
     try {
       const raw = window.localStorage.getItem(key);
@@ -1622,6 +1565,12 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
   const [chunkTypeIndex, setChunkTypeIndex] = useState<
     Record<string, "line" | "legacy" | "">
   >({});
+  const [pipelineSummaryIndex, setPipelineSummaryIndex] = useState<
+    Record<string, PipelineSummary>
+  >({});
+  const [pipelineView, setPipelineView] = useState<"overview" | "editor">(
+    "overview",
+  );
   const [showApiSetup, setShowApiSetup] = useState(false);
   const showIdField: Record<ProfileKind, boolean> = {
     api: false,
@@ -1641,13 +1590,14 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     policy: true,
     chunk: true,
   });
-  const [presetExpanded, setPresetExpanded] = useState(false);
+  const [presetsOpen, setPresetsOpen] = useState(true);
   const [activePresetId, setActivePresetId] = useState<PresetId | null>(null);
   const [activePresetChannel, setActivePresetChannel] = useState("");
   const [modelList, setModelList] = useState<string[]>([]);
   const [modelListLoading, setModelListLoading] = useState(false);
   const [modelListError, setModelListError] = useState("");
   const [modelListRequested, setModelListRequested] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [pendingSelection, setPendingSelection] = useState<{
     id: string;
     kind: ProfileKind;
@@ -1662,6 +1612,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
 
   // Interaction states
   const [searchTerm, setSearchTerm] = useState("");
+  const deferredSearchTerm = useDeferredValue(searchTerm);
 
   // Operation states
   const [apiForm, setApiForm] = useState<ApiFormState>(DEFAULT_API_FORM);
@@ -1675,6 +1626,8 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     useState<PipelineComposerState>(DEFAULT_PIPELINE_COMPOSER);
   const [promptForm, setPromptForm] =
     useState<PromptFormState>(DEFAULT_PROMPT_FORM);
+  const [promptLegacyParts, setPromptLegacyParts] =
+    useState<PromptLegacyParts | null>(null);
   const [promptPreview, setPromptPreview] = useState<PromptPreviewState>(
     DEFAULT_PROMPT_PREVIEW,
   );
@@ -1704,6 +1657,20 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
   const [templateManagerOpen, setTemplateManagerOpen] = useState(false);
   const [templateDraftName, setTemplateDraftName] = useState("");
   const [templateDraftDesc, setTemplateDraftDesc] = useState("");
+  const [showPipelineGuide, setShowPipelineGuide] = useState(true);
+  const hasAutoCollapsedGuide = useRef(false);
+
+  useEffect(() => {
+    if (
+      kind === "pipeline" &&
+      profileIndex.pipeline.length > 0 &&
+      !hasAutoCollapsedGuide.current
+    ) {
+      setShowPipelineGuide(false);
+      hasAutoCollapsedGuide.current = true;
+    }
+  }, [kind, profileIndex.pipeline.length]);
+
   const [customTemplates, setCustomTemplates] = useState<
     Record<ProfileKind, TemplateEntry[]>
   >(() => loadJson(TEMPLATE_CUSTOM_KEY, {} as Record<ProfileKind, TemplateEntry[]>));
@@ -1719,7 +1686,10 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
   );
   const [pendingPipelineLink, setPendingPipelineLink] = useState(false);
   const loadProfilesSeq = useRef(0);
+  const pipelineSummarySeq = useRef(0);
   const loadDetailSeq = useRef(0);
+  const apiTestSeq = useRef(0);
+  const modelListSeq = useRef(0);
 
   useEffect(() => {
     persistJson(TEMPLATE_CUSTOM_KEY, customTemplates);
@@ -1730,6 +1700,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
   }, [hiddenTemplates]);
 
   useEffect(() => {
+    apiTestSeq.current += 1;
     setApiTest({ status: "idle" });
   }, [apiForm.baseUrl, apiForm.apiKey, apiForm.timeout, apiForm.apiType]);
 
@@ -1743,17 +1714,6 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       setActivePipelineId(visiblePipelineIds[0]);
     }
   }, [visiblePipelineIds, activePipelineId]);
-
-  useEffect(() => {
-    if (
-      kind === "pipeline" &&
-      activePipelineId &&
-      !selectedId &&
-      !yamlText.trim()
-    ) {
-      setSelectedId(activePipelineId);
-    }
-  }, [kind, activePipelineId, selectedId, yamlText]);
 
   useEffect(() => {
     if (
@@ -1843,15 +1803,15 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
   }, [profileIndex, isHiddenProfile]);
 
   const filteredProfiles = useMemo(() => {
-    if (!searchTerm) return visibleProfiles;
-    const lower = searchTerm.toLowerCase();
+    if (!deferredSearchTerm) return visibleProfiles;
+    const lower = deferredSearchTerm.toLowerCase();
     return visibleProfiles.filter(
       (p) =>
         resolveProfileName(p.id, p.name).toLowerCase().includes(lower) ||
         p.id.toLowerCase().includes(lower),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps -- resolveProfileName only depends on texts (in deps) and presetTexts (constant)
-  }, [visibleProfiles, searchTerm, texts]);
+  }, [visibleProfiles, deferredSearchTerm, texts]);
 
   const getProfileLabel = (targetKind: ProfileKind, id?: string) => {
     if (!id) return "";
@@ -1864,10 +1824,29 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     return label || texts.untitledProfile;
   };
 
+  const getStrategyLabel = (lineId: string, chunkId: string) => {
+    const lineLabel = lineId ? getProfileLabel("policy", lineId) : "";
+    const chunkLabel = chunkId ? getProfileLabel("chunk", chunkId) : "";
+    if (lineLabel && chunkLabel) return `${lineLabel} · ${chunkLabel}`;
+    return lineLabel || chunkLabel || texts.untitledProfile;
+  };
+
   const getExistingIds = (targetKind: ProfileKind) =>
     profileIndex[targetKind]?.length
       ? profileIndex[targetKind]
       : profiles.map((item) => item.id);
+
+  const buildValidationIndex = () => {
+    const next: Record<ProfileKind, string[]> = { ...profileIndex };
+    (Object.keys(next) as ProfileKind[]).forEach((targetKind) => {
+      if (next[targetKind]?.length) return;
+      const meta = profileMeta[targetKind];
+      if (meta && Object.keys(meta).length) {
+        next[targetKind] = Object.keys(meta);
+      }
+    });
+    return next;
+  };
 
   const buildAutoProfileId = (
     targetKind: ProfileKind,
@@ -1917,9 +1896,51 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       }
       return;
     }
+    const inferById = (id: string) => {
+      const normalized = id.toLowerCase();
+      if (normalized.includes("line")) return "line";
+      if (normalized.includes("legacy") || normalized.includes("doc"))
+        return "legacy";
+      return "";
+    };
+    const directEntries: Array<[string, "" | "line" | "legacy"]> = [];
+    const pendingIds: string[] = [];
+    for (const id of chunkIds) {
+      const cached = chunkTypeIndex[id];
+      if (cached) {
+        directEntries.push([id, cached]);
+        continue;
+      }
+      const inferred = inferById(id);
+      if (inferred) {
+        directEntries.push([id, inferred]);
+      } else {
+        pendingIds.push(id);
+      }
+    }
+    const commitEntries = (
+      entries: Array<[string, "" | "line" | "legacy"]>,
+    ) => {
+      if (requestId && requestId !== loadProfilesSeq.current) return;
+      setChunkTypeIndex((prev) => {
+        const next: Record<string, "" | "line" | "legacy"> = {};
+        chunkIds.forEach((id) => {
+          const existing = prev[id];
+          if (existing) next[id] = existing;
+        });
+        entries.forEach(([id, type]) => {
+          if (type) next[id] = type;
+        });
+        return next;
+      });
+    };
+    if (!pendingIds.length) {
+      commitEntries(directEntries);
+      return;
+    }
     try {
-      const entries = await Promise.all(
-        chunkIds.map(async (id) => {
+      const entries = (await Promise.all(
+        pendingIds.map(async (id) => {
           try {
             const result = await window.api?.pipelineV2ProfilesLoad?.(
               "chunk",
@@ -1930,27 +1951,20 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
               (result?.yaml ? (yaml.load(result.yaml) as any) : null);
             const raw = String(data?.chunk_type || data?.type || "");
             const normalized = raw === "line" || raw === "legacy" ? raw : "";
-            return [id, normalized] as const;
+            return [id, normalized] as [string, "" | "line" | "legacy"];
           } catch {
-            return [id, ""] as const;
+            return [id, ""] as [string, "" | "line" | "legacy"];
           }
         }),
-      );
-      if (!requestId || requestId === loadProfilesSeq.current) {
-        setChunkTypeIndex(Object.fromEntries(entries));
-      }
+      )) as Array<[string, "" | "line" | "legacy"]>;
+      commitEntries([...directEntries, ...entries]);
     } catch {
-      if (!requestId || requestId === loadProfilesSeq.current) {
-        setChunkTypeIndex({});
-      }
+      commitEntries(directEntries);
     }
   };
 
   const loadApiRuntimeIndex = async (apiIds: string[], requestId?: number) => {
     if (!apiIds.length) {
-      if (!requestId || requestId === loadProfilesSeq.current) {
-        setApiRuntimeIndex({});
-      }
       return;
     }
     try {
@@ -1979,12 +1993,13 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
         }),
       );
       if (!requestId || requestId === loadProfilesSeq.current) {
-        setApiRuntimeIndex(Object.fromEntries(entries));
+        setApiRuntimeIndex((prev) => ({
+          ...prev,
+          ...Object.fromEntries(entries),
+        }));
       }
     } catch {
-      if (!requestId || requestId === loadProfilesSeq.current) {
-        setApiRuntimeIndex({});
-      }
+      // ignore
     }
   };
 
@@ -2006,8 +2021,13 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       chunk: {},
     };
     try {
-      for (const targetKind of PROFILE_KINDS) {
-        const list = await window.api?.pipelineV2ProfilesList?.(targetKind);
+      const results = await Promise.all(
+        PROFILE_KINDS.map(async (targetKind) => {
+          const list = await window.api?.pipelineV2ProfilesList?.(targetKind);
+          return [targetKind, list] as const;
+        }),
+      );
+      for (const [targetKind, list] of results) {
         if (Array.isArray(list)) {
           nextIndex[targetKind] = list.map((item) => item.id);
           nextMeta[targetKind] = Object.fromEntries(
@@ -2025,8 +2045,11 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       setProfileIndex(nextIndex);
       setProfileMeta(nextMeta);
     }
-    await loadChunkTypeIndex(nextIndex.chunk, requestId);
-    await loadApiRuntimeIndex(nextIndex.api, requestId);
+    const shouldLoadChunkType =
+      kind === "pipeline" || kind === "policy" || kind === "chunk";
+    if (shouldLoadChunkType) {
+      await loadChunkTypeIndex(nextIndex.chunk, requestId);
+    }
   };
 
   // Load profiles
@@ -2121,7 +2144,6 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     loadProfiles();
     setEditorTab("visual");
     setPromptPreview(DEFAULT_PROMPT_PREVIEW);
-    setPresetExpanded(false);
     setActivePresetId(null);
     setActivePresetChannel("");
     setModelList([]);
@@ -2134,6 +2156,9 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     setTemplateDraftDesc("");
     setApiAdvancedTab("sampling");
     setShowApiSetup(false);
+    if (kind === "pipeline") {
+      setPipelineView("overview");
+    }
     if (kind === "policy" || kind === "chunk") {
       setStrategyKind(kind);
     }
@@ -2145,6 +2170,50 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       setYamlText("");
     }
   }, [kind]);
+
+  useEffect(() => {
+    if (kind !== "pipeline") return;
+    if (!visiblePipelineIds.length) {
+      setPipelineSummaryIndex({});
+      return;
+    }
+    const requestId = ++pipelineSummarySeq.current;
+    const loadSummaries = async () => {
+      try {
+        const entries = await Promise.all(
+          visiblePipelineIds.map(async (id) => {
+            try {
+              const result = await window.api?.pipelineV2ProfilesLoad?.(
+                "pipeline",
+                id,
+              );
+              const data =
+                result?.data ??
+                (result?.yaml ? (yaml.load(result.yaml) as any) : null);
+              return [id, buildPipelineSummary(data, { id })] as const;
+            } catch {
+              return [id, buildPipelineSummary(null, { id })] as const;
+            }
+          }),
+        );
+        if (requestId !== pipelineSummarySeq.current) return;
+        setPipelineSummaryIndex(Object.fromEntries(entries));
+      } catch {
+        if (requestId === pipelineSummarySeq.current) {
+          setPipelineSummaryIndex({});
+        }
+      }
+    };
+    loadSummaries();
+  }, [kind, visiblePipelineIds]);
+
+  useEffect(() => {
+    if (kind !== "pipeline") return;
+    const providerId = pipelineComposer.provider;
+    if (!providerId) return;
+    if (apiRuntimeIndex[providerId]) return;
+    loadApiRuntimeIndex([providerId]);
+  }, [kind, pipelineComposer.provider, apiRuntimeIndex]);
 
   useEffect(() => {
     if (pendingSelection && pendingSelection.kind === kind) {
@@ -2211,6 +2280,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     setModelList([]);
     setModelListRequested(false);
     setModelListError("");
+    modelListSeq.current += 1;
   }, [apiForm.baseUrl, apiForm.apiType, kind]);
 
   useEffect(() => {
@@ -2219,21 +2289,29 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
   }, [kind]);
 
   // Validation
-  const parsedResult = useMemo(() => {
-    if (!yamlText.trim()) return { data: null, error: "" };
-    try {
-      const data = yaml.load(yamlText) as any;
-      if (!data || typeof data !== "object") {
-        return { data: null, error: texts.validationInvalidYaml };
+  const parseYamlText = useCallback(
+    (raw: string) => {
+      if (!raw.trim()) return { data: null, error: "" };
+      try {
+        const data = yaml.load(raw) as any;
+        if (!data || typeof data !== "object") {
+          return { data: null, error: texts.validationInvalidYaml };
+        }
+        return { data, error: "" };
+      } catch (error: any) {
+        return {
+          data: null,
+          error: error?.message || texts.validationInvalidYaml,
+        };
       }
-      return { data, error: "" };
-    } catch (error: any) {
-      return {
-        data: null,
-        error: error?.message || texts.validationInvalidYaml,
-      };
-    }
-  }, [yamlText, texts.validationInvalidYaml]);
+    },
+    [texts.validationInvalidYaml],
+  );
+  const deferredYamlText = useDeferredValue(yamlText);
+  const parsedResult = useMemo(
+    () => parseYamlText(deferredYamlText),
+    [deferredYamlText, parseYamlText],
+  );
 
   useEffect(() => {
     setLastValidation(null);
@@ -2321,6 +2399,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
 
   // Actions
   const handleSyncFromYaml = () => {
+    const immediateParsed = parseYamlText(yamlText);
     if (!yamlText.trim()) {
       emitToast({
         title: texts.syncFromYaml,
@@ -2329,67 +2408,75 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       });
       return;
     }
-    if (!parsedResult.data) {
+    if (!immediateParsed.data) {
       emitToast({
         title: texts.syncFromYaml,
-        description: parsedResult.error || texts.validationInvalidYaml,
+        description: immediateParsed.error || texts.validationInvalidYaml,
         variant: "error",
       });
       return;
     }
-    syncFormsFromData(kind, parsedResult.data);
+    syncFormsFromData(kind, immediateParsed.data);
     setAutoIdEnabled((prev) => ({ ...prev, [kind]: false }));
+    emitToast({
+      title: texts.syncFromYaml,
+      description: texts.syncFromYamlOk,
+      variant: "success",
+    });
     setEditorTab("visual");
   };
 
   const handleSave = async () => {
-    if (!yamlText.trim()) {
-      emitToast({
-        title: texts.saveFail,
-        description: texts.emptyYaml,
-        variant: "error",
-      });
-      if (kind === "api") setShowApiSetup(true);
-      return;
-    }
-    if (!parsedResult.data) {
-      emitToast({
-        title: texts.saveFail,
-        description: parsedResult.error || texts.validationInvalidYaml,
-        variant: "error",
-      });
-      if (kind === "api") setShowApiSetup(true);
-      return;
-    }
-    const localValidation = validateProfile(
-      kind,
-      parsedResult.data,
-      profileIndex,
-      texts,
-      chunkTypeIndex,
-    );
-    setLastValidation(localValidation);
-    if (localValidation.errors.length) {
-      emitToast({
-        title: texts.validationError,
-        description: localValidation.errors.join("\n"),
-        variant: "error",
-      });
-      if (kind === "api") setShowApiSetup(true);
-      return;
-    }
-    const saveId = parsedResult.data?.id || selectedId;
-    if (!saveId) {
-      emitToast({
-        title: texts.saveFail,
-        description: texts.missingId,
-        variant: "error",
-      });
-      if (kind === "api") setShowApiSetup(true);
-      return;
-    }
-
+    setIsSaving(true);
     try {
+      const immediateParsed = parseYamlText(yamlText);
+      if (!yamlText.trim()) {
+        emitToast({
+          title: texts.saveFail,
+          description: texts.emptyYaml,
+          variant: "error",
+        });
+        if (kind === "api") setShowApiSetup(true);
+        return;
+      }
+      if (!immediateParsed.data) {
+        emitToast({
+          title: texts.saveFail,
+          description: immediateParsed.error || texts.validationInvalidYaml,
+          variant: "error",
+        });
+        if (kind === "api") setShowApiSetup(true);
+        return;
+      }
+      const validationIndex = buildValidationIndex();
+      const localValidation = validateProfile(
+        kind,
+        immediateParsed.data,
+        validationIndex,
+        texts,
+        chunkTypeIndex,
+      );
+      setLastValidation(localValidation);
+      if (localValidation.errors.length) {
+        emitToast({
+          title: texts.validationError,
+          description: localValidation.errors.join("\n"),
+          variant: "error",
+        });
+        if (kind === "api") setShowApiSetup(true);
+        return;
+      }
+      const saveId = immediateParsed.data?.id || selectedId;
+      if (!saveId) {
+        emitToast({
+          title: texts.saveFail,
+          description: texts.missingId,
+          variant: "error",
+        });
+        if (kind === "api") setShowApiSetup(true);
+        return;
+      }
+
       const result = await window.api?.pipelineV2ProfilesSave?.(
         kind,
         saveId,
@@ -2432,6 +2519,8 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
         variant: "error",
       });
       if (kind === "api") setShowApiSetup(true);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -2497,6 +2586,9 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
   // };
 
   const handleCreate = () => {
+    if (kind === "pipeline") {
+      setPipelineView("editor");
+    }
     setAutoIdEnabled((prev) => ({ ...prev, [kind]: true }));
     setSelectedId(null);
     setEditorTab("visual");
@@ -2526,6 +2618,9 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       setKind(targetKind);
       setSearchTerm("");
       return;
+    }
+    if (targetKind === "pipeline") {
+      setPipelineView("editor");
     }
     setSelectedId(id);
     setEditorTab("visual");
@@ -2560,6 +2655,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       Number.isFinite(timeoutValue) && timeoutValue > 0
         ? timeoutValue * 1000
         : 8000;
+    const requestId = ++apiTestSeq.current;
     setApiTest({ status: "testing" });
     try {
       const result = await window.api?.pipelineV2ApiTest?.({
@@ -2568,6 +2664,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
         timeoutMs,
         model: apiForm.model.trim(),
       });
+      if (requestId !== apiTestSeq.current) return;
       if (result?.ok) {
         setApiTest({
           status: "success",
@@ -2586,6 +2683,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
         });
       }
     } catch (e) {
+      if (requestId !== apiTestSeq.current) return;
       setApiTest({ status: "error", message: String(e) });
     }
   };
@@ -2602,6 +2700,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       });
       return;
     }
+    const requestId = ++modelListSeq.current;
     setModelListRequested(true);
     const apiKey =
       apiForm.apiKey
@@ -2621,6 +2720,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
         apiKey,
         timeoutMs,
       });
+      if (requestId !== modelListSeq.current) return;
       if (result?.ok && Array.isArray(result.models)) {
         const cleaned = result.models.filter((item: any) => Boolean(item));
         setModelList(cleaned);
@@ -2636,9 +2736,12 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
         setModelListError(message);
       }
     } catch (error: any) {
+      if (requestId !== modelListSeq.current) return;
       setModelListError(String(error?.message || error));
     } finally {
-      setModelListLoading(false);
+      if (requestId === modelListSeq.current) {
+        setModelListLoading(false);
+      }
     }
   };
 
@@ -3128,6 +3231,11 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
         normalizedEndpoints.length > 0
           ? normalizedEndpoints
           : [createPoolEndpoint()];
+      const membersText = Array.isArray(data.members)
+        ? data.members.join("\n")
+        : data.members !== undefined && data.members !== null
+          ? String(data.members)
+          : "";
       setApiForm({
         id: data.id || "",
         name: data.name || "",
@@ -3138,7 +3246,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
           : data.api_key || "",
         model: data.model || "",
         group: data.group || "",
-        members: data.members ? data.members.join("\n") : "",
+        members: membersText,
         poolEndpoints,
         strategy: data.strategy === "random" ? "random" : "round_robin",
         headers: JSON.stringify(data.headers || {}, null, 2),
@@ -3223,22 +3331,12 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     }
     if (targetKind === "prompt") {
       const context = data.context || {};
-      const systemTemplate = [
-        data.persona,
-        data.style_rules,
-        data.output_rules,
-        data.system_template,
-      ]
-        .map((value) =>
-          value === undefined || value === null ? "" : String(value),
-        )
-        .map((value) => value.trim())
-        .filter(Boolean)
-        .join("\n\n");
+      const { combined, legacy } = buildPromptLegacyParts(data);
+      setPromptLegacyParts(legacy);
       setPromptForm({
         id: data.id || "",
         name: data.name || "",
-        systemTemplate,
+        systemTemplate: combined,
         userTemplate: data.user_template || "",
         beforeLines: String(context.before_lines ?? "0"),
         afterLines: String(context.after_lines ?? "0"),
@@ -3302,12 +3400,11 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     }
     if (targetKind === "chunk") {
       const options = data.options || {};
-      const chunkType = data.chunk_type || data.type || "legacy";
-      const isLine = chunkType === "line";
+      const chunkType = normalizeChunkType(data.chunk_type || data.type);
       setChunkForm({
         id: data.id || "",
         name: data.name || "",
-        chunkType: isLine ? "line" : "legacy",
+        chunkType,
         lineStrict: Boolean(options.strict),
         keepEmpty:
           options.keep_empty !== undefined
@@ -3679,12 +3776,19 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     }
 
     const settings: any = {};
-    if (newComposer.temperature !== "")
-      settings.temperature = parseFloat(newComposer.temperature);
-    if (newComposer.maxTokens !== "")
-      settings.max_tokens = parseInt(newComposer.maxTokens);
-    if (newComposer.maxRetries !== "")
-      settings.max_retries = parseInt(newComposer.maxRetries);
+    const applySettingFloat = (value: string, key: string) => {
+      if (value === "") return;
+      const num = Number(value);
+      if (Number.isFinite(num)) settings[key] = num;
+    };
+    const applySettingInt = (value: string, key: string) => {
+      if (value === "") return;
+      const num = Number.parseInt(value, 10);
+      if (Number.isFinite(num)) settings[key] = num;
+    };
+    applySettingFloat(newComposer.temperature, "temperature");
+    applySettingInt(newComposer.maxTokens, "max_tokens");
+    applySettingInt(newComposer.maxRetries, "max_retries");
     const apiRuntime = apiRuntimeIndex[newComposer.provider] || {};
     if (apiRuntime.concurrency !== undefined) {
       settings.concurrency = apiRuntime.concurrency;
@@ -3701,7 +3805,10 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     if (apiRuntime.timeout !== undefined) {
       settings.timeout = apiRuntime.timeout;
     } else if (newComposer.timeout !== "") {
-      settings.timeout = parseInt(newComposer.timeout);
+      const timeoutValue = Number.parseInt(newComposer.timeout, 10);
+      if (Number.isFinite(timeoutValue)) {
+        settings.timeout = timeoutValue;
+      }
     }
     if (newComposer.headers) {
       try {
@@ -3712,12 +3819,20 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       } catch { }
     }
     const params: Record<string, any> = {};
-    if (newComposer.topP !== "") params.top_p = parseFloat(newComposer.topP);
-    if (newComposer.presencePenalty !== "")
-      params.presence_penalty = parseFloat(newComposer.presencePenalty);
-    if (newComposer.frequencyPenalty !== "")
-      params.frequency_penalty = parseFloat(newComposer.frequencyPenalty);
-    if (newComposer.seed !== "") params.seed = parseInt(newComposer.seed);
+    const applyParamFloat = (value: string, key: string) => {
+      if (value === "") return;
+      const num = Number(value);
+      if (Number.isFinite(num)) params[key] = num;
+    };
+    const applyParamInt = (value: string, key: string) => {
+      if (value === "") return;
+      const num = Number.parseInt(value, 10);
+      if (Number.isFinite(num)) params[key] = num;
+    };
+    applyParamFloat(newComposer.topP, "top_p");
+    applyParamFloat(newComposer.presencePenalty, "presence_penalty");
+    applyParamFloat(newComposer.frequencyPenalty, "frequency_penalty");
+    applyParamInt(newComposer.seed, "seed");
     if (newComposer.stop) {
       const rawStop = newComposer.stop.trim();
       if (rawStop) {
@@ -3755,7 +3870,6 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     const payload: any = {
       id: newForm.id,
       name: newForm.name,
-      system_template: newForm.systemTemplate,
       user_template: newForm.userTemplate,
       context: {
         before_lines: toNumber(newForm.beforeLines, 0),
@@ -3763,6 +3877,20 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
         joiner: resolvedJoiner || "\n",
       },
     };
+    const preserveLegacy = shouldPreserveLegacyPromptParts(
+      promptLegacyParts,
+      newForm.systemTemplate,
+    );
+    if (preserveLegacy && promptLegacyParts) {
+      if (promptLegacyParts.persona) payload.persona = promptLegacyParts.persona;
+      if (promptLegacyParts.styleRules)
+        payload.style_rules = promptLegacyParts.styleRules;
+      if (promptLegacyParts.outputRules)
+        payload.output_rules = promptLegacyParts.outputRules;
+      payload.system_template = promptLegacyParts.systemTemplate;
+    } else {
+      payload.system_template = newForm.systemTemplate;
+    }
     if (resolvedSourceFormat) {
       payload.context.source_format = resolvedSourceFormat;
     }
@@ -3811,27 +3939,23 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
   const updateYamlFromChunkForm = (newForm: ChunkFormState) => {
     setChunkForm(newForm);
     try {
+      const chunkType = normalizeChunkType(newForm.chunkType);
       const payload: any = {
         id: newForm.id,
         name: newForm.name,
-        chunk_type: newForm.chunkType,
+        chunk_type: chunkType,
       };
       const options: any = {};
-      if (newForm.chunkType === "line") {
-        options.strict = newForm.lineStrict;
-        options.keep_empty = newForm.keepEmpty;
-      } else {
-        const target = parseInt(newForm.targetChars, 10);
-        if (Number.isFinite(target)) options.target_chars = target;
-        const maxChars = parseInt(newForm.maxChars, 10);
-        if (Number.isFinite(maxChars)) options.max_chars = maxChars;
-        options.enable_balance = newForm.enableBalance;
-        const balanceThreshold = Number(newForm.balanceThreshold);
-        if (Number.isFinite(balanceThreshold))
-          options.balance_threshold = balanceThreshold;
-        const balanceCount = parseInt(newForm.balanceCount, 10);
-        if (Number.isFinite(balanceCount)) options.balance_count = balanceCount;
-      }
+      const target = parseInt(newForm.targetChars, 10);
+      if (Number.isFinite(target)) options.target_chars = target;
+      const maxChars = parseInt(newForm.maxChars, 10);
+      if (Number.isFinite(maxChars)) options.max_chars = maxChars;
+      options.enable_balance = newForm.enableBalance;
+      const balanceThreshold = Number(newForm.balanceThreshold);
+      if (Number.isFinite(balanceThreshold))
+        options.balance_threshold = balanceThreshold;
+      const balanceCount = parseInt(newForm.balanceCount, 10);
+      if (Number.isFinite(balanceCount)) options.balance_count = balanceCount;
       if (Object.keys(options).length) payload.options = options;
       setYamlText(yaml.dump(payload));
     } catch { }
@@ -5685,39 +5809,66 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     const updatePolicy = (patch: Partial<PolicyFormState>) =>
       updateYamlFromPolicyForm({ ...policyForm, ...patch });
 
-    const renderCheckCard = (
-      checked: boolean,
-      onChange: (next: boolean) => void,
-      label: string,
-      desc: string,
-    ) => (
-      <div className="flex items-start justify-between gap-3 rounded-lg border border-border/60 bg-background/60 px-3 py-3">
-        <div>
-          <div className="text-sm font-medium">{label}</div>
-          <div className="text-xs text-muted-foreground">{desc}</div>
-        </div>
-        <input
-          type="checkbox"
-          className="mt-0.5 h-4 w-4 rounded border-border/60"
-          checked={checked}
-          onChange={(e) => onChange(e.target.checked)}
-        />
-      </div>
-    );
-
     const sourceLangOptions = new Set(["", "ja"]);
     const customSourceLang =
       policyForm.sourceLang && !sourceLangOptions.has(policyForm.sourceLang)
         ? policyForm.sourceLang
         : "";
 
-    return (
-      <div className="space-y-5">
-        <FormSection
-          title={texts.policySections.modeTitle}
-          desc={texts.policySections.modeDesc}
+    const renderCheckCard = (
+      checked: boolean,
+      onChange: (next: boolean) => void,
+      label: string,
+      desc: string,
+      children?: React.ReactNode,
+    ) => (
+      <div
+        className={cn(
+          "relative flex flex-col rounded-xl border transition-all duration-200",
+          checked
+            ? "border-primary/40 bg-primary/[0.03]"
+            : "border-border/60 bg-card hover:bg-accent/40"
+        )}
+      >
+        <div
+          onClick={() => onChange(!checked)}
+          className="flex items-start gap-4 p-4 cursor-pointer select-none"
         >
-          <div className="grid grid-cols-2 gap-4">
+          <div className={cn(
+            "mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-all duration-300",
+            checked
+              ? "bg-primary border-primary text-white scale-110"
+              : "border-muted-foreground/30 bg-transparent"
+          )}>
+            {checked && <Check className="h-3 w-3 stroke-[3]" />}
+          </div>
+          <div className="space-y-1 flex-1">
+            <div className="text-sm font-medium leading-none text-foreground">
+              {label}
+            </div>
+            <p className="text-xs text-muted-foreground/80 leading-relaxed">
+              {desc}
+            </p>
+          </div>
+        </div>
+
+        {checked && children && (
+          <div className="px-4 pb-4 pt-0 animate-in fade-in zoom-in-95 duration-200">
+            <div className="h-px bg-primary/10 mb-4" />
+            {children}
+          </div>
+        )}
+      </div>
+    );
+
+    return (
+      <div className="w-full px-4 py-8">
+        {/* Section 1: Basic Info */}
+        <FormSection
+          title={texts.policySections.modeTitle || "分行策略设置"}
+          desc={texts.policySections.modeDesc || "配置原文与译文行数不一致时的处理逻辑"}
+        >
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {showPolicyId && (
               <div className="space-y-2">
                 <Label>{texts.policyFields.idLabel}</Label>
@@ -5731,6 +5882,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
               <Label>{texts.policyFields.nameLabel}</Label>
               <Input
                 value={policyForm.name}
+                className="text-lg font-medium"
                 onChange={(e) => {
                   const nextName = e.target.value;
                   const nextId = shouldAutoUpdateId("policy", nextName)
@@ -5740,141 +5892,160 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                 }}
               />
             </div>
-            <div className="space-y-2">
-              <Label>{texts.policyFields.policyTypeLabel}</Label>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  className={cn(
-                    "flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors",
-                    policyForm.policyType === "strict"
-                      ? "border-primary bg-primary/10 text-primary"
-                      : "border-border/60 bg-background/60 text-muted-foreground hover:border-border",
-                  )}
-                  onClick={() => updatePolicy({ policyType: "strict" })}
-                >
-                  {texts.policyOptions.strict}
-                </button>
-                <button
-                  type="button"
-                  className={cn(
-                    "flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors",
-                    policyForm.policyType === "tolerant"
-                      ? "border-primary bg-primary/10 text-primary"
-                      : "border-border/60 bg-background/60 text-muted-foreground hover:border-border",
-                  )}
-                  onClick={() => updatePolicy({ policyType: "tolerant" })}
-                >
-                  {texts.policyOptions.tolerant}
-                </button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {policyForm.policyType === "strict"
-                  ? texts.policyHints.strict
-                  : texts.policyHints.tolerant}
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label>{texts.policyFields.onMismatchLabel}</Label>
-              <SelectField
-                value={policyForm.onMismatch}
-                onChange={(e) =>
-                  updatePolicy({
-                    onMismatch: e.target.value as PolicyFormState["onMismatch"],
-                  })
-                }
-              >
-                <option value="retry">{texts.policyOptions.onMismatchRetry}</option>
-                <option value="error">{texts.policyOptions.onMismatchError}</option>
-                <option value="pad">{texts.policyOptions.onMismatchPad}</option>
-                <option value="truncate">
-                  {texts.policyOptions.onMismatchTruncate}
-                </option>
-                <option value="align">{texts.policyOptions.onMismatchAlign}</option>
-              </SelectField>
-              <p className="text-xs text-muted-foreground">
-                {texts.policyHints.onMismatch}
-              </p>
-            </div>
-            <div className="col-span-2 flex items-center justify-between rounded-md border border-border/60 bg-background/60 px-3 py-2">
-              <div>
-                <div className="text-sm font-medium">
-                  {texts.policyFields.trimLabel}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  {texts.policyHints.trim}
-                </div>
-              </div>
-              <input
-                type="checkbox"
-                className="h-4 w-4 rounded border-border/60"
-                checked={policyForm.trim}
-                onChange={(e) => updatePolicy({ trim: e.target.checked })}
-              />
-            </div>
           </div>
-        </FormSection>
 
-        <FormSection
-          title={texts.policySections.checksTitle}
-          desc={texts.policySections.checksDesc}
-        >
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            {renderCheckCard(
-              policyForm.emptyLine,
-              (next) => updatePolicy({ emptyLine: next }),
-              texts.policyChecks.emptyLine,
-              texts.policyChecksDesc.emptyLine,
-            )}
-            {renderCheckCard(
-              policyForm.similarity,
-              (next) => updatePolicy({ similarity: next }),
-              texts.policyChecks.similarity,
-              texts.policyChecksDesc.similarity,
-            )}
-            {renderCheckCard(
-              policyForm.kanaTrace,
-              (next) => updatePolicy({ kanaTrace: next }),
-              texts.policyChecks.kanaTrace,
-              texts.policyChecksDesc.kanaTrace,
-            )}
-          </div>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <Label>{texts.policyFields.similarityThresholdLabel}</Label>
-              <InputAffix
-                prefix={<Percent className="h-4 w-4" />}
-                value={policyForm.similarityThreshold}
-                onChange={(e) =>
-                  updatePolicy({ similarityThreshold: e.target.value })
-                }
-                disabled={!policyForm.similarity}
-              />
-              <p className="text-xs text-muted-foreground">
-                {texts.policyHints.similarityThreshold}
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label>{texts.policyFields.sourceLangLabel}</Label>
-              <SelectField
-                value={policyForm.sourceLang}
-                onChange={(e) => updatePolicy({ sourceLang: e.target.value })}
-                disabled={!policyForm.kanaTrace}
-              >
-                {customSourceLang && (
-                  <option value={customSourceLang}>
-                    {texts.policyOptions.sourceLangCustom.replace(
-                      "{code}",
-                      customSourceLang,
-                    )}
-                  </option>
+          <div className="space-y-3 pt-2">
+            <Label className="text-base">{texts.policyFields.policyTypeLabel}</Label>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div
+                onClick={() => updatePolicy({ policyType: "strict" })}
+                className={cn(
+                  "cursor-pointer rounded-xl border p-4 transition-all hover:shadow-md",
+                  policyForm.policyType === "strict"
+                    ? "border-primary bg-primary/5 ring-1 ring-primary/20"
+                    : "border-border/60 bg-card hover:bg-accent/50"
                 )}
-                <option value="">{texts.policyOptions.sourceLangAuto}</option>
-                <option value="ja">{texts.policyOptions.sourceLangJa}</option>
-              </SelectField>
-              <p className="text-xs text-muted-foreground">
-                {texts.policyHints.sourceLang}
-              </p>
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="font-semibold text-foreground">{texts.policyOptions.strict}</div>
+                  {policyForm.policyType === "strict" && <CheckCircle2 className="w-5 h-5 text-primary" />}
+                </div>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  {texts.policyHints.strict}
+                </p>
+              </div>
+
+              <div
+                onClick={() => updatePolicy({ policyType: "tolerant" })}
+                className={cn(
+                  "cursor-pointer rounded-xl border p-4 transition-all hover:shadow-md",
+                  policyForm.policyType === "tolerant"
+                    ? "border-primary bg-primary/5 ring-1 ring-primary/20"
+                    : "border-border/60 bg-card hover:bg-accent/50"
+                )}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="font-semibold text-foreground">{texts.policyOptions.tolerant}</div>
+                  {policyForm.policyType === "tolerant" && <CheckCircle2 className="w-5 h-5 text-primary" />}
+                </div>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  {texts.policyHints.tolerant}
+                </p>
+              </div>
+            </div>
+          </div>
+          {/* Section 2: Error Handling */}
+          <div className="pt-8 border-t border-primary/5 space-y-4">
+            <div className="space-y-1">
+              <div className="text-sm font-semibold text-foreground/80">{"异常处理"}</div>
+              <p className="text-xs text-muted-foreground">配置当原文与译文行数不一致时的处理策略</p>
+            </div>
+            <div className="grid grid-cols-1 gap-6">
+              <div className="space-y-3">
+                <Label>{texts.policyFields.onMismatchLabel}</Label>
+                <SelectField
+                  value={policyForm.onMismatch}
+                  onChange={(e) =>
+                    updatePolicy({
+                      onMismatch: e.target.value as PolicyFormState["onMismatch"],
+                    })
+                  }
+                  className="h-10"
+                >
+                  <option value="retry">{texts.policyOptions.onMismatchRetry}</option>
+                  <option value="error">{texts.policyOptions.onMismatchError}</option>
+                  <option value="pad">{texts.policyOptions.onMismatchPad}</option>
+                  <option value="truncate">{texts.policyOptions.onMismatchTruncate}</option>
+                  <option value="align">{texts.policyOptions.onMismatchAlign}</option>
+                </SelectField>
+                <p className="text-xs text-muted-foreground">
+                  {texts.policyHints.onMismatch}
+                </p>
+              </div>
+
+              {renderCheckCard(
+                policyForm.trim,
+                (c) => updatePolicy({ trim: c }),
+                texts.policyFields.trimLabel,
+                texts.policyHints.trim,
+              )}
+            </div>
+          </div>
+
+          {/* Section 3: Quality Checks (In-Card Expansion) */}
+          <div className="pt-8 border-t border-primary/5 space-y-4">
+            <div className="space-y-1">
+              <div className="text-sm font-semibold text-foreground/80">{texts.policySections.checksTitle}</div>
+              <p className="text-xs text-muted-foreground">{texts.policySections.checksDesc}</p>
+            </div>
+            <div className="grid grid-cols-1 gap-4">
+              {/* Empty Line Check - No extra settings */}
+              {renderCheckCard(
+                policyForm.emptyLine,
+                (next) => updatePolicy({ emptyLine: next }),
+                texts.policyChecks.emptyLine,
+                texts.policyChecksDesc.emptyLine,
+              )}
+
+              {/* Similarity Check - Has Threshold Setting */}
+              {renderCheckCard(
+                policyForm.similarity,
+                (next) => updatePolicy({ similarity: next }),
+                texts.policyChecks.similarity,
+                texts.policyChecksDesc.similarity,
+                // In-Card Settings
+                <div className="space-y-4 pt-2">
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <Label>{texts.policyFields.similarityThresholdLabel}</Label>
+                      <span className="text-xs font-mono bg-background border rounded px-1.5 py-0.5 shadow-sm">
+                        {policyForm.similarityThreshold}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="1.0"
+                      step="0.05"
+                      value={policyForm.similarityThreshold}
+                      onChange={(e) => updatePolicy({ similarityThreshold: e.target.value })}
+                      className="w-full h-2 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {texts.policyHints.similarityThreshold}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Kana Check - Has Language Setting */}
+              {renderCheckCard(
+                policyForm.kanaTrace,
+                (next) => updatePolicy({ kanaTrace: next }),
+                texts.policyChecks.kanaTrace,
+                texts.policyChecksDesc.kanaTrace,
+                // In-Card Settings
+                <div className="space-y-4 pt-2">
+                  <div className="space-y-3">
+                    <Label>{texts.policyFields.sourceLangLabel}</Label>
+                    <SelectField
+                      value={policyForm.sourceLang}
+                      onChange={(e) => updatePolicy({ sourceLang: e.target.value })}
+                    >
+                      {customSourceLang && (
+                        <option value={customSourceLang}>
+                          {texts.policyOptions.sourceLangCustom.replace("{code}", customSourceLang)}
+                        </option>
+                      )}
+                      <option value="">{texts.policyOptions.sourceLangAuto}</option>
+                      <option value="ja">{texts.policyOptions.sourceLangJa}</option>
+                    </SelectField>
+                    <p className="text-xs text-muted-foreground">
+                      {texts.policyHints.sourceLang}
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </FormSection>
@@ -5884,38 +6055,51 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
 
   const renderChunkForm = () => {
     const showChunkId = showIdField.chunk;
-    const isLine = chunkForm.chunkType === "line";
 
     const updateChunk = (patch: Partial<ChunkFormState>) =>
       updateYamlFromChunkForm({ ...chunkForm, ...patch });
 
-    const renderToggle = (
+    const renderSwitchCard = (
       checked: boolean,
       onChange: (next: boolean) => void,
       label: string,
       hint?: string,
+      children?: React.ReactNode,
     ) => (
-      <div className="flex items-center justify-between rounded-md border border-border/60 bg-background/60 px-3 py-2">
-        <div>
-          <div className="text-sm font-medium">{label}</div>
-          {hint && <div className="text-xs text-muted-foreground">{hint}</div>}
+      <div className={cn(
+        "relative flex flex-col rounded-xl border transition-all duration-200",
+        checked
+          ? "border-primary/40 bg-primary/[0.03]"
+          : "border-border/60 bg-card hover:bg-accent/40"
+      )}>
+        <div className="flex items-center justify-between p-4 cursor-pointer select-none" onClick={() => onChange(!checked)}>
+          <div className="space-y-0.5">
+            <div className="text-sm font-medium text-foreground">{label}</div>
+            {hint && <div className="text-xs text-muted-foreground">{hint}</div>}
+          </div>
+          <Switch
+            checked={checked}
+            onCheckedChange={onChange}
+          />
         </div>
-        <input
-          type="checkbox"
-          className="h-4 w-4 rounded border-border/60"
-          checked={checked}
-          onChange={(e) => onChange(e.target.checked)}
-        />
+
+        {checked && children && (
+          <div className="px-4 pb-4 pt-0 animate-in fade-in zoom-in-95 duration-200">
+            <div className="h-px bg-primary/10 mb-4" />
+            {children}
+          </div>
+        )}
       </div>
     );
 
     return (
-      <div className="space-y-5">
+      <div className="w-full px-4 py-8">
         <FormSection
-          title={texts.chunkSections.modeTitle}
-          desc={texts.chunkSections.modeDesc}
+          title={texts.chunkSections.modeTitle || "分块策略设置"}
+          desc={texts.chunkSections.modeDesc || "配置文本切分规则与智能平衡参数"}
         >
-          <div className="grid grid-cols-2 gap-4">
+          {/* Section 1: Basic Info */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {showChunkId && (
               <div className="space-y-2">
                 <Label>{texts.chunkFields.idLabel}</Label>
@@ -5929,6 +6113,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
               <Label>{texts.chunkFields.nameLabel}</Label>
               <Input
                 value={chunkForm.name}
+                className="text-lg font-medium"
                 onChange={(e) => {
                   const nextName = e.target.value;
                   const nextId = shouldAutoUpdateId("chunk", nextName)
@@ -5938,50 +6123,20 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                 }}
               />
             </div>
-            <div className="space-y-2">
-              <Label>{texts.chunkSections.modeTitle}</Label>
-              <SelectField
-                value={chunkForm.chunkType}
-                onChange={(e) =>
-                  updateChunk({
-                    chunkType: e.target.value === "line" ? "line" : "legacy",
-                  })
-                }
-              >
-                <option value="line">{texts.chunkOptions.line}</option>
-                <option value="legacy">{texts.chunkOptions.legacy}</option>
-              </SelectField>
-              <p className="text-xs text-muted-foreground">
-                {isLine ? texts.chunkHints.line : texts.chunkHints.legacy}
-              </p>
-            </div>
           </div>
-        </FormSection>
 
-        {isLine ? (
-          <FormSection>
-            <div className="grid grid-cols-1 gap-3">
-              {renderToggle(
-                chunkForm.lineStrict,
-                (next) => updateChunk({ lineStrict: next }),
-                texts.chunkFields.lineStrictLabel,
-                texts.chunkHints.lineStrict,
-              )}
-              {renderToggle(
-                chunkForm.keepEmpty,
-                (next) => updateChunk({ keepEmpty: next }),
-                texts.chunkFields.keepEmptyLabel,
-                texts.chunkHints.keepEmpty,
-              )}
+          {/* Section 2: Splitting Rules */}
+          <div className="pt-8 border-t border-primary/5 space-y-4">
+            <div className="space-y-1">
+              <div className="text-sm font-semibold text-foreground/80">分块规则</div>
+              <p className="text-xs text-muted-foreground">配置文本切分的字符限制和目标</p>
             </div>
-          </FormSection>
-        ) : (
-          <FormSection>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div className="space-y-2">
                 <Label>{texts.chunkFields.targetCharsLabel}</Label>
                 <Input
                   type="number"
+                  className="text-lg font-mono"
                   value={chunkForm.targetChars}
                   onChange={(e) => updateChunk({ targetChars: e.target.value })}
                 />
@@ -5993,6 +6148,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                 <Label>{texts.chunkFields.maxCharsLabel}</Label>
                 <Input
                   type="number"
+                  className="text-lg font-mono"
                   value={chunkForm.maxChars}
                   onChange={(e) => updateChunk({ maxChars: e.target.value })}
                 />
@@ -6000,52 +6156,64 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                   {texts.chunkHints.maxChars}
                 </p>
               </div>
-              <div className="space-y-2 col-span-2">
-                {renderToggle(
-                  chunkForm.enableBalance,
-                  (next) => updateChunk({ enableBalance: next }),
-                  texts.chunkFields.enableBalanceLabel,
-                  texts.chunkHints.enableBalance,
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label>{texts.chunkFields.balanceThresholdLabel}</Label>
-                <Input
-                  type="number"
-                  value={chunkForm.balanceThreshold}
-                  onChange={(e) =>
-                    updateChunk({ balanceThreshold: e.target.value })
-                  }
-                />
-                <p className="text-xs text-muted-foreground">
-                  {texts.chunkHints.balanceThreshold}
-                </p>
-              </div>
-              <div className="space-y-2">
-                <Label>{texts.chunkFields.balanceCountLabel}</Label>
-                <Input
-                  type="number"
-                  value={chunkForm.balanceCount}
-                  onChange={(e) =>
-                    updateChunk({ balanceCount: e.target.value })
-                  }
-                />
-                <p className="text-xs text-muted-foreground">
-                  {texts.chunkHints.balanceCount}
-                </p>
-              </div>
             </div>
-          </FormSection>
-        )}
+          </div>
+
+          {/* Section 3: Balance Settings (In-Card Expansion) */}
+          <div className="pt-8 border-t border-primary/5 space-y-4">
+            <div className="space-y-1">
+              <div className="text-sm font-semibold text-foreground/80">智能平衡</div>
+              <p className="text-xs text-muted-foreground">自动调整分块大小以保持平衡</p>
+            </div>
+            <div className="space-y-6">
+              {renderSwitchCard(
+                chunkForm.enableBalance,
+                (next) => updateChunk({ enableBalance: next }),
+                texts.chunkFields.enableBalanceLabel,
+                texts.chunkHints.enableBalance,
+                // In-Card Settings
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-2">
+                  <div className="space-y-2">
+                    <Label>{texts.chunkFields.balanceThresholdLabel}</Label>
+                    <Input
+                      type="number"
+                      step="0.1"
+                      className="text-lg font-mono"
+                      value={chunkForm.balanceThreshold}
+                      onChange={(e) =>
+                        updateChunk({ balanceThreshold: e.target.value })
+                      }
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {texts.chunkHints.balanceThreshold}
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>{texts.chunkFields.balanceCountLabel}</Label>
+                    <Input
+                      type="number"
+                      className="text-lg font-mono"
+                      value={chunkForm.balanceCount}
+                      onChange={(e) =>
+                        updateChunk({ balanceCount: e.target.value })
+                      }
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {texts.chunkHints.balanceCount}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </FormSection>
       </div>
     );
   };
 
+
   const renderPipelineForm = () => {
     const showPipelineId = showIdField.pipeline;
-    const selectedChunkType = inferChunkType(pipelineComposer.chunkPolicy);
-    const isLegacyChunk = selectedChunkType === "legacy";
-
     const resolveTranslationMode = (chunkPolicy: string, linePolicy: string) => {
       const chunkType = inferChunkType(chunkPolicy);
       if (chunkType === "legacy") return "block";
@@ -6084,13 +6252,6 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       } catch {
         return { linePolicy: "", chunkPolicy: "" };
       }
-    };
-
-    const getStrategyLabel = (lineId: string, chunkId: string) => {
-      const lineLabel = lineId ? getProfileLabel("policy", lineId) : "";
-      const chunkLabel = chunkId ? getProfileLabel("chunk", chunkId) : "";
-      if (lineLabel && chunkLabel) return `${lineLabel} · ${chunkLabel}`;
-      return lineLabel || chunkLabel || texts.untitledProfile;
     };
 
     const buildStrategyOptions = () => {
@@ -6318,12 +6479,12 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                 ))}
               </SelectField>
             </div>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label>{texts.scheme.fields.strategy}</Label>
-                  <Button
-                    variant="ghost"
-                    size="sm"
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>{texts.scheme.fields.strategy}</Label>
+                <Button
+                  variant="ghost"
+                  size="sm"
                   className="h-7 px-2 text-xs"
                   onClick={() => {
                     const target = resolveStrategyTarget();
@@ -6333,11 +6494,11 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                   {texts.scheme.actions.editStrategy}
                 </Button>
               </div>
-                <SelectField
-                  value={strategyValue}
-                  onChange={(e) => handleStrategyChange(e.target.value)}
-                >
-                  <option value="">{texts.scheme.placeholders.strategy}</option>
+              <SelectField
+                value={strategyValue}
+                onChange={(e) => handleStrategyChange(e.target.value)}
+              >
+                <option value="">{texts.scheme.placeholders.strategy}</option>
                 {strategyOptionsFinal.map((option) => (
                   <option key={option.value} value={option.value} disabled={option.disabled}>
                     {option.label}
@@ -6345,57 +6506,115 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                 ))}
               </SelectField>
 
-              </div>
-              {showLinePolicySelect && (
-                <div className="space-y-2 col-span-2">
-                  <div className="flex items-center justify-between">
-                    <Label>{texts.scheme.fields.linePolicy}</Label>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 text-xs"
-                      onClick={() =>
-                        jumpToKind("policy", pipelineComposer.linePolicy)
-                      }
-                    >
-                      {texts.scheme.actions.editLinePolicy}
-                    </Button>
-                  </div>
-                  <SelectField
-                    value={pipelineComposer.linePolicy}
-                    onChange={(e) =>
-                      applyPipelineChange({ linePolicy: e.target.value })
+            </div>
+            {showLinePolicySelect && (
+              <div className="space-y-2 col-span-2">
+                <div className="flex items-center justify-between">
+                  <Label>{texts.scheme.fields.linePolicy}</Label>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() =>
+                      jumpToKind("policy", pipelineComposer.linePolicy)
                     }
                   >
-                    <option value="">{texts.scheme.placeholders.linePolicy}</option>
-                    {visibleProfileIndex.policy.map((id) => (
-                      <option key={id} value={id}>
-                        {formatOptionLabel("policy", id)}
-                      </option>
-                    ))}
-                  </SelectField>
+                    {texts.scheme.actions.editLinePolicy}
+                  </Button>
                 </div>
-              )}
-            </div>
-          </FormSection>
-        </div>
-      );
+                <SelectField
+                  value={pipelineComposer.linePolicy}
+                  onChange={(e) =>
+                    applyPipelineChange({ linePolicy: e.target.value })
+                  }
+                >
+                  <option value="">{texts.scheme.placeholders.linePolicy}</option>
+                  {visibleProfileIndex.policy.map((id) => (
+                    <option key={id} value={id}>
+                      {formatOptionLabel("policy", id)}
+                    </option>
+                  ))}
+                </SelectField>
+              </div>
+            )}
+          </div>
+        </FormSection>
+      </div>
+    );
   };
 
-  const renderPipelineEmptyState = () => {
+  const renderGenericEmptyState = (title: string, desc: string, icon: ComponentType<{ className?: string }>) => {
+    const Icon = icon;
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground bg-background/50 p-4">
+        <div className="w-24 h-24 rounded-3xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center mb-8 animate-in zoom-in-50 duration-500 shadow-inner">
+          <Icon className="h-10 w-10 text-primary opacity-80" />
+        </div>
+        <h3 className="text-2xl font-bold text-foreground tracking-tight mb-3">
+          {title}
+        </h3>
+        <p className="text-sm max-w-sm text-center opacity-70 mb-10 leading-relaxed">
+          {desc}
+        </p>
+        <Button onClick={handleCreate} size="lg" className="gap-2 px-8 py-6 rounded-xl shadow-xl hover:shadow-primary/20 hover:-translate-y-0.5 transition-all active:scale-95 bg-primary text-primary-foreground font-semibold">
+          <Plus className="h-5 w-5" />
+          {texts.newProfile}
+        </Button>
+      </div>
+    );
+  };
+
+  const renderPipelineOverview = () => {
     const stepTexts = Array.isArray(texts.pipelineEmptySteps)
       ? texts.pipelineEmptySteps
       : [];
     const steps = [
-      { kind: "api" as const, icon: Server },
-      { kind: "prompt" as const, icon: MessageSquare },
-      { kind: "parser" as const, icon: FileJson },
-      { kind: "chunk" as const, icon: Scissors },
+      {
+        kind: "api" as const,
+        icon: Server,
+        color: "bg-blue-500/10",
+        iconColor: "text-blue-500/80",
+      },
+      {
+        kind: "prompt" as const,
+        icon: MessageSquare,
+        color: "bg-indigo-500/10",
+        iconColor: "text-indigo-500/80",
+      },
+      {
+        kind: "parser" as const,
+        icon: FileJson,
+        color: "bg-violet-500/10",
+        iconColor: "text-violet-500/80",
+      },
+      {
+        kind: "chunk" as const,
+        icon: Scissors,
+        color: "bg-purple-500/10",
+        iconColor: "text-purple-500/80",
+      },
     ].map((step, index) => ({
       ...step,
       ...(stepTexts[index] || {}),
       index: index + 1,
     }));
+
+    const resolvePipelineCardSummary = (
+      pipelineId: string,
+      fallbackName?: string,
+    ) => {
+      if (pipelineId === selectedId) {
+        return buildPipelineSummary(pipelineComposer, {
+          id: pipelineId,
+          name: pipelineComposer.name || fallbackName,
+        });
+      }
+      const cached = pipelineSummaryIndex[pipelineId];
+      if (cached) return cached;
+      return buildPipelineSummary(null, { id: pipelineId, name: fallbackName });
+    };
+
+    const pipelineCardItems = filteredProfiles;
 
     const jumpToKind = (targetKind: ProfileKind) => {
       if (kind === targetKind) return;
@@ -6405,64 +6624,362 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       setKind(targetKind);
     };
 
+    const hasPipelines = pipelineCardItems.length > 0;
+
     return (
       <div className="flex-1 overflow-y-auto bg-background/50">
-        <div className="p-6 pt-12 space-y-8">
-          <div className="max-w-3xl space-y-2">
-            <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
-              <Sparkles className="h-3.5 w-3.5" />
-              {texts.pipelineEmptyBadge}
-            </div>
-            <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">
-              {texts.pipelineEmptyTitle}
-            </h2>
-            <p className="text-sm text-muted-foreground">
-              {texts.pipelineEmptyDesc}
-            </p>
-          </div>
+        <div className="p-6 lg:p-10 max-w-[1800px] mx-auto space-y-6">
+          <div className="space-y-4">
+            {!showPipelineGuide ? (
+              /* Compact Header (ModelView Style) */
+              <div className="flex items-center justify-between border-b border-border/40 pb-4 animate-in slide-in-from-top-2 fade-in duration-300">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-2xl font-bold tracking-tight flex items-baseline gap-2">
+                    我的配置方案
+                    <span className="text-muted-foreground text-sm font-medium opacity-80">
+                      {pipelineCardItems.length}
+                    </span>
+                  </h2>
+                </div>
+                <Button
+                  onClick={() => setShowPipelineGuide(true)}
+                  variant="ghost"
+                  size="sm"
+                  className="gap-2 text-muted-foreground hover:text-primary transition-colors h-8 px-3 rounded-lg hover:bg-primary/10"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span className="text-xs font-medium">显示向导</span>
+                  <ChevronDown className="w-3.5 h-3.5 transition-transform duration-300" />
+                </Button>
+              </div>
+            ) : (
+              /* Hero Header */
+              <div className="flex items-center justify-between animate-in slide-in-from-top-2 fade-in duration-300">
+                <div className="space-y-1 text-center md:text-left">
+                  <h2 className="text-3xl font-bold tracking-tight text-primary">
+                    {hasPipelines ? "方案管理中心" : texts.pipelineEmptyTitle}
+                  </h2>
+                  <p className="text-muted-foreground text-lg leading-relaxed">
+                    {hasPipelines ? "管理已有的翻译方案，或创建新的配置" : texts.pipelineEmptyDesc}
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowPipelineGuide(!showPipelineGuide)}
+                  className="gap-2 text-muted-foreground hover:text-primary transition-colors h-9 px-4 rounded-full bg-secondary/30 hover:bg-primary/10 border border-transparent hover:border-primary/20"
+                >
+                  <span className="text-xs font-semibold uppercase tracking-wider">
+                    隐藏向导
+                  </span>
+                  <ChevronDown className="h-4 w-4 rotate-180 transition-transform duration-300" />
+                </Button>
+              </div>
+            )}
 
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            {steps.map((step) => {
-              const Icon = step.icon;
-              return (
+            {/* Guide Steps - Collapsible */}
+            <div
+              className={cn(
+                "grid gap-4 transition-all duration-500 ease-in-out overflow-hidden",
+                showPipelineGuide
+                  ? "grid-cols-1 md:grid-cols-4 opacity-100 max-h-[500px] mb-8"
+                  : "grid-cols-1 md:grid-cols-4 opacity-0 max-h-0 py-0 margin-0",
+              )}
+            >
+              {steps.map((step) => (
                 <div
                   key={step.kind}
-                  className="relative overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-br from-background via-background/80 to-muted/20 p-4 shadow-sm"
+                  className="relative group overflow-hidden rounded-xl border border-border/50 bg-card hover:bg-secondary/20 hover:border-primary/20 hover:shadow-md transition-all duration-300 cursor-pointer p-4"
+                  onClick={() => jumpToKind(step.kind)}
                 >
-                  <div className="absolute right-4 top-4 h-8 w-8 rounded-full bg-muted/50 text-xs font-semibold text-muted-foreground flex items-center justify-center">
-                    {step.index}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="h-9 w-9 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
-                      <Icon className="h-5 w-5" />
+                  <div className="flex flex-col items-center text-center gap-3">
+                    <div className="absolute top-2 right-3 text-[11px] font-bold text-muted-foreground/30 group-hover:text-primary/50 transition-colors">
+                      0{step.index}
                     </div>
-                    <div className="text-sm font-semibold">
-                      {step.title || texts.pipelineEmptyFallbackTitle}
+                    <div
+                      className={cn(
+                        "w-12 h-12 rounded-xl flex items-center justify-center bg-gradient-to-br shadow-sm group-hover:scale-110 transition-transform duration-500",
+                        step.color,
+                      )}
+                    >
+                      <step.icon className={cn("w-6 h-6", step.iconColor)} />
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="font-bold text-base group-hover:text-primary transition-colors">
+                        {step.title}
+                      </h3>
+                      <p className="text-xs text-muted-foreground/80 line-clamp-2 leading-relaxed px-1">
+                        {step.desc}
+                      </p>
                     </div>
                   </div>
-                  <p className="mt-2 text-xs text-muted-foreground min-h-[36px]">
-                    {step.desc || texts.pipelineEmptyFallbackDesc}
-                  </p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="mt-3 w-full"
-                    onClick={() => jumpToKind(step.kind)}
-                  >
-                    {step.action || texts.pipelineEmptyFallbackAction}
-                  </Button>
                 </div>
-              );
-            })}
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            {!showPipelineGuide && (
+              <div className="hidden" /> /* Spacer or alternative content when compact header is used, if needed */
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4 pb-10">
+              {/* Create New Card */}
+              <div
+                onClick={handleCreate}
+                className="group flex flex-col items-center justify-center p-5 rounded-xl border-2 border-dashed border-border/60 hover:border-primary/50 hover:bg-primary/5 cursor-pointer transition-all duration-300 min-h-[240px]"
+              >
+                <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform shadow-inner">
+                  <Plus className="w-7 h-7 text-primary" />
+                </div>
+                <h3 className="font-bold text-lg text-foreground">
+                  {texts.newProfile}
+                </h3>
+                <p className="text-sm text-muted-foreground mt-2 text-center max-w-[200px]">
+                  {texts.scheme.desc}
+                </p>
+              </div>
+
+              {/* Existing Pipelines */}
+              {pipelineCardItems.map((item) => {
+                const isSelected = selectedId === item.id;
+                const isActive = activePipelineId === item.id;
+                const summary = resolvePipelineCardSummary(item.id, item.name);
+                const providerLabel = summary.provider
+                  ? getProfileLabel("api", summary.provider)
+                  : "";
+                const promptLabel = summary.prompt
+                  ? getProfileLabel("prompt", summary.prompt)
+                  : "";
+                const parserLabel = summary.parser
+                  ? getProfileLabel("parser", summary.parser)
+                  : "";
+                const strategyLabel = summary.chunkPolicy
+                  ? getStrategyLabel(summary.linePolicy, summary.chunkPolicy)
+                  : "";
+                const pipelineTitle = resolveProfileName(
+                  item.id,
+                  summary.name || item.name,
+                );
+                const fields = [
+                  {
+                    key: "provider",
+                    label: texts.scheme.fields.provider,
+                    value: providerLabel,
+                    icon: Server,
+                  },
+                  {
+                    key: "prompt",
+                    label: texts.scheme.fields.prompt,
+                    value: promptLabel,
+                    icon: MessageSquare,
+                  },
+                  {
+                    key: "parser",
+                    label: texts.scheme.fields.parser,
+                    value: parserLabel,
+                    icon: FileJson,
+                  },
+                  {
+                    key: "strategy",
+                    label: texts.scheme.fields.strategy,
+                    value: strategyLabel,
+                    icon: Scissors,
+                  },
+                ];
+
+                return (
+                  <div
+                    key={item.id}
+                    onClick={() => handleSelectProfile(item.id, "pipeline")}
+                    className={cn(
+                      "group relative flex flex-col p-5 rounded-xl border cursor-pointer transition-all duration-300 ease-out select-none min-h-[240px]",
+                      isSelected
+                        ? "bg-purple-500/5 border-purple-500/50 shadow-[0_0_0_1px_rgba(168,85,247,0.4)]"
+                        : "bg-card border-border/60 hover:border-purple-500/30 hover:shadow-lg hover:-translate-y-0.5",
+                    )}
+                  >
+                    {/* Checkmark */}
+                    <div
+                      className={cn(
+                        "absolute top-4 right-4 transition-all duration-300 z-10",
+                        isSelected ? "opacity-100 scale-100" : "opacity-0 scale-90",
+                      )}
+                    >
+                      <div className="flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-bold tracking-wide uppercase bg-purple-500 text-white shadow-sm">
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>已选</span>
+                      </div>
+                    </div>
+
+                    {/* Header */}
+                    <div className="flex items-start gap-4 mb-6">
+                      <div
+                        className={cn(
+                          "p-3 rounded-xl shrink-0 transition-colors duration-300",
+                          isSelected
+                            ? "bg-purple-500 text-white shadow-md"
+                            : "bg-secondary text-muted-foreground group-hover:text-purple-600 group-hover:bg-purple-500/10",
+                        )}
+                      >
+                        <Workflow className="w-6 h-6" />
+                      </div>
+                      <div className="min-w-0 pr-12">
+                        <h3
+                          className={cn(
+                            "font-bold text-base truncate transition-colors",
+                            isSelected
+                              ? "text-purple-700 dark:text-purple-300"
+                              : "text-foreground",
+                          )}
+                        >
+                          {pipelineTitle}
+                        </h3>
+                        {isActive && (
+                          <div className="flex items-center gap-1 mt-1.5 text-xs font-medium text-emerald-500">
+                            <Activity className="w-3 h-3" />
+                            <span>当前使用中</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Details Grid */}
+                    <div className="mt-auto grid grid-cols-2 gap-3">
+                      {fields.map((field) => (
+                        <div
+                          key={field.key}
+                          className="flex flex-col gap-1 p-2.5 rounded-lg bg-secondary/30 border border-border/50 group-hover:border-border/80 transition-colors"
+                        >
+                          <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/70 uppercase font-bold">
+                            <field.icon className="w-3 h-3 opacity-70" />
+                            {field.label}
+                          </div>
+                          <div
+                            className="text-xs font-medium truncate"
+                            title={field.value}
+                          >
+                            {field.value || "-"}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>
     );
   };
 
-  const renderContent = () => {
-    // If no kind selected, shouldn't happen but defensive
-    if (!kind) return null;
+  const renderPromptGrid = () => {
+    const items = profileIndex.prompt.filter(
+      (id) => !isHiddenProfile("prompt", id),
+    );
+
+    return (
+      <div className="flex-1 overflow-y-auto bg-background/50">
+        <div className="p-6 lg:p-10 max-w-[1800px] mx-auto space-y-6">
+          {/* Header */}
+          <div className="flex items-center justify-between border-b border-border/40 pb-4 animate-in slide-in-from-top-2 fade-in duration-300">
+            <div className="flex items-center gap-2">
+              <h2 className="text-2xl font-bold tracking-tight flex items-baseline gap-2">
+                {texts.kinds.prompt}
+                <span className="text-muted-foreground text-sm font-medium opacity-80">
+                  {items.length}
+                </span>
+              </h2>
+            </div>
+          </div>
+
+          {/* Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4 pb-10">
+            {/* Items */}
+            {items.map((id) => {
+              const rawName = profileMeta.prompt?.[id] || "";
+              const name = resolveProfileName(id, rawName);
+              const isSelected = selectedId === id;
+
+              return (
+                <div
+                  key={id}
+                  onClick={() => handleSelectProfile(id, "prompt")}
+                  className={cn(
+                    "group relative flex flex-col justify-between p-6 rounded-2xl border cursor-pointer transition-all duration-300 ease-out select-none min-h-[180px]",
+                    isSelected
+                      ? "bg-primary/5 border-primary/50 shadow-[0_0_0_1px_rgba(var(--primary),0.4)]"
+                      : "bg-card border-border/60 hover:border-primary/30 hover:shadow-lg hover:-translate-y-1"
+                  )}
+                >
+                  {/* Selected Badge */}
+                  <div
+                    className={cn(
+                      "absolute top-4 right-4 transition-all duration-300 z-10",
+                      isSelected
+                        ? "opacity-100 scale-100"
+                        : "opacity-0 scale-90"
+                    )}
+                  >
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wide uppercase bg-primary text-primary-foreground shadow-sm">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>{t.selected}</span>
+                    </div>
+                  </div>
+
+                  {/* Header / Content */}
+                  <div className="flex items-start gap-4">
+                    <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 flex items-center justify-center text-indigo-500/80 shrink-0 shadow-sm border border-indigo-500/10 group-hover:scale-105 transition-transform duration-300">
+                      <MessageSquare className="w-6 h-6" />
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="font-bold text-lg leading-tight line-clamp-2 text-foreground/90 group-hover:text-primary transition-colors">
+                        {name || texts.untitledProfile}
+                      </h3>
+                      {/* Optional: Add a tag or type if available in future */}
+                    </div>
+                  </div>
+
+                  {/* Footer: ID & Action Hint */}
+                  <div className="pt-4 mt-2 flex items-end justify-between border-t border-border/30">
+                    <span className="text-[10px] uppercase font-mono text-muted-foreground/50 tracking-wider">
+                      {id}
+                    </span>
+                    <div className="flex items-center gap-1 text-xs font-medium text-primary opacity-0 group-hover:opacity-100 transition-all duration-300 transform translate-x-2 group-hover:translate-x-0">
+                      <span>编辑</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Create New Card (Moved to End) */}
+            <div
+              onClick={handleCreate}
+              className="group flex flex-col items-center justify-center p-6 rounded-2xl border-2 border-dashed border-border/60 hover:border-primary/50 hover:bg-primary/5 cursor-pointer transition-all duration-300 min-h-[180px]"
+            >
+              <div className="w-14 h-14 rounded-full bg-indigo-500/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform shadow-inner text-indigo-500/80">
+                <Plus className="w-7 h-7" />
+              </div>
+              <h3 className="font-bold text-lg text-foreground/80 group-hover:text-primary transition-colors">
+                {texts.newProfile}
+              </h3>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderApiGrid = () => {
+    // 1. Get User's Existing API Profiles
+    const items = profileIndex.api.filter((id) => !isHiddenProfile("api", id));
+
+    // 2. Prepare Presets
+    // Show top 11 presets + 1 custom = 12 items
+    const visiblePresets = API_PRESETS_DATA.slice(0, 11);
 
     const renderPresetCard = (preset: ApiPreset) => {
       const presetText =
@@ -6475,125 +6992,624 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       return (
         <Card
           key={preset.id}
-          className="cursor-pointer hover:border-primary/50 hover:shadow-lg hover:-translate-y-1 transition-all group h-full min-h-[160px] flex flex-col"
+          className="cursor-pointer hover:border-primary/50 hover:shadow-md hover:-translate-y-0.5 transition-all group h-full min-h-[80px] flex flex-row items-center p-4 bg-card/50 gap-4"
           onClick={() => handlePresetSelect(preset)}
         >
-          <CardHeader>
-            <div className="flex items-center justify-between mb-2">
-              <div
-                className={cn(
-                  "p-2 rounded-lg bg-muted/30 group-hover:bg-primary/10 transition-colors",
-                  preset.color,
-                )}
-              >
-                <Icon className="h-6 w-6" />
-              </div>
-            </div>
-            <CardTitle>{presetText.label || preset.id}</CardTitle>
-            <CardDescription className="text-sm text-muted-foreground">
-              {presetText.desc || ""}
-            </CardDescription>
-          </CardHeader>
+          <div
+            className={cn(
+              "w-10 h-10 rounded-lg flex items-center justify-center shrink-0 transition-colors",
+              preset.color || "text-muted-foreground",
+              "bg-muted/50 group-hover:bg-primary/10"
+            )}
+          >
+            <Icon className="h-5 w-5" />
+          </div>
+          <div className="flex flex-col min-w-0 flex-1 text-left">
+            <span className="font-semibold text-sm truncate">
+              {presetText.label || preset.id}
+            </span>
+            <span className="text-xs text-muted-foreground truncate opacity-70">
+              {presetText.desc}
+            </span>
+          </div>
         </Card>
       );
     };
 
-    // If no selection and no YAML text (meaning we are not creating/editing ANY profile)
-    // AND we are in API mode, show the presets grid.
-    // Or if we specifically designed "Create New" to be this grid.
-    // Currently handleCreate clears selectedId and yamlText, so this block handles "Create New" state for API.
-    if (!selectedId && !yamlText) {
-      if (kind === "api") {
-        const primaryPresets = API_PRESETS_DATA.slice(0, 5);
-        const secondaryPresets = API_PRESETS_DATA.slice(5);
-        const visiblePresets = primaryPresets;
-        const showToggle = secondaryPresets.length > 0;
-        return (
-          <div className="flex-1 overflow-y-auto bg-background/50">
-            <div className="p-5 pt-16 space-y-5">
-              <div className="text-center space-y-2">
-                <h2 className="text-2xl font-bold tracking-tight">
-                  {texts.presetTitle}
-                </h2>
-                <p className="text-muted-foreground max-w-lg mx-auto">
-                  {texts.presetDesc}
-                </p>
-              </div>
+    return (
+      <div className="flex-1 overflow-y-auto bg-background/50">
+        <div className="p-6 lg:p-10 max-w-[1800px] mx-auto space-y-12">
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-w-5xl mx-auto auto-rows-fr items-stretch">
-                {visiblePresets.map((preset) => renderPresetCard(preset))}
+          {/* Section 1: My API Interface */}
+          <div className="space-y-6">
+            <div className="flex items-center gap-2 border-b border-border/40 pb-4">
+              <h2 className="text-2xl font-bold tracking-tight">我的API接口</h2>
+              <span className="text-muted-foreground text-sm font-medium opacity-80">
+                {items.length}
+              </span>
+            </div>
 
-                <Card
-                  className="cursor-pointer hover:border-primary/50 hover:shadow-lg hover:-translate-y-1 transition-all border-dashed flex flex-col justify-center items-center text-center p-5 min-h-[160px] h-full"
-                  onClick={() => handlePresetSelect(null)}
-                >
-                  <div className="p-3 rounded-full bg-muted/30 mb-4">
-                    <Plus className="h-6 w-6 text-muted-foreground" />
-                  </div>
-                  <h3 className="font-semibold">{texts.customCardTitle}</h3>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {texts.customCardDesc}
-                  </p>
-                </Card>
-              </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
+              {items.map((id) => {
+                const rawName = profileMeta.api?.[id] || "";
+                const name = resolveProfileName(id, rawName);
+                const isSelected = selectedId === id;
 
-              {presetExpanded && secondaryPresets.length > 0 && (
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                    <span>{texts.presetMoreTitle}</span>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-w-5xl mx-auto auto-rows-fr items-stretch">
-                    {secondaryPresets.map((preset) => renderPresetCard(preset))}
-                  </div>
-                </div>
-              )}
-
-              {showToggle && (
-                <div className="flex items-center justify-center gap-3 text-xs text-muted-foreground">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setPresetExpanded((prev) => !prev)}
+                return (
+                  <div
+                    key={id}
+                    onClick={() => handleSelectProfile(id, "api")}
+                    className={cn(
+                      "group relative flex flex-col justify-between p-6 rounded-2xl border cursor-pointer transition-all duration-300 ease-out select-none min-h-[160px]",
+                      isSelected
+                        ? "bg-indigo-500/5 border-indigo-500/50 shadow-[0_0_0_1px_rgba(var(--primary),0.4)]"
+                        : "bg-card border-border/60 hover:border-indigo-500/30 hover:shadow-lg hover:-translate-y-1"
+                    )}
                   >
-                    {presetExpanded
-                      ? texts.presetToggleHide
-                      : texts.presetToggleShow}
-                  </Button>
+                    {/* Selected Badge */}
+                    <div
+                      className={cn(
+                        "absolute top-4 right-4 transition-all duration-300 z-10",
+                        isSelected
+                          ? "opacity-100 scale-100"
+                          : "opacity-0 scale-90"
+                      )}
+                    >
+                      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wide uppercase bg-primary text-primary-foreground shadow-sm">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>{t.selected}</span>
+                      </div>
+                    </div>
+
+                    {/* Header */}
+                    <div className="flex items-start gap-4">
+                      <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 flex items-center justify-center text-indigo-500/80 shrink-0 shadow-sm border border-indigo-500/10 group-hover:scale-105 transition-transform duration-300">
+                        <Server className="w-6 h-6" />
+                      </div>
+                      <div className="space-y-1">
+                        <h3 className="font-bold text-lg leading-tight line-clamp-2 text-foreground/90 group-hover:text-primary transition-colors">
+                          {name}
+                        </h3>
+                        {/* ID Display */}
+                        <p className="text-[10px] uppercase font-mono text-muted-foreground/60 tracking-wider">
+                          {id.slice(0, 12)}...
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Footer / Action */}
+                    <div className="pt-4 mt-2 flex items-end justify-end border-t border-border/30">
+                      <div className="flex items-center gap-1 text-xs font-medium text-primary opacity-0 group-hover:opacity-100 transition-all duration-300 transform translate-x-2 group-hover:translate-x-0">
+                        <span>配置</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Empty State for My Models if none */}
+              {items.length === 0 && (
+                <div className="col-span-full py-10 flex flex-col items-center justify-center text-center text-muted-foreground border-2 border-dashed border-border/50 rounded-2xl bg-muted/20">
+                  <Server className="w-10 h-10 mb-3 opacity-20" />
+                  <p>暂无已保存的接口配置</p>
+                  <p className="text-sm opacity-60">请从下方选择添加</p>
                 </div>
               )}
             </div>
           </div>
-        );
-      }
 
-      if (kind === "pipeline") {
-        return renderPipelineEmptyState();
-      }
-      // Default empty state for other kinds if no selection
-      return (
-        <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground bg-muted/5 p-4">
-          <div className="w-24 h-24 rounded-2xl bg-muted/30 flex items-center justify-center mb-6 animate-in zoom-in-50 duration-300">
-            <Sparkles className="h-10 w-10 opacity-30" />
+          {/* Section 2: Presets (Collapsible) */}
+          <div className="space-y-6">
+            <div
+              className="flex items-center justify-between border-b border-border/40 pb-4 cursor-pointer select-none group"
+              onClick={() => setPresetsOpen((prev) => !prev)}
+            >
+              <div className="flex items-center gap-2">
+                <h2 className="text-2xl font-bold tracking-tight">添加新接口</h2>
+              </div>
+              <div
+                className={cn(
+                  "p-2 rounded-lg bg-muted/30 group-hover:bg-muted/60 transition-colors",
+                  presetsOpen ? "rotate-180" : ""
+                )}
+              >
+                <ChevronDown className="w-5 h-5 text-muted-foreground" />
+              </div>
+            </div>
+
+            {presetsOpen && (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 animate-in fade-in slide-in-from-top-4 duration-300">
+                {visiblePresets.map((preset) => renderPresetCard(preset))}
+
+                {/* Custom Entry */}
+                <Card
+                  className="cursor-pointer hover:border-primary/50 hover:shadow-md hover:-translate-y-0.5 transition-all border-dashed flex flex-row items-center p-4 min-h-[80px] h-full bg-transparent gap-4"
+                  onClick={() => handlePresetSelect(null)}
+                >
+                  <div className="w-10 h-10 rounded-lg bg-muted/50 flex items-center justify-center shrink-0 group-hover:bg-primary/10 transition-colors">
+                    <Plus className="h-5 w-5 text-muted-foreground group-hover:text-primary" />
+                  </div>
+                  <h3 className="font-semibold text-sm">{texts.customCardTitle}</h3>
+                </Card>
+              </div>
+            )}
           </div>
-          <h3 className="text-xl font-semibold text-foreground tracking-tight">
-            {texts.emptySelectionTitle}
-          </h3>
-          <p className="text-sm max-w-sm text-center mt-2 opacity-70 mb-8 leading-relaxed">
-            {texts.emptySelectionDesc}
-          </p>
-          <Button onClick={handleCreate} size="lg" className="gap-2 shadow-lg hover:shadow-xl transition-all active:scale-95">
-            <Plus className="h-5 w-5" />
-            {texts.newProfile}
-          </Button>
         </div>
-      );
+      </div>
+    );
+  };
+
+  const templateItems = useMemo(() => {
+    if (!TEMPLATE_LIBRARY_ENABLED[kind]) return [];
+    const builtInTemplates = TEMPLATE_LIBRARY[kind] || [];
+    const customForKind = customTemplates[kind] || [];
+    const hiddenSet = new Set(hiddenTemplates[kind] || []);
+    const templates = [...builtInTemplates, ...customForKind];
+    const visibleTemplates = templates.filter(
+      (item) => !hiddenSet.has(item.id) && !isHiddenProfile(kind, item.id)
+    );
+    return visibleTemplates.map((item) => {
+      const meta = getTemplateMeta(item.id, item.meta);
+      return {
+        id: item.id,
+        title: meta?.title || item.id,
+        desc: meta?.desc || "",
+        group: getTemplateGroupKey(item.id, kind),
+        yaml: item.yaml,
+        custom: item.custom,
+      };
+    });
+  }, [kind, customTemplates, hiddenTemplates]);
+
+  const handleCreateBlankParser = () => {
+    const blankYaml = `meta:
+  id: new-parser-${Date.now()}
+  name: New Custom Parser
+rules: []
+`;
+    setYamlText(blankYaml);
+    setSelectedId(null);
+    setEditorTab("visual");
+  };
+
+  const renderStrategyGrid = () => {
+    const activeKind = kind as "policy" | "chunk";
+    const items = profileIndex[activeKind].filter((id) => !isHiddenProfile(activeKind, id));
+    const kindIcon = activeKind === "policy" ? Scissors : Activity;
+    const KindIcon = kindIcon;
+
+    return (
+      <div className="flex-1 overflow-y-auto bg-background/50">
+        <div className="p-6 lg:p-10 max-w-[1800px] mx-auto space-y-10">
+
+          {/* Header */}
+          <div className="space-y-6 animate-in slide-in-from-top-2 fade-in duration-300">
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <h2 className="text-2xl font-bold tracking-tight">
+                  {texts.strategyKindTitle || "分段策略"}
+                </h2>
+                <p className="text-sm text-muted-foreground/80 leading-relaxed max-w-2xl">
+                  控制文本如何被分割和翻译结果如何被校验。选择「分行策略」管理逐行翻译的校验规则，或选择「分块策略」管理文本的分块方式。
+                </p>
+              </div>
+            </div>
+
+            {/* Kind Switcher */}
+            <div className="flex items-center gap-1 p-1.5 rounded-xl bg-muted/20 border border-border/30 w-fit">
+              {(["policy", "chunk"] as const).map((targetKind) => (
+                <button
+                  key={targetKind}
+                  type="button"
+                  onClick={() => {
+                    if (kind === targetKind) return;
+                    setSelectedId(null);
+                    setYamlText("");
+                    setSearchTerm("");
+                    setKind(targetKind);
+                  }}
+                  className={cn(
+                    "px-6 py-2 rounded-lg text-sm font-semibold transition-all duration-300 min-w-[120px] justify-center",
+                    kind === targetKind
+                      ? "bg-background text-indigo-600 shadow-sm border border-border/40"
+                      : "text-muted-foreground/70 hover:text-indigo-500 hover:bg-white/50",
+                  )}
+                >
+                  {texts.kinds[targetKind]}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Grid */}
+          <div className="space-y-6">
+            <div className="flex items-center gap-2 border-b border-border/40 pb-4">
+              <h2 className="text-xl font-bold tracking-tight">
+                {activeKind === "policy" ? "分行策略" : "分块策略"}
+              </h2>
+              <span className="text-muted-foreground text-sm font-medium opacity-80">
+                {items.length}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
+              {items.map((id) => {
+                const rawName = profileMeta[activeKind]?.[id] || "";
+                const name = resolveProfileName(id, rawName);
+                const isSelected = selectedId === id;
+
+                return (
+                  <div
+                    key={id}
+                    onClick={() => handleSelectProfile(id, activeKind)}
+                    className={cn(
+                      "group relative flex flex-col justify-between p-5 rounded-xl border cursor-pointer transition-all duration-300 ease-out select-none min-h-[140px]",
+                      isSelected
+                        ? "bg-primary/5 border-primary/50 shadow-[0_0_0_1px_rgba(var(--primary),0.4)]"
+                        : "bg-card border-border/60 hover:border-primary/30 hover:shadow-lg hover:-translate-y-1",
+                    )}
+                  >
+                    {/* Selected Badge */}
+                    <div
+                      className={cn(
+                        "absolute top-3 right-3 transition-all duration-300 z-10",
+                        isSelected
+                          ? "opacity-100 scale-100"
+                          : "opacity-0 scale-90"
+                      )}
+                    >
+                      <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-bold tracking-wide uppercase bg-primary text-primary-foreground shadow-sm">
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>{t.selected}</span>
+                      </div>
+                    </div>
+
+                    {/* Header */}
+                    <div className="flex items-start gap-4">
+                      <div className={cn(
+                        "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-sm border group-hover:scale-105 transition-transform duration-300",
+                        "bg-indigo-500/10 text-indigo-500/70 border-indigo-500/10"
+                      )}>
+                        <KindIcon className="w-5 h-5" />
+                      </div>
+                      <div className="space-y-1">
+                        <h3 className="font-bold text-base leading-tight line-clamp-2 text-foreground/90 group-hover:text-primary transition-colors">
+                          {name || texts.untitledProfile}
+                        </h3>
+                        <p className="text-[10px] uppercase font-mono text-muted-foreground/60 tracking-wider">
+                          {id.slice(0, 12)}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Footer */}
+                    <div className="pt-3 mt-2 flex items-end justify-end border-t border-border/30">
+                      <div className="flex items-center gap-1 text-[10px] font-medium text-primary opacity-0 group-hover:opacity-100 transition-all duration-300 transform translate-x-2 group-hover:translate-x-0">
+                        <span>配置</span>
+                        <ArrowRight className="w-3 h-3" />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* New Strategy Card */}
+              <div
+                onClick={handleCreate}
+                className="group flex flex-col items-center justify-center p-5 rounded-xl border-2 border-dashed border-border/60 hover:border-primary/50 hover:bg-primary/5 cursor-pointer transition-all duration-300 min-h-[140px]"
+              >
+                <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform shadow-inner text-primary">
+                  <Plus className="w-6 h-6" />
+                </div>
+                <h3 className="font-bold text-base text-foreground/80 group-hover:text-primary transition-colors">
+                  {texts.newProfile}
+                </h3>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderParserGrid = () => {
+    // 1. Get User's Existing Parsers + System Defaults (Show ALL)
+    const builtInIds = new Set((TEMPLATE_LIBRARY.parser || []).map(t => t.id));
+    const CASCADE_ID = "parser_any_default";
+
+    // items = User Parsers + System Parsers (that are not hidden by user preference)
+    // We want to SHOW built-in parsers too, so we removed the !builtInIds.has(id) filter
+    const items = profileIndex.parser.filter((id) => {
+      if (id === CASCADE_ID) return true; // Always show Cascade Parser
+      return !isHiddenProfile("parser", id);
+    });
+
+    // Sort: Cascade first, then by recommended usage order, user profiles last
+    const PARSER_ORDER: string[] = [
+      CASCADE_ID,               // 级联解析 (always first)
+      "parser_json_object",     // JSON 对象解析
+      "parser_json_array",      // JSON 数组解析
+      "parser_tagged_line",     // 行号标记解析
+      "parser_regex_custom",    // 正则提取解析
+      "parser_line_strict",     // 行严格解析
+      "parser_plain",           // 纯文本解析 (always last among system)
+    ];
+    items.sort((a, b) => {
+      const ai = PARSER_ORDER.indexOf(a);
+      const bi = PARSER_ORDER.indexOf(b);
+      // Both in the order list: sort by index
+      if (ai !== -1 && bi !== -1) return ai - bi;
+      // Only one in the list: it goes first
+      if (ai !== -1) return -1;
+      if (bi !== -1) return 1;
+      // Neither: user profiles, keep original order
+      return 0;
+    });
+
+    return (
+      <div className="flex-1 overflow-y-auto bg-background/50">
+        <div className="p-6 lg:p-10 max-w-[1800px] mx-auto space-y-10">
+
+          {/* Recommendation Section (Full Width) */}
+          <div className="rounded-2xl border bg-gradient-to-br from-primary/5 via-primary/5 to-transparent p-6 flex flex-col md:flex-row items-start md:items-center justify-between relative overflow-hidden group gap-6">
+            <div className="relative z-10 max-w-3xl">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-bold uppercase tracking-wider">
+                  {texts.recommended || "Recommended"}
+                </div>
+              </div>
+              <h3 className="text-xl font-bold mb-2">多级级联解析器 (Smart Cascade)</h3>
+              <p className="text-sm text-muted-foreground/80 leading-relaxed">
+                这是系统默认且最推荐的解析方案。它能够同时支持 JSON 对象、JSON 数组、正则提取以及纯文本兜底，
+                自动根据模型输出的格式进行智能适配，无需频繁切换解析器。
+              </p>
+            </div>
+
+            {/* Decorator */}
+            <Workflow className="absolute -right-6 -bottom-6 w-48 h-48 text-primary/5 group-hover:text-primary/10 transition-colors rotate-12 pointer-events-none" />
+          </div>
+
+          {/* Section 1: My Parsers (Consolidated) */}
+          <div className="space-y-6">
+            <div className="flex items-center gap-2 border-b border-border/40 pb-4">
+              <h2 className="text-2xl font-bold tracking-tight">我的解析器</h2>
+              <span className="text-muted-foreground text-sm font-medium opacity-80">
+                {items.length}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
+              {/* User Parsers */}
+              {items.map((id) => {
+                const rawName = profileMeta.parser?.[id] || "";
+                const name = resolveProfileName(id, rawName);
+                const isSelected = selectedId === id;
+                const isCascade = id === CASCADE_ID;
+                const isSystem = builtInIds.has(id);
+
+                return (
+                  <div
+                    key={id}
+                    onClick={() => handleSelectProfile(id, "parser")}
+                    className={cn(
+                      "group relative flex flex-col justify-between p-5 rounded-xl border cursor-pointer transition-all duration-300 ease-out select-none min-h-[140px]",
+                      isSelected
+                        ? "bg-indigo-500/5 border-indigo-500/50 shadow-[0_0_0_1px_rgba(var(--primary),0.4)]"
+                        : "bg-card border-border/60 hover:border-indigo-500/30 hover:shadow-lg hover:-translate-y-1",
+                      isCascade && !isSelected && "border-indigo-500/30 bg-indigo-500/[0.02]"
+                    )}
+                  >
+                    {/* Selected Badge */}
+                    <div
+                      className={cn(
+                        "absolute top-3 right-3 transition-all duration-300 z-10",
+                        isSelected
+                          ? "opacity-100 scale-100"
+                          : "opacity-0 scale-90"
+                      )}
+                    >
+                      <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-bold tracking-wide uppercase bg-primary text-primary-foreground shadow-sm">
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>{t.selected}</span>
+                      </div>
+                    </div>
+
+                    {/* Header */}
+                    <div className="flex items-start gap-4">
+                      <div className={cn(
+                        "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-sm border group-hover:scale-105 transition-transform duration-300",
+                        isCascade
+                          ? "bg-indigo-500/20 text-indigo-600 border-indigo-500/20 shadow-sm"
+                          : "bg-indigo-500/10 text-indigo-500/70 border-indigo-500/10"
+                      )}>
+                        {isCascade ? <Workflow className="w-5 h-5" /> : <FileJson className="w-5 h-5" />}
+                      </div>
+                      <div className="space-y-1">
+                        <h3 className="font-bold text-base leading-tight line-clamp-2 text-foreground/90 group-hover:text-primary transition-colors">
+                          {name}
+                        </h3>
+                        <p className="text-[10px] uppercase font-mono text-muted-foreground/60 tracking-wider">
+                          {isCascade ? "DEFAULT / SYSTEM" : isSystem ? "SYSTEM PRESET" : id.slice(0, 8)}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Footer */}
+                    <div className="pt-3 mt-2 flex items-end justify-end border-t border-border/30">
+                      <div className="flex items-center gap-1 text-[10px] font-medium text-primary opacity-0 group-hover:opacity-100 transition-all duration-300 transform translate-x-2 group-hover:translate-x-0">
+                        <span>配置</span>
+                        <ArrowRight className="w-3 h-3" />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* New Parser Card (Moved to End) */}
+              <div
+                onClick={handleCreateBlankParser}
+                className="group flex flex-col items-center justify-center p-5 rounded-xl border-2 border-dashed border-border/60 hover:border-primary/50 hover:bg-primary/5 cursor-pointer transition-all duration-300 min-h-[140px]"
+              >
+                <div className="w-10 h-10 rounded-full bg-muted/40 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform shadow-inner">
+                  <Plus className="w-5 h-5 text-muted-foreground/60" />
+                </div>
+                <h3 className="font-bold text-sm text-foreground">
+                  新建解析器
+                </h3>
+                <p className="text-[10px] text-muted-foreground mt-0.5 text-center max-w-[150px] opacity-70">
+                  点击创建空白配置
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+
+  const renderContent = () => {
+    // If no kind selected, shouldn't happen but defensive
+    if (!kind) return null;
+
+    if (kind === "pipeline" && pipelineView === "overview") {
+      return renderPipelineOverview();
     }
+
+    if (kind === "prompt" && !selectedId) {
+      return renderPromptGrid();
+    }
+
+    if (kind === "parser" && !selectedId && !yamlText) {
+      return renderParserGrid();
+    }
+
+    if (kind === "api" && !selectedId && !yamlText) {
+      return renderApiGrid();
+    }
+
+    if (isStrategyKind(kind) && !selectedId && !yamlText) {
+      return renderStrategyGrid();
+    }
+
+    // If no selection and no YAML text (meaning we are not creating/editing ANY profile)
+    if (!selectedId && !yamlText) {
+      const emptyConfig: Record<ProfileKind, { title: string; desc: string; icon: any }> = {
+        prompt: {
+          title: texts.kinds.prompt,
+          desc: texts.promptSections.templateDesc,
+          icon: MessageSquare,
+        },
+        parser: {
+          title: texts.kinds.parser,
+          desc: texts.parserFormDesc,
+          icon: FileJson,
+        },
+        policy: {
+          title: texts.kinds.policy,
+          desc: texts.policySections.modeDesc,
+          icon: Activity,
+        },
+        chunk: {
+          title: texts.kinds.chunk,
+          desc: texts.chunkSections.modeDesc,
+          icon: Scissors,
+        },
+        api: {
+          title: texts.kinds.api,
+          desc: texts.formDesc,
+          icon: Server,
+        },
+        pipeline: {
+          title: texts.kinds.pipeline,
+          desc: texts.pipelineEmptyDesc,
+          icon: Workflow,
+        },
+      };
+
+      const cfg = emptyConfig[kind] || {
+        title: texts.emptySelectionTitle,
+        desc: texts.emptySelectionDesc,
+        icon: Sparkles,
+      };
+
+      return renderGenericEmptyState(cfg.title, cfg.desc, cfg.icon);
+    }
+
+
 
     return (
       <main className="flex-1 flex flex-col h-full min-h-0 relative bg-background/30 backdrop-blur-3xl">
         {/* Header / Toolbar */}
         <div className="flex-none h-16 px-6 border-b border-border/40 flex items-center justify-between bg-background/40 backdrop-blur-md sticky top-0 z-10 transition-all">
           <div className="flex items-center gap-4">
+            {kind === "pipeline" && pipelineView === "editor" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2 text-xs"
+                onClick={() => setPipelineView("overview")}
+              >
+                <ChevronLeft className="h-4 w-4 mr-1" />
+                返回方案
+              </Button>
+            )}
+            {kind === "prompt" && !!selectedId && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2 text-xs"
+                onClick={() => setSelectedId(null)}
+              >
+                <ChevronLeft className="h-4 w-4 mr-1" />
+                返回列表
+              </Button>
+            )}
+            {kind === "api" && (!!selectedId || !!yamlText) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2 text-xs"
+                onClick={() => {
+                  setSelectedId(null);
+                  setYamlText("");
+                  setApiForm(DEFAULT_API_FORM); // Reset form state to avoid lingering
+                  setShowApiSetup(false);
+                }}
+              >
+                <ChevronLeft className="h-4 w-4 mr-1" />
+                返回列表
+              </Button>
+            )}
+            {kind === "parser" && (!!selectedId || !!yamlText) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2 text-xs"
+                onClick={() => {
+                  setSelectedId(null);
+                  setYamlText("");
+                }}
+              >
+                <ChevronLeft className="h-4 w-4 mr-1" />
+                返回列表
+              </Button>
+            )}
+            {isStrategyKind(kind) && (!!selectedId || !!yamlText) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2 text-xs"
+                onClick={() => {
+                  setSelectedId(null);
+                  setYamlText("");
+                }}
+              >
+                <ChevronLeft className="h-4 w-4 mr-1" />
+                返回列表
+              </Button>
+            )}
             <div>
               <h2 className="text-lg font-semibold tracking-tight">
                 {resolveProfileName(selectedId || undefined, activeProfileName)}
@@ -6632,19 +7648,6 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
 
             <div className="h-4 w-px bg-border/60 mx-1" />
 
-            {editorTab === "yaml" && (
-              <Tooltip content={texts.syncFromYaml}>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-9 w-9 text-muted-foreground hover:text-foreground"
-                  onClick={handleSyncFromYaml}
-                >
-                  <RefreshCw className="h-4 w-4" />
-                </Button>
-              </Tooltip>
-            )}
-
             <Tooltip content={texts.actionDelete}>
               <Button
                 variant="ghost"
@@ -6659,12 +7662,20 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
 
             <Button
               onClick={handleSave}
+              disabled={isSaving}
               className={cn(
                 "gap-2 min-w-[100px] shadow-sm hover:shadow-md transition-all active:scale-95",
-                lastValidation?.errors.length ? "opacity-90" : "bg-primary text-primary-foreground",
+                lastValidation?.errors.length
+                  ? "opacity-90"
+                  : "bg-primary text-primary-foreground",
               )}
             >
-              <Save className="h-4 w-4" /> {texts.save}
+              {isSaving ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4" />
+              )}
+              {texts.save}
             </Button>
           </div>
         </div>
@@ -6797,177 +7808,27 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
 
               {renderVisualEditorResult()}
 
-              {(TEMPLATE_LIBRARY[kind]?.length ||
-                (customTemplates[kind] || []).length) > 0 &&
-                (() => {
-                  const builtInTemplates = TEMPLATE_LIBRARY[kind] || [];
-                  const customForKind = customTemplates[kind] || [];
-                  const hiddenSet = new Set(hiddenTemplates[kind] || []);
-                  const templates = [...builtInTemplates, ...customForKind];
-                  const visibleTemplates = templates.filter(
-                    (item) =>
-                      !hiddenSet.has(item.id) && !isHiddenProfile(kind, item.id),
-                  );
-                  const coreSet = new Set<string>(
-                    (TEMPLATE_CORE_IDS[kind] || []) as string[],
-                  );
-                  const templateItems = visibleTemplates.map((item) => {
-                    const meta = getTemplateMeta(item.id, item.meta);
-                    return {
-                      id: item.id,
-                      title: meta?.title || item.id,
-                      desc: meta?.desc || "",
-                      group: getTemplateGroupKey(item.id, kind),
-                      yaml: item.yaml,
-                      isCore: coreSet.has(item.id),
-                      custom: item.custom,
-                    };
-                  });
-                  const groupOrder = ["line", "json", "tagged", "regex", "general"];
-                  const effectiveGroupOrder =
-                    kind === "pipeline" ? ["general"] : groupOrder;
-                  return (
-                    <>
-                      <FormSection
-                        title={texts.templates.title}
-                        desc={texts.templates.desc}
-                        className="bg-muted/10"
-                        actions={
-                          <Button
-                            size="sm"
-                            onClick={() => setTemplateSelectorOpen(true)}
-                          >
-                            {texts.templatesOpen}
-                          </Button>
-                        }
-                      />
-
-                      <TemplateSelector
-                        open={templateSelectorOpen}
-                        onOpenChange={setTemplateSelectorOpen}
-                        items={templateItems}
-                        groupOrder={effectiveGroupOrder}
-                        onSelect={(item) =>
-                          handleApplyTemplate(item.yaml, item.id)
-                        }
-                        strings={{
-                          title: texts.templates.title,
-                          searchPlaceholder: texts.templatesSearchPlaceholder,
-                          empty: texts.templatesSearchEmpty,
-                          close: texts.templatesClose,
-                          coreBadge: texts.templatesCoreBadge,
-                          customBadge: texts.customTag,
-                          groups: texts.templateGroups ?? {},
-                          footerHint: texts.templatesFooterHint,
-                          manageShow: texts.templatesManageShow,
-                          manageHide: texts.templatesManageHide,
-                        }}
-                        managerOpen={templateManagerOpen}
-                        onToggleManager={() =>
-                          setTemplateManagerOpen((prev) => !prev)
-                        }
-                        managerContent={
-                          <>
-                            <div className="text-xs text-muted-foreground">
-                              {texts.templatesManageDesc}
-                            </div>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                              {templates.map((item) => {
-                                const meta = getTemplateMeta(
-                                  item.id,
-                                  item.meta,
-                                );
-                                const hidden = hiddenSet.has(item.id);
-                                return (
-                                  <label
-                                    key={item.id}
-                                    className="flex items-center justify-between gap-2 rounded-md border border-border/60 px-2.5 py-2 text-xs"
-                                  >
-                                    <div className="flex items-center gap-2">
-                                      <input
-                                        type="checkbox"
-                                        checked={!hidden}
-                                        onChange={() =>
-                                          toggleTemplateHidden(item.id)
-                                        }
-                                      />
-                                      <span>
-                                        {meta?.title || item.id}
-                                        {item.custom
-                                          ? ` (${texts.customTag})`
-                                          : ""}
-                                      </span>
-                                    </div>
-                                    {item.custom && (
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() =>
-                                          handleRemoveCustomTemplate(item.id)
-                                        }
-                                      >
-                                        {texts.templatesRemove}
-                                      </Button>
-                                    )}
-                                  </label>
-                                );
-                              })}
-                            </div>
-                            <div className="space-y-2">
-                              <div className="text-xs font-medium">
-                                {texts.templateSaveTitle}
-                              </div>
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                                <div className="space-y-1">
-                                  <Label>{texts.templateSaveNameLabel}</Label>
-                                  <Input
-                                    value={templateDraftName}
-                                    onChange={(e) =>
-                                      setTemplateDraftName(e.target.value)
-                                    }
-                                    placeholder={
-                                      texts.templateSaveNamePlaceholder
-                                    }
-                                  />
-                                </div>
-                                <div className="space-y-1">
-                                  <Label>{texts.templateSaveDescLabel}</Label>
-                                  <Input
-                                    value={templateDraftDesc}
-                                    onChange={(e) =>
-                                      setTemplateDraftDesc(e.target.value)
-                                    }
-                                    placeholder={
-                                      texts.templateSaveDescPlaceholder
-                                    }
-                                  />
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <Button
-                                  size="sm"
-                                  onClick={handleSaveCustomTemplate}
-                                >
-                                  {texts.templateSaveAction}
-                                </Button>
-                                <span className="text-xs text-muted-foreground">
-                                  {texts.templateSaveHint}
-                                </span>
-                              </div>
-                            </div>
-                          </>
-                        }
-                      />
-                    </>
-                  );
-                })()}
+              {TEMPLATE_LIBRARY_ENABLED[kind] && (
+                <FormSection
+                  title={texts.templates.title}
+                  desc={texts.templates.desc}
+                  className="bg-muted/10"
+                  actions={
+                    <Button
+                      size="sm"
+                      onClick={() => setTemplateSelectorOpen(true)}
+                    >
+                      {texts.templatesOpen}
+                    </Button>
+                  }
+                />
+              )}
             </>
           )}
           {editorTab === "yaml" && (
             <section>
-              <h3 className="text-sm font-medium text-muted-foreground mb-4 uppercase tracking-wider flex items-center gap-2">
-                {texts.sectionYamlTitle}{" "}
-                <div className="h-px bg-border flex-1" />
+              <h3 className="text-sm font-medium text-muted-foreground mb-4 uppercase tracking-wider">
+                {texts.sectionYamlTitle}
               </h3>
               <div className="relative rounded-xl border bg-muted/30 overflow-hidden font-mono text-sm">
                 <textarea
@@ -6983,6 +7844,16 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
               <p className="text-xs text-muted-foreground mt-2 opacity-70">
                 {texts.editorHint}
               </p>
+              <div className="mt-4 flex justify-end">
+                <Button
+                  variant="outline"
+                  className="gap-2"
+                  onClick={handleSyncFromYaml}
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  {texts.syncFromYaml}
+                </Button>
+              </div>
             </section>
           )}
           <div className="h-10" /> {/* Spacer */}
@@ -6995,8 +7866,129 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     <>
       <div className="flex h-full w-full min-h-0 bg-background/95 backdrop-blur-3xl overflow-hidden">
         {renderNavigationRail()}
-        {renderSidePanel()}
+        {kind !== "pipeline" && kind !== "prompt" && kind !== "api" && kind !== "parser" && !isStrategyKind(kind) && renderSidePanel()}
         {renderContent()}
+        <TemplateSelector
+          open={templateSelectorOpen}
+          onOpenChange={setTemplateSelectorOpen}
+          items={templateItems}
+          groupOrder={["line", "json", "tagged", "regex", "general"]}
+          onSelect={(item) => handleApplyTemplate(item.yaml, item.id)}
+          strings={{
+            title: texts.templates.title,
+            searchPlaceholder: texts.templatesSearchPlaceholder,
+            empty: texts.templatesSearchEmpty,
+            close: texts.templatesClose,
+            customBadge: texts.customTag,
+            groups: texts.templateGroups ?? {},
+            footerHint: texts.templatesFooterHint,
+            manageShow: texts.templatesManageShow,
+            manageHide: texts.templatesManageHide,
+          }}
+          managerOpen={templateManagerOpen}
+          onToggleManager={() => setTemplateManagerOpen((prev) => !prev)}
+          managerContent={
+            (() => {
+              // Determine templates for manager view
+              const builtInTemplates = TEMPLATE_LIBRARY[kind] || [];
+              const customForKind = customTemplates[kind] || [];
+              const hiddenSet = new Set(hiddenTemplates[kind] || []);
+              const templates = [...builtInTemplates, ...customForKind];
+
+              return (
+                <>
+                  <div className="text-xs text-muted-foreground">
+                    {texts.templatesManageDesc}
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {templates.map((item) => {
+                      const meta = getTemplateMeta(
+                        item.id,
+                        item.meta,
+                      );
+                      const hidden = hiddenSet.has(item.id);
+                      return (
+                        <label
+                          key={item.id}
+                          className="flex items-center justify-between gap-2 rounded-md border border-border/60 px-2.5 py-2 text-xs"
+                        >
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={!hidden}
+                              onChange={() =>
+                                toggleTemplateHidden(item.id)
+                              }
+                            />
+                            <span>
+                              {meta?.title || item.id}
+                              {item.custom
+                                ? ` (${texts.customTag})`
+                                : ""}
+                            </span>
+                          </div>
+                          {item.custom && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() =>
+                                handleRemoveCustomTemplate(item.id)
+                              }
+                            >
+                              {texts.templatesRemove}
+                            </Button>
+                          )}
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <div className="space-y-2">
+                    <div className="text-xs font-medium">
+                      {texts.templateSaveTitle}
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <Label>{texts.templateSaveNameLabel}</Label>
+                        <Input
+                          value={templateDraftName}
+                          onChange={(e) =>
+                            setTemplateDraftName(e.target.value)
+                          }
+                          placeholder={
+                            texts.templateSaveNamePlaceholder
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label>{texts.templateSaveDescLabel}</Label>
+                        <Input
+                          value={templateDraftDesc}
+                          onChange={(e) =>
+                            setTemplateDraftDesc(e.target.value)
+                          }
+                          placeholder={
+                            texts.templateSaveDescPlaceholder
+                          }
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        onClick={handleSaveCustomTemplate}
+                      >
+                        {texts.templateSaveAction}
+                      </Button>
+                      <span className="text-xs text-muted-foreground">
+                        {texts.templateSaveHint}
+                      </span>
+                    </div>
+                  </div>
+                </>
+              );
+            })()
+          }
+        />
       </div>
       <AlertModal {...alertProps} />
     </>
