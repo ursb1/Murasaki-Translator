@@ -27,13 +27,14 @@ def align_lines(src: List[str], dst: List[str]) -> List[str]:
         else:
             result.append("")
 
-    # 当 dst 还有剩余行时，将多余内容合并到最后一个非空结果行
+    # 当 dst 还有剩余行时，将多余内容用空格拼接到最后一个非空结果行
+    # 避免注入 \n 导致后续按行分割时行数再次不匹配
     if dst_index < dst_len and result:
-        remaining = dst[dst_index:]
-        # 找到最后一个有内容的结果行，将剩余行合并进去
-        for i in range(len(result) - 1, -1, -1):
-            if result[i].strip():
-                result[i] = result[i] + "\n" + "\n".join(remaining)
-                break
+        remaining = [r for r in dst[dst_index:] if r.strip()]
+        if remaining:
+            for i in range(len(result) - 1, -1, -1):
+                if result[i].strip():
+                    result[i] = result[i] + " " + " ".join(remaining)
+                    break
 
     return result

@@ -1,6 +1,6 @@
 import { app, ipcMain } from "electron";
 
-import { join, basename, extname, resolve, sep } from "path";
+import { join, basename, extname } from "path";
 
 import { existsSync } from "fs";
 
@@ -42,6 +42,13 @@ import {
   hasServerProfilesList,
 
 } from "./pipelineV2ProfileHelpers";
+import {
+  isSafeProfileId,
+  isSafeYamlFilename,
+  isPathWithin,
+  safeLoadYaml,
+  normalizeChunkType,
+} from "./pipelineV2Shared";
 
 const PROFILE_KINDS = [
 
@@ -60,37 +67,6 @@ const PROFILE_KINDS = [
 ] as const;
 
 export type ProfileKind = (typeof PROFILE_KINDS)[number];
-
-const SAFE_PROFILE_ID = /^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$/;
-
-const isSafeProfileId = (value: string) => {
-  const trimmed = value.trim();
-  if (!trimmed) return false;
-  if (trimmed.includes("..")) return false;
-  if (/[\\/]/.test(trimmed)) return false;
-  return SAFE_PROFILE_ID.test(trimmed);
-};
-
-const isSafeYamlFilename = (value: string) => {
-  if (/[\\/]/.test(value)) return false;
-  const base = basename(value, extname(value));
-  return isSafeProfileId(base);
-};
-
-const normalizePath = (value: string) => resolve(value);
-
-const isPathWithin = (baseDir: string, target: string) => {
-  const base = normalizePath(baseDir);
-  const resolvedTarget = normalizePath(target);
-  const prefix = base.endsWith(sep) ? base : `${base}${sep}`;
-  if (process.platform === "win32") {
-    const baseLower = base.toLowerCase();
-    const prefixLower = prefix.toLowerCase();
-    const targetLower = resolvedTarget.toLowerCase();
-    return targetLower === baseLower || targetLower.startsWith(prefixLower);
-  }
-  return resolvedTarget === base || resolvedTarget.startsWith(prefix);
-};
 
 const PRUNE_PROFILE_IDS: Partial<Record<ProfileKind, Set<string>>> = {
 
@@ -637,32 +613,6 @@ const normalizeProfilesListOptions = (options?: ProfilesListOptions) => ({
   preferLocal: Boolean(options?.preferLocal),
 
 });
-
-const safeLoadYaml = (raw: string): Record<string, any> | null => {
-
-  try {
-
-    const data = yaml.load(raw);
-
-    if (!data || typeof data !== "object" || Array.isArray(data)) return null;
-
-    return data as Record<string, any>;
-
-  } catch {
-
-    return null;
-
-  }
-
-};
-
-const normalizeChunkType = (value: unknown): "" | "line" | "block" => {
-  if (typeof value !== "string") return "";
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "line") return "line";
-  if (normalized === "block" || normalized === "legacy") return "block";
-  return "";
-};
 
 const loadProfileIndexDiskCache = async (
   profilesDir: string,

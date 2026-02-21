@@ -2241,18 +2241,44 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       const outputDir = resolvedOutputDir.trim();
       const cacheDir = resolvedCacheDir.trim();
 
-      window.api?.pipelineV2Run?.({
-        filePath: inputPath,
-        pipelineId: effectivePipelineId,
-        profilesDir,
-        outputDir: outputDir || undefined,
-        glossaryPath: resolvedGlossaryPath || undefined,
-        resume: Boolean(resolvedResume),
-        cacheDir: cacheDir || undefined,
-        sourceLang: localStorage.getItem("config_source_lang") || "ja",
-        textProtect: true,
-        saveCache: true,
-      });
+      try {
+        const result = await window.api?.pipelineV2Run?.({
+          filePath: inputPath,
+          pipelineId: effectivePipelineId,
+          profilesDir,
+          outputDir: outputDir || undefined,
+          glossaryPath: resolvedGlossaryPath || undefined,
+          resume: Boolean(resolvedResume),
+          cacheDir: cacheDir || undefined,
+          sourceLang: localStorage.getItem("config_source_lang") || "ja",
+          enableQuality:
+            localStorage.getItem("config_enable_quality") === "true"
+              ? true
+              : localStorage.getItem("config_enable_quality") === "false"
+                ? false
+                : undefined,
+          textProtect:
+            localStorage.getItem("config_text_protect") === "false"
+              ? false
+              : true,
+          saveCache:
+            localStorage.getItem("config_save_cache") === "false"
+              ? false
+              : true,
+          runId: runId, // 通过 IPC 发送由 Dashboard 管理的 runId
+        });
+
+        // 捕获预检或主进程级别返回的错误（如果后端发了 process-exit 这里其实会被状态机捕获，但这层防护更稳妥）
+        if (result && !result.ok) {
+          setIsRunning(false);
+          setRunNotice({
+            type: "error",
+            message: t.dashboard.runFailed,
+          });
+        }
+      } catch (err) {
+        setIsRunning(false);
+      }
     };
 
     // --- State for Confirmation Modal ---
@@ -3129,8 +3155,10 @@ export const Dashboard = forwardRef<any, DashboardProps>(
 
           {/* CENTER: Stats & Progress */}
           <div className="flex-1 flex flex-col gap-4 min-w-0 min-h-0">
-            {/* Hardware Monitor */}
-            <HardwareMonitorBar data={monitorData} lang={lang} />
+            {/* Hardware Monitor (V1 only — irrelevant for remote API) */}
+            {engineMode !== "v2" && (
+              <HardwareMonitorBar data={monitorData} lang={lang} />
+            )}
 
             {hasRemoteError && (
               <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 flex items-start gap-3">

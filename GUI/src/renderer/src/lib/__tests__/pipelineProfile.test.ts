@@ -11,6 +11,7 @@ describe("pipelineProfile helpers", () => {
     const data = {
       id: "pipeline_alpha",
       name: "Pipeline Alpha",
+      apply_line_policy: true,
       line_policy: "line_alpha",
       chunk_policy: "chunk_alpha",
     };
@@ -32,6 +33,7 @@ describe("pipelineProfile helpers", () => {
       provider: "api_beta",
       prompt: "prompt_beta",
       parser: "parser_beta",
+      applyLinePolicy: true,
       linePolicy: "line_beta",
       chunkPolicy: "chunk_beta",
     };
@@ -41,6 +43,17 @@ describe("pipelineProfile helpers", () => {
     expect(result.parser).toBe("parser_beta");
     expect(result.linePolicy).toBe("line_beta");
     expect(result.chunkPolicy).toBe("chunk_beta");
+  });
+
+  it("omits line policy unless explicitly applied", () => {
+    const data = {
+      id: "pipeline_gamma",
+      name: "Pipeline Gamma",
+      line_policy: "line_gamma",
+      chunk_policy: "chunk_gamma",
+    };
+    const result = buildPipelineSummary(data);
+    expect(result.linePolicy).toBe("");
   });
 
   it("uses fallback values when data is empty", () => {
@@ -94,7 +107,10 @@ describe("pipelineProfile helpers", () => {
   });
 
   it("resolves translation mode from explicit value", () => {
-    const chunkTypeIndex: PipelineChunkTypeIndex = { chunk_line: "line", chunk_block: "block" };
+    const chunkTypeIndex: PipelineChunkTypeIndex = {
+      chunk_line: "line",
+      chunk_block: "block",
+    };
     expect(
       resolvePipelineTranslationMode(
         "block",
@@ -108,7 +124,10 @@ describe("pipelineProfile helpers", () => {
   });
 
   it("infers translation mode from chunk policy when mode is empty", () => {
-    const chunkTypeIndex: PipelineChunkTypeIndex = { chunk_line: "line", chunk_block: "block" };
+    const chunkTypeIndex: PipelineChunkTypeIndex = {
+      chunk_line: "line",
+      chunk_block: "block",
+    };
     expect(
       resolvePipelineTranslationMode(
         "",
@@ -157,5 +176,12 @@ describe("pipelineProfile helpers", () => {
         chunkTypeIndex,
       ),
     ).toBe("block");
+  });
+
+  it("uses fallback when line policy is enabled but missing", () => {
+    const chunkTypeIndex: PipelineChunkTypeIndex = {};
+    expect(
+      resolvePipelineTranslationMode("", "", "", true, "line", chunkTypeIndex),
+    ).toBe("line");
   });
 });

@@ -191,17 +191,19 @@ class ProgressTracker:
             self.total_output_lines += out_lines
             self.total_output_chars += out_chars
             completed = self.completed_blocks
+            _total_lines = self.total_output_lines
+            _total_chars = self.total_output_chars
             elapsed = time.time() - self.start_time
 
-        speed_chars = self.total_output_chars / max(elapsed, 0.1)
+        speed_chars = _total_chars / max(elapsed, 0.1)
 
         emit_progress(
             current=completed,
             total=self.total_blocks,
             elapsed=elapsed,
             speed_chars=speed_chars,
-            total_lines=self.total_output_lines,
-            total_chars=self.total_output_chars,
+            total_lines=_total_lines,
+            total_chars=_total_chars,
             source_lines=self.total_source_lines,
             source_chars=self.total_source_chars,
         )

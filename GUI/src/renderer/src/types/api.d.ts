@@ -422,6 +422,7 @@ export interface ElectronAPI {
     resume?: boolean;
     cacheDir?: string;
     saveCache?: boolean;
+    runId?: string;
   }) => Promise<{ ok: boolean; runId: string; code?: number; error?: any }>;
   stopTranslation: () => void;
   pipelineV2Stop: () => void;

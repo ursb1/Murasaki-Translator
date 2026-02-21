@@ -113,6 +113,7 @@ const api = {
     resume?: boolean;
     cacheDir?: string;
     saveCache?: boolean;
+    runId?: string;
   }) => ipcRenderer.invoke("pipelinev2-run", payload),
   pipelineV2Stop: () => ipcRenderer.send("stop-pipelinev2"),
   getHardwareSpecs: () => ipcRenderer.invoke("get-hardware-specs"),

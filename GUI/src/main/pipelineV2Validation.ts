@@ -1,7 +1,14 @@
 import { existsSync } from "fs";
 import { readdir, readFile } from "fs/promises";
-import { basename, extname, join, resolve, sep } from "path";
-import yaml from "js-yaml";
+import { basename, extname, join } from "path";
+
+import {
+  isSafeProfileId,
+  isSafeYamlFilename,
+  isPathWithin,
+  safeLoadYaml,
+  normalizeChunkType,
+} from "./pipelineV2Shared";
 
 export type ProfileKind =
   | "api"
@@ -15,55 +22,6 @@ type ValidationResult = {
   ok: boolean;
   errors: string[];
   warnings: string[];
-};
-
-const SAFE_PROFILE_ID = /^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$/;
-
-const isSafeProfileId = (value: string) => {
-  const trimmed = value.trim();
-  if (!trimmed) return false;
-  if (trimmed.includes("..")) return false;
-  if (/[\\/]/.test(trimmed)) return false;
-  return SAFE_PROFILE_ID.test(trimmed);
-};
-
-const isSafeYamlFilename = (value: string) => {
-  if (/[\\/]/.test(value)) return false;
-  const base = basename(value, extname(value));
-  return isSafeProfileId(base);
-};
-
-const normalizePath = (value: string) => resolve(value);
-
-const isPathWithin = (baseDir: string, target: string) => {
-  const base = normalizePath(baseDir);
-  const resolvedTarget = normalizePath(target);
-  const prefix = base.endsWith(sep) ? base : `${base}${sep}`;
-  if (process.platform === "win32") {
-    const baseLower = base.toLowerCase();
-    const prefixLower = prefix.toLowerCase();
-    const targetLower = resolvedTarget.toLowerCase();
-    return targetLower === baseLower || targetLower.startsWith(prefixLower);
-  }
-  return resolvedTarget === base || resolvedTarget.startsWith(prefix);
-};
-
-const safeLoadYaml = (raw: string): Record<string, any> | null => {
-  try {
-    const data = yaml.load(raw);
-    if (!data || typeof data !== "object" || Array.isArray(data)) return null;
-    return data as Record<string, any>;
-  } catch {
-    return null;
-  }
-};
-
-const normalizeChunkType = (value: unknown): "block" | "line" | "" => {
-  if (typeof value !== "string") return "";
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "line") return "line";
-  if (normalized === "block" || normalized === "legacy") return "block";
-  return "";
 };
 
 const listProfileFiles = async (dir: string) =>
@@ -207,10 +165,10 @@ export const validateProfileLocal = async (
       }
       const hasMembers = Boolean(
         (Array.isArray(data.members) && data.members.length > 0) ||
-          (data.members !== undefined &&
-            data.members !== null &&
-            !Array.isArray(data.members) &&
-            String(data.members).trim()),
+        (data.members !== undefined &&
+          data.members !== null &&
+          !Array.isArray(data.members) &&
+          String(data.members).trim()),
       );
       if (!hasEndpoints) {
         result.errors.push("missing_pool_endpoints");
@@ -367,10 +325,10 @@ export const validateProfileLocal = async (
 
     const chunkRef = String(data.chunk_policy || "");
     if (chunkRef) {
-    const chunkProfile = await loadProfile(profilesDir, "chunk", chunkRef);
-    const chunkType = normalizeChunkType(
-      chunkProfile?.data?.chunk_type || chunkProfile?.data?.type || "",
-    );
+      const chunkProfile = await loadProfile(profilesDir, "chunk", chunkRef);
+      const chunkType = normalizeChunkType(
+        chunkProfile?.data?.chunk_type || chunkProfile?.data?.type || "",
+      );
       if (data.apply_line_policy && chunkType && chunkType !== "line") {
         result.errors.push("line_policy_requires_line_chunk");
       }

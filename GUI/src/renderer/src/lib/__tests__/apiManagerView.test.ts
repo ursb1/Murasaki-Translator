@@ -314,6 +314,18 @@ const requiredPaths: Array<string[]> = [
   ["apiManager", "templatesMoreDesc"],
   ["apiManager", "templatesToggleShow"],
   ["apiManager", "templatesToggleHide"],
+  ["apiManager", "templatesManageShow"],
+  ["apiManager", "templatesManageHide"],
+  ["apiManager", "templatesManageDesc"],
+  ["apiManager", "templatesRemove"],
+  ["apiManager", "templateSaveTitle"],
+  ["apiManager", "templateSaveNameLabel"],
+  ["apiManager", "templateSaveNamePlaceholder"],
+  ["apiManager", "templateSaveDescLabel"],
+  ["apiManager", "templateSaveDescPlaceholder"],
+  ["apiManager", "templateSaveAction"],
+  ["apiManager", "templateSaveHint"],
+  ["apiManager", "customTag"],
   ["apiManager", "templateGroups", "line"],
   ["apiManager", "templateGroups", "json"],
   ["apiManager", "templateGroups", "tagged"],
@@ -433,6 +445,8 @@ const requiredPaths: Array<string[]> = [
   ["apiManager", "validationPanelOk"],
   ["apiManager", "validationPanelErrors"],
   ["apiManager", "validationPanelWarnings"],
+  ["apiManager", "validationError"],
+  ["apiManager", "validationWarn"],
   ["apiManager", "validationMissingScript"],
   ["apiManager", "composer", "title"],
   ["apiManager", "composer", "desc"],
@@ -578,13 +592,16 @@ const getValue = (obj: any, path: string[]) =>
 
 describe("apiManager view i18n", () => {
   it("includes required api manager view strings", () => {
+    const missing: string[] = [];
     for (const lang of Object.values(translations)) {
       for (const path of requiredPaths) {
         const value = getValue(lang, path);
-        expect(value).toBeTruthy();
-        expect(typeof value).toBe("string");
+        if (!value || typeof value !== "string") {
+          missing.push(path.join("."));
+        }
       }
     }
+    expect(missing).toEqual([]);
   });
 
   it("keeps only supported chunk strategy labels", () => {
@@ -786,12 +803,15 @@ describe("apiManager view defaults", () => {
     );
     const content = fs.readFileSync(filePath, "utf-8");
     const match = content.match(
-      /const DEFAULT_PIPELINE_COMPOSER:[\\s\\S]*?};/,
+      /const DEFAULT_PIPELINE_COMPOSER:[\s\S]*?};/,
     );
     expect(match).toBeTruthy();
     const block = match?.[0] || "";
     expect(block).toContain('temperature: ""');
     expect(block).toContain('concurrency: ""');
+    expect(block).toContain('modelOverride: ""');
+    expect(block).toContain('headers: ""');
+    expect(block).toContain('extraParams: ""');
   });
 });
 

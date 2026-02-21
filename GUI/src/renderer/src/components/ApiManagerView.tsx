@@ -512,7 +512,7 @@ name: New Pipeline
 provider: ""
 prompt: ""
 parser: ""
-translation_mode: block
+translation_mode: line
 chunk_policy: ""
 settings: {}`,
   prompt: `id: new_prompt
@@ -583,7 +583,7 @@ const DEFAULT_PIPELINE_COMPOSER: PipelineComposerState = {
   provider: "",
   prompt: "",
   parser: "",
-  translationMode: "block",
+  translationMode: "line",
   applyLinePolicy: false,
   linePolicy: "",
   chunkPolicy: "",
@@ -1353,10 +1353,10 @@ const validateProfile = (
       );
       const hasMembers = Boolean(
         (Array.isArray(data.members) && data.members.length > 0) ||
-          (data.members !== undefined &&
-            data.members !== null &&
-            !Array.isArray(data.members) &&
-            String(data.members).trim()),
+        (data.members !== undefined &&
+          data.members !== null &&
+          !Array.isArray(data.members) &&
+          String(data.members).trim()),
       );
       if (!hasEndpoints) {
         errors.push(texts.validationMissingPoolEndpoints);

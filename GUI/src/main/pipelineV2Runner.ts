@@ -48,12 +48,7 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
         activeChild.kill("SIGTERM");
         // Windows fallback: SIGTERM may not work, use taskkill
         if (process.platform === "win32" && activeChild.pid) {
-          spawn("taskkill", [
-            "/pid",
-            activeChild.pid.toString(),
-            "/f",
-            "/t",
-          ]);
+          spawn("taskkill", ["/pid", activeChild.pid.toString(), "/f", "/t"]);
         }
       } catch (e) {
         console.error("[FlowV2] Error killing child:", e);
@@ -82,12 +77,29 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
         saveCache,
       },
     ) => {
+      const reqRunId = String(payload.runId || "").trim();
+      const runId = reqRunId || Date.now().toString();
+
       // 如果已有活动的 V2 进程，拒绝
       if (activeChild) {
-        return { ok: false, runId: "", code: 1, error: { errors: ["V2 pipeline already running"] } };
+        const message = "V2 pipeline already running";
+        const win = deps.getMainWindow();
+        if (win) {
+          win.webContents.send("process-exit", {
+            code: 1,
+            signal: null,
+            stopRequested: false,
+            runId,
+          });
+        }
+        return {
+          ok: false,
+          runId,
+          code: 1,
+          error: { errors: [message] },
+        };
       }
 
-      const runId = Date.now().toString();
       const python = deps.getPythonPath();
       const middlewarePath = deps.getMiddlewarePath();
       const scriptPath = join(middlewarePath, "murasaki_flow_v2", "main.py");
@@ -96,6 +108,15 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
       if (!precheck.ok) {
         const message = `[FlowV2] Precheck failed: ${precheck.errors.join(", ")}`;
         deps.sendLog({ runId, message, level: "error" });
+        const win = deps.getMainWindow();
+        if (win) {
+          win.webContents.send("process-exit", {
+            code: 1,
+            signal: null,
+            stopRequested: false,
+            runId,
+          });
+        }
         return {
           ok: false,
           runId,
@@ -181,101 +202,111 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
 
       stopRequested = false;
 
-      return await new Promise<{ ok: boolean; runId: string; code?: number }>(
-        (resolve) => {
-          let settled = false;
-          const finalize = (result: { ok: boolean; runId: string; code?: number }) => {
-            if (settled) return;
-            settled = true;
-            resolve(result);
-          };
-          const child =
-            python.type === "bundle"
-              ? spawn(python.path, scriptArgs.slice(1))
-              : spawn(python.path, moduleArgs, {
+      return await new Promise<{
+        ok: boolean;
+        runId: string;
+        code?: number;
+      }>((resolve) => {
+        let settled = false;
+        const finalize = (result: {
+          ok: boolean;
+          runId: string;
+          code?: number;
+        }) => {
+          if (settled) return;
+          settled = true;
+          resolve(result);
+        };
+        const child =
+          python.type === "bundle"
+            ? spawn(python.path, scriptArgs.slice(1))
+            : spawn(python.path, moduleArgs, {
                 cwd: middlewarePath,
                 env: {
                   ...process.env,
                   PYTHONIOENCODING: "utf-8",
                 },
               });
-          activeChild = child;
+        activeChild = child;
 
-          let stdoutBuffer = "";
+        let stdoutBuffer = "";
 
-          const handleStdoutLine = (line: string) => {
-            const win = deps.getMainWindow();
-            if (!win) return;
-            // 直接发送到 log-update 通道，复用 V1 的日志解析器
-            win.webContents.send("log-update", `${line}\n`);
-            // 同时保留 pipelinev2-log 用于调试
-            deps.sendLog({ runId, message: line, level: "info" });
-          };
+        const handleStdoutLine = (line: string) => {
+          const win = deps.getMainWindow();
+          if (!win) return;
+          // 直接发送到 log-update 通道，复用 V1 的日志解析器
+          win.webContents.send("log-update", `${line}\n`);
+          // 同时保留 pipelinev2-log 用于调试
+          deps.sendLog({ runId, message: line, level: "info" });
+        };
 
-          child.stdout?.on("data", (buf) => {
-            stdoutBuffer += buf.toString();
-            stdoutBuffer = flushBufferedLines(stdoutBuffer, handleStdoutLine);
-          });
+        child.stdout?.on("data", (buf) => {
+          stdoutBuffer += buf.toString();
+          stdoutBuffer = flushBufferedLines(stdoutBuffer, handleStdoutLine);
+        });
 
-          child.stderr?.on("data", (buf) => {
-            const str = buf.toString();
-            // stderr 仅发到 pipelinev2-log 调试通道
-            deps.sendLog({ runId, message: str, level: "error" });
-          });
+        child.stderr?.on("data", (buf) => {
+          const str = buf.toString();
+          // stderr 仅发到 pipelinev2-log 调试通道
+          deps.sendLog({ runId, message: str, level: "error" });
+        });
 
-          child.on("error", (err) => {
-            console.error("[FlowV2] Spawn error:", err);
-            const win = deps.getMainWindow();
-            if (win) {
-              const payload = {
-                title: "Pipeline V2 Error",
-                message: String(err?.message || err),
-              };
-              win.webContents.send(
-                "log-update",
-                `JSON_ERROR:${JSON.stringify(payload)}\n`,
-              );
-              win.webContents.send("process-exit", {
-                code: 1,
-                signal: null,
-                stopRequested: false,
-                runId,
-              });
-            }
-            activeChild = null;
-            stopRequested = false;
-            finalize({ ok: false, runId, code: 1 });
-          });
-
-          child.on("close", (code, signal) => {
-            // 刷新剩余 stdout 缓冲
-            if (stdoutBuffer.trim()) {
-              flushBufferedLines(`${stdoutBuffer}\n`, handleStdoutLine);
-            }
-
-            const wasStopRequested = stopRequested;
-            stopRequested = false;
-            activeChild = null;
-
-            console.log(
-              `[FlowV2] Process exited (code=${String(code)}, signal=${String(signal)}, stopRequested=${wasStopRequested})`,
+        child.on("error", (err) => {
+          console.error("[FlowV2] Spawn error:", err);
+          const win = deps.getMainWindow();
+          if (win) {
+            const payload = {
+              title: "Pipeline V2 Error",
+              message: String(err?.message || err),
+            };
+            win.webContents.send(
+              "log-update",
+              `JSON_ERROR:${JSON.stringify(payload)}\n`,
             );
+            win.webContents.send("process-exit", {
+              code: 1,
+              signal: null,
+              stopRequested: false,
+              runId,
+            });
+          }
+          activeChild = null;
+          stopRequested = false;
+          finalize({ ok: false, runId, code: 1 });
+        });
 
-            // 发送 process-exit 到 Dashboard（格式与 V1 完全一致）
-            const win = deps.getMainWindow();
-            if (win) {
-              win.webContents.send("process-exit", {
-                code,
-                signal,
-                stopRequested: wasStopRequested,
-                runId,
-              });
-            }
+        child.on("close", (code, signal) => {
+          // 刷新剩余 stdout 缓冲
+          if (stdoutBuffer.trim()) {
+            flushBufferedLines(`${stdoutBuffer}\n`, handleStdoutLine);
+          }
 
-            finalize({ ok: code === 0, runId, code: code ?? undefined });
-          });
-        },
-      );
+          const wasStopRequested = stopRequested;
+          stopRequested = false;
+          activeChild = null;
+
+          console.log(
+            `[FlowV2] Process exited (code=${String(code)}, signal=${String(signal)}, stopRequested=${wasStopRequested})`,
+          );
+
+          // 发送 process-exit 到 Dashboard（格式与 V1 完全一致）
+          const win = deps.getMainWindow();
+          if (win) {
+            win.webContents.send("process-exit", {
+              code,
+              signal,
+              stopRequested: wasStopRequested,
+              runId,
+            });
+          }
+
+          finalize({ ok: code === 0, runId, code: code ?? undefined });
+        });
+      });
     },
   );
+};
+
+export const __testOnly = {
+  flushBufferedLines,
 };

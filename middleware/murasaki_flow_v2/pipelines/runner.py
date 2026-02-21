@@ -409,7 +409,7 @@ class PipelineRunner:
         source_lines = self._extract_source_lines(items)
         blocks = chunk_policy.chunk(items)
 
-        temp_progress_path = f"{output_path}.temp.jsonl"
+        temp_progress_path = f"{output_path}.temp.jsonl" if output_path else f"{input_path}.temp.jsonl"
         pipeline_id = str(pipeline.get("id") or "")
         fingerprint = {
             "type": "fingerprint",
@@ -443,7 +443,10 @@ class PipelineRunner:
         glossary_text = self._load_glossary(glossary_spec)
 
         settings = pipeline.get("settings") or {}
-        max_retries = int(settings.get("max_retries") or 0)
+        try:
+            max_retries = int(settings.get("max_retries") or 0)
+        except (ValueError, TypeError):
+            max_retries = 3
         adaptive: Optional[AdaptiveConcurrency] = None
 
         processing_processor = None
@@ -458,9 +461,13 @@ class PipelineRunner:
         source_lang = (
             str(processing_cfg.get("source_lang") or "ja").strip() or "ja"
         )
+        # 默认禁用质量检查 — 用户需在 Pipeline YAML processing.enable_quality
+        # 或 CLI --enable-quality 中显式启用
         enable_quality = processing_cfg.get("enable_quality")
         if enable_quality is None:
             enable_quality = False
+        # 默认禁用文本保护 — 用户需在 Pipeline YAML processing.text_protect
+        # 或 CLI --text-protect 中显式启用
         enable_text_protect = processing_cfg.get("text_protect")
         if enable_text_protect is None:
             enable_text_protect = False
@@ -639,7 +646,7 @@ class PipelineRunner:
                     request = provider.build_request(messages, settings)
                     response = provider.send(request)
                     # 记录 API 请求统计（token usage）
-                    _usage = (response.raw or {}).get("data", {}).get("usage", {})
+                    _usage = (response.raw or {}).get("usage", {})
                     tracker.note_request(
                         input_tokens=_usage.get("prompt_tokens", 0) or 0,
                         output_tokens=_usage.get("completion_tokens", 0) or 0,
