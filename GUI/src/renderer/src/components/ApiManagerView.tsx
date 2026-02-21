@@ -2092,7 +2092,13 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
   const [sandboxLoading, setSandboxLoading] = useState(false);
   const [sandboxTab, setSandboxTab] = useState<"pre" | "request" | "response" | "parsed" | "post">("parsed");
 
-
+  // 清空沙盒状态
+  useEffect(() => {
+    return () => {
+      setSandboxResult(null);
+      setSandboxLoading(false);
+    };
+  }, []);
 
   useEffect(() => {
     if (
@@ -5885,7 +5891,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                   disabled={apiTest.status === "testing"}
                 >
                   {apiTest.status === "testing" ? (
-                    <Activity className="h-4 w-4 animate-spin" />
+                    <Loader2 className="h-4 w-4 animate-spin" />
                   ) : apiTest.status === "success" ? (
                     <CheckCircle2 className="h-4 w-4" />
                   ) : (
@@ -5943,12 +5949,10 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                     "border-red-500/50 text-red-600 dark:text-red-400 bg-red-500/10",
                   )}
                   onClick={handleTestConcurrency}
-                  disabled={
-                    apiConcurrency.status === "testing"
-                  }
+                  disabled={apiConcurrency.status === "testing"}
                 >
                   {apiConcurrency.status === "testing" ? (
-                    <Activity className="h-4 w-4 animate-spin" />
+                    <Loader2 className="h-4 w-4 animate-spin" />
                   ) : apiConcurrency.status === "success" ? (
                     <CheckCircle2 className="h-4 w-4" />
                   ) : (
@@ -7618,14 +7622,37 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
 
   const handleRunSandbox = async () => {
     if (!sandboxText.trim()) return;
+
+    // Validate required fields
+    if (!pipelineComposer.provider || !pipelineComposer.prompt || !pipelineComposer.parser || (!pipelineComposer.chunkPolicy && !pipelineComposer.linePolicy)) {
+      setSandboxResult({
+        type: "error",
+        error: lang === "en"
+          ? "Please ensure a Provider, Prompt, Parser, and Strategy are selected."
+          : "请确保已选择完整的大模型、提示词、解析器和拆分策略配置。"
+      });
+      return;
+    }
+
     setSandboxLoading(true);
     setSandboxResult(null);
     try {
+      const procConfig = (pipelineComposer as any).processing || {};
+      const rulesPreLocal = JSON.parse(localStorage.getItem("config_rules_pre") || "[]");
+      const rulesPostLocal = JSON.parse(localStorage.getItem("config_rules_post") || "[]");
       const pipelineConfig = {
         ...pipelineComposer,
         provider: pipelineComposer.provider,
         prompt: pipelineComposer.prompt,
         parser: pipelineComposer.parser,
+        processing: {
+          rules_pre: (procConfig.rules_pre && procConfig.rules_pre.length > 0) ? procConfig.rules_pre : rulesPreLocal,
+          rules_post: (procConfig.rules_post && procConfig.rules_post.length > 0) ? procConfig.rules_post : rulesPostLocal,
+          glossary: procConfig.glossary || [],
+          source_lang: "ja",
+          enable_quality: procConfig.enable_quality,
+          text_protect: procConfig.text_protect
+        }
       };
       const res = await window.api?.pipelineV2SandboxTest?.({
         text: sandboxText,
@@ -7682,7 +7709,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
               className="gap-2"
             >
               {sandboxLoading ? (
-                <Activity className="h-4 w-4 animate-spin" />
+                <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Play className="h-4 w-4" />
               )}

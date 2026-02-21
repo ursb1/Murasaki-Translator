@@ -50,6 +50,7 @@ import {
   Brush,
 } from "recharts";
 import { HardwareMonitorBar, MonitorData } from "./HardwareMonitorBar";
+import { ApiMonitorBar, ApiMonitorData } from "./ApiMonitorBar";
 import { AlertModal } from "./ui/AlertModal";
 import { useAlertModal } from "../hooks/useAlertModal";
 import { FileIcon } from "./ui/FileIcon";
@@ -190,6 +191,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
 
     // Monitors
     const [monitorData, setMonitorData] = useState<MonitorData | null>(null);
+    const [apiMonitorData, setApiMonitorData] = useState<ApiMonitorData>({ url: "", ping: null, rpm: 0, concurrency: 0 });
 
     // --- V1/V2 引擎模式 ---
     const [engineMode, setEngineMode] = useState<"v1" | "v2">(
@@ -237,6 +239,61 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         }
       });
     }, [active, engineMode]);
+
+    // Extract provider info for API Monitor
+    const [isRunning, setIsRunning] = useState(false);
+
+    // Sync running state
+    useEffect(() => {
+      onRunningChange?.(isRunning);
+    }, [isRunning, onRunningChange]);
+
+    useEffect(() => {
+      if (engineMode !== "v2" || !v2PipelineId || !active) return;
+
+      let isSubscribed = true;
+      const loadProviderInfo = async () => {
+        try {
+          const pipeData = await window.api?.pipelineV2ProfilesGet?.("pipeline", v2PipelineId);
+          if (!pipeData || !pipeData.provider || !isSubscribed) return;
+
+          const provData = await window.api?.pipelineV2ProfilesGet?.("provider", pipeData.provider);
+          if (!provData || (!provData.url && !provData.baseUrl) || !isSubscribed) return;
+
+          const targetUrl = provData.url || provData.baseUrl;
+          setApiMonitorData(prev => ({
+            ...prev,
+            url: targetUrl,
+            concurrency: pipeData.concurrency || 0
+          }));
+
+          // Test ping
+          const pingRes = await window.api?.pipelineV2ApiTest?.({
+            baseUrl: targetUrl,
+            apiKey: provData.api_key || provData.apiKey,
+            timeoutMs: 5000
+          });
+
+          if (isSubscribed && pingRes) {
+            setApiMonitorData(prev => ({ ...prev, ping: pingRes.latencyMs ?? null }));
+          }
+        } catch (e) {
+          console.error("Failed to load provider info for monitor", e);
+        }
+      };
+
+      loadProviderInfo();
+
+      const intervalId = setInterval(() => {
+        if (!isRunning) return;
+        loadProviderInfo();
+      }, 30000);
+
+      return () => {
+        isSubscribed = false;
+        clearInterval(intervalId);
+      };
+    }, [engineMode, v2PipelineId, active, isRunning]);
 
     const [modelPath, setModelPath] = useState<string>("");
     const [promptPreset, setPromptPreset] = useState<string>(
@@ -430,13 +487,6 @@ export const Dashboard = forwardRef<any, DashboardProps>(
     const [alignmentMode, setAlignmentMode] = useState(
       () => localStorage.getItem("config_alignment_mode") === "true",
     );
-
-    const [isRunning, setIsRunning] = useState(false);
-
-    // Sync running state
-    useEffect(() => {
-      onRunningChange?.(isRunning);
-    }, [isRunning, onRunningChange]);
 
     const [isReordering, setIsReordering] = useState(false);
     const [configItem, setConfigItem] = useState<QueueItem | null>(null);
@@ -2242,6 +2292,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       const cacheDir = resolvedCacheDir.trim();
 
       try {
+        const rulesPreLocal = JSON.parse(localStorage.getItem("config_rules_pre") || "[]");
+        const rulesPostLocal = JSON.parse(localStorage.getItem("config_rules_post") || "[]");
+
         const result = await window.api?.pipelineV2Run?.({
           filePath: inputPath,
           pipelineId: effectivePipelineId,
@@ -2266,6 +2319,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
               ? false
               : true,
           runId: runId, // 通过 IPC 发送由 Dashboard 管理的 runId
+          rulesPre: rulesPreLocal.length > 0 ? rulesPreLocal : undefined,
+          rulesPost: rulesPostLocal.length > 0 ? rulesPostLocal : undefined,
         });
 
         // 捕获预检或主进程级别返回的错误（如果后端发了 process-exit 这里其实会被状态机捕获，但这层防护更稳妥）
@@ -3158,6 +3213,18 @@ export const Dashboard = forwardRef<any, DashboardProps>(
             {/* Hardware Monitor (V1 only — irrelevant for remote API) */}
             {engineMode !== "v2" && (
               <HardwareMonitorBar data={monitorData} lang={lang} />
+            )}
+
+            {/* API Monitor (V2 only) */}
+            {engineMode === "v2" && (
+              <ApiMonitorBar
+                data={{
+                  ...apiMonitorData,
+                  rpm: isRunning && progress.elapsed > 0 ? (progress.current / progress.elapsed) * 60 : 0
+                }}
+                lang={lang}
+                isRunning={isRunning}
+              />
             )}
 
             {hasRemoteError && (

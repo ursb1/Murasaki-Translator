@@ -162,7 +162,7 @@ export function Sidebar({ lang, setLang, view, setView }: SidebarProps) {
 
         <div className="flex items-center gap-2 px-2">
           <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold text-[10px] shrink-0">
-            v1
+            v2
           </div>
           <span className="text-[10px] text-muted-foreground whitespace-nowrap">
             Murasaki v{APP_CONFIG.version}

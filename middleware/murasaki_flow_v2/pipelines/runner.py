@@ -46,6 +46,29 @@ class PipelineRunner:
         self.line_policies = PolicyRegistry(store)
         self.chunk_policies = ChunkPolicyRegistry(store)
 
+    def _resolve_rules(self, spec: Any) -> List[Dict[str, Any]]:
+        if not spec:
+            return []
+        if isinstance(spec, str):
+            try:
+                profile = self.store.load_profile("rule", spec)
+                return profile.get("rules", [])
+            except Exception:
+                return []
+        if isinstance(spec, list):
+            resolved = []
+            for item in spec:
+                if isinstance(item, dict):
+                    resolved.append(item)
+                elif isinstance(item, str):
+                    try:
+                        profile = self.store.load_profile("rule", item)
+                        resolved.extend(profile.get("rules", []))
+                    except Exception:
+                        pass
+            return resolved
+        return []
+
     def _format_glossary_text(self, data: Any) -> str:
         if isinstance(data, dict):
             return "\n".join([f"{k}: {v}" for k, v in data.items()])
@@ -480,8 +503,8 @@ class PipelineRunner:
         strict_line_count = bool(processing_cfg.get("strict_line_count"))
 
         if processing_enabled:
-            pre_rules = v2_processing.load_rules(rules_pre_spec)
-            post_rules = v2_processing.load_rules(rules_post_spec)
+            pre_rules = v2_processing.load_rules(self._resolve_rules(rules_pre_spec))
+            post_rules = v2_processing.load_rules(self._resolve_rules(rules_post_spec))
             glossary_dict = v2_processing.load_glossary(glossary_spec)
             if (
                 pre_rules

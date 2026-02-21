@@ -68,6 +68,8 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
         outputDir,
         rulesPrePath,
         rulesPostPath,
+        rulesPre,
+        rulesPost,
         glossaryPath,
         sourceLang,
         enableQuality,
@@ -158,13 +160,27 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
         scriptArgs.push("--output", resolvedOutputPath);
         moduleArgs.push("--output", resolvedOutputPath);
       }
-      if (rulesPrePath) {
-        scriptArgs.push("--rules-pre", rulesPrePath);
-        moduleArgs.push("--rules-pre", rulesPrePath);
+
+      let activeRulesPrePath = rulesPrePath;
+      if (!activeRulesPrePath && rulesPre && Array.isArray(rulesPre) && rulesPre.length > 0) {
+        const uid = require("crypto").randomUUID().slice(0, 8);
+        activeRulesPrePath = join(middlewarePath, `temp_rules_pre_${uid}.json`);
+        require("fs").writeFileSync(activeRulesPrePath, JSON.stringify(rulesPre), "utf8");
       }
-      if (rulesPostPath) {
-        scriptArgs.push("--rules-post", rulesPostPath);
-        moduleArgs.push("--rules-post", rulesPostPath);
+      if (activeRulesPrePath) {
+        scriptArgs.push("--rules-pre", activeRulesPrePath);
+        moduleArgs.push("--rules-pre", activeRulesPrePath);
+      }
+
+      let activeRulesPostPath = rulesPostPath;
+      if (!activeRulesPostPath && rulesPost && Array.isArray(rulesPost) && rulesPost.length > 0) {
+        const uid = require("crypto").randomUUID().slice(0, 8);
+        activeRulesPostPath = join(middlewarePath, `temp_rules_post_${uid}.json`);
+        require("fs").writeFileSync(activeRulesPostPath, JSON.stringify(rulesPost), "utf8");
+      }
+      if (activeRulesPostPath) {
+        scriptArgs.push("--rules-post", activeRulesPostPath);
+        moduleArgs.push("--rules-post", activeRulesPostPath);
       }
       if (glossaryPath) {
         scriptArgs.push("--glossary", glossaryPath);

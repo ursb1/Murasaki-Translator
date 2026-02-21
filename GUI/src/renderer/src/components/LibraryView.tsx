@@ -1763,6 +1763,20 @@ export function LibraryView({
   const [watchDraft, setWatchDraft] =
     useState<WatchFolderConfig>(createWatchDraft);
   const [knownModelNames, setKnownModelNames] = useState<string[]>([]);
+  const [v2Profiles, setV2Profiles] = useState<Array<{ id: string; name: string; providerName?: string }>>([]);
+
+  useEffect(() => {
+    window.api?.pipelineV2ProfilesList?.("pipeline").then((profiles: any[]) => {
+      if (Array.isArray(profiles)) {
+        setV2Profiles(profiles.map((p: any) => ({
+          id: p.id,
+          name: p.name || p.id,
+          providerName: p.providerName,
+        })));
+      }
+    });
+  }, []);
+
   const containerRef = useRef<HTMLDivElement>(null);
 
   const pushNotice = useCallback(
@@ -3272,6 +3286,7 @@ export function LibraryView({
             }
             onClose={() => setConfigItem(null)}
             remoteRuntime={remoteRuntime}
+            v2Profiles={v2Profiles}
           />
         )}
 

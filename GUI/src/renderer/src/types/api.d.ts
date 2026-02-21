@@ -354,6 +354,10 @@ export interface ElectronAPI {
     kind: string,
     ids: string[],
   ) => Promise<Array<{ id: string; result: any | null }>>;
+  pipelineV2ProfilesGet: (
+    kind: string,
+    id: string,
+  ) => Promise<Record<string, any> | null>;
   pipelineV2ProfilesSave: (
     kind: string,
     id: string,
@@ -436,6 +440,8 @@ export interface ElectronAPI {
     outputDir?: string;
     rulesPrePath?: string;
     rulesPostPath?: string;
+    rulesPre?: any[];
+    rulesPost?: any[];
     glossaryPath?: string;
     sourceLang?: string;
     enableQuality?: boolean;

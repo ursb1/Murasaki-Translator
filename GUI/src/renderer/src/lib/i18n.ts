@@ -31,6 +31,8 @@ export const translations = {
     monitor: {
       title: "硬件监控",
       waiting: "等待硬件数据...",
+      apiWaiting: "等待API响应...",
+      apiConcurrency: "实时请求并发",
       gpuLoad: "核心利用率",
       vramLoad: "显存控制器/带宽负载",
     },
@@ -667,7 +669,7 @@ export const translations = {
       autoLabel: "自动 (Auto)",
       gpuConfigTitle: "GPU 配置 (GPU Configuration)",
       modelInferenceTitle: "模型与推理 (Model & Inference)",
-      inferenceQualityTitle: "推理质量控制 (Inference Quality Control )",
+      inferenceQualityTitle: "推理参数 (Inference Parameters)",
       inferenceOptionsTitle: "Detailed Inference Options",
       efficiencyTitle: "效率原理 (Efficiency)",
       efficiencyDesc:
@@ -2548,7 +2550,7 @@ export const translations = {
       },
     },
     serviceView: {
-      title: "远程推理服务",
+      title: "远程推理服务 (Remote Inference)",
       subtitle:
         "本页面用于管理本机常驻推理服务与远程连接链路。服务启动参数使用“高级功能”中已保存的模型与推理配置。",
       running: "运行中",
@@ -2891,6 +2893,8 @@ export const translations = {
     monitor: {
       title: "Hardware Monitor",
       waiting: "Waiting for hardware data...",
+      apiWaiting: "Waiting for API response...",
+      apiConcurrency: "Active Concurrency",
       gpuLoad: "Core Usage",
       vramLoad: "VRAM Controller/Bandwidth Load",
     },
@@ -5818,6 +5822,8 @@ export const translations = {
     monitor: {
       title: "ハードウェアモニター",
       waiting: "ハードウェアデータを待機中...",
+      apiWaiting: "API応答を待機中...",
+      apiConcurrency: "リアルタイム並行実行",
       gpuLoad: "コア使用率",
       vramLoad: "VRAMコントローラー/帯域幅負荷",
     },

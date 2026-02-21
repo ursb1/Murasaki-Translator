@@ -159,23 +159,23 @@ export function ServiceView({
     runtime?.syncMirrorPath || network?.syncMirrorPath || "";
   const inlineNoticeConfig = inlineNotice
     ? {
-        success: {
-          className: "bg-emerald-500/10 border-emerald-500/30 text-emerald-600",
-          icon: Check,
-        },
-        warning: {
-          className: "bg-amber-500/10 border-amber-500/30 text-amber-600",
-          icon: Info,
-        },
-        error: {
-          className: "bg-red-500/10 border-red-500/30 text-red-600",
-          icon: Info,
-        },
-        info: {
-          className: "bg-blue-500/10 border-blue-500/30 text-blue-600",
-          icon: Info,
-        },
-      }[inlineNotice.type]
+      success: {
+        className: "bg-emerald-500/10 border-emerald-500/30 text-emerald-600",
+        icon: Check,
+      },
+      warning: {
+        className: "bg-amber-500/10 border-amber-500/30 text-amber-600",
+        icon: Info,
+      },
+      error: {
+        className: "bg-red-500/10 border-red-500/30 text-red-600",
+        icon: Info,
+      },
+      info: {
+        className: "bg-blue-500/10 border-blue-500/30 text-blue-600",
+        icon: Info,
+      },
+    }[inlineNotice.type]
     : null;
 
   useEffect(() => {
@@ -326,8 +326,8 @@ export function ServiceView({
       const parsedLocalPort = Number.parseInt(localPort, 10);
       const preferredPort =
         Number.isFinite(parsedLocalPort) &&
-        parsedLocalPort >= 1 &&
-        parsedLocalPort <= 65535
+          parsedLocalPort >= 1 &&
+          parsedLocalPort <= 65535
           ? parsedLocalPort
           : DEFAULT_LOCAL_API_PORT;
       if (String(preferredPort) !== localPort) {
@@ -696,23 +696,21 @@ export function ServiceView({
   };
 
   return (
-    <div className="flex-1 h-screen flex flex-col bg-background overflow-hidden">
-      <div className="px-8 pt-8 pb-6 shrink-0 z-10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <h2 className="text-2xl font-bold text-foreground flex items-center gap-3">
-          <Server className="w-6 h-6 text-primary" />
-          {s.title}
-          {(isStartingServer || remoteRuntimeLoading) && (
-            <RefreshCw className="w-5 h-5 animate-spin text-muted-foreground" />
-          )}
-        </h2>
-        <p className="text-xs text-muted-foreground mt-2">{s.subtitle}</p>
-      </div>
+    <div className="space-y-4 w-full">
+      <h3 className="text-lg font-semibold flex items-center gap-2 border-b pb-2">
+        {s.title}
+        {(isStartingServer || remoteRuntimeLoading) && (
+          <RefreshCw className="w-4 h-4 animate-spin text-muted-foreground" />
+        )}
+      </h3>
+      <p className="text-xs text-muted-foreground mt-1 mb-4 leading-relaxed">{s.subtitle}</p>
+
       {inlineNotice &&
         inlineNoticeConfig &&
         (() => {
           const NoticeIcon = inlineNoticeConfig.icon;
           return (
-            <div className="px-8 -mt-2 pb-4">
+            <div className="pb-2">
               <div
                 className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${inlineNoticeConfig.className}`}
               >
@@ -731,419 +729,176 @@ export function ServiceView({
             </div>
           );
         })()}
-      <div className="flex-1 overflow-y-auto px-8 pb-4 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent hover:scrollbar-thumb-muted-foreground/30">
-        <div className="grid gap-6">
-          <div className="rounded-lg border border-border/60 bg-muted/40 px-3 py-2">
-            <div className="flex flex-wrap items-center gap-2 text-[11px]">
-              <Info className="w-3.5 h-3.5 text-blue-500" />
-              <span className="font-medium">{s.guideTitle}</span>
-              <span className="text-muted-foreground">{s.guideSubtitle}</span>
-              <button
-                type="button"
-                className="ml-auto inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-xs hover:bg-secondary"
-                onClick={() => setServiceGuideExpanded((value) => !value)}
-              >
-                {serviceGuideExpanded ? (
-                  <>
-                    <ChevronUp className="w-3 h-3" />
-                    {s.guideCollapse}
-                  </>
-                ) : (
-                  <>
-                    <ChevronDown className="w-3 h-3" />
-                    {s.guideExpand}
-                  </>
-                )}
-              </button>
-            </div>
+      <div className="grid gap-6">
+        <div className="rounded-lg border border-border/60 bg-muted/40 px-3 py-2">
+          <div className="flex flex-wrap items-center gap-2 text-[11px]">
+            <Info className="w-3.5 h-3.5 text-blue-500" />
+            <span className="font-medium">{s.guideTitle}</span>
+            <span className="text-muted-foreground">{s.guideSubtitle}</span>
+            <button
+              type="button"
+              className="ml-auto inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-xs hover:bg-secondary"
+              onClick={() => setServiceGuideExpanded((value) => !value)}
+            >
+              {serviceGuideExpanded ? (
+                <>
+                  <ChevronUp className="w-3 h-3" />
+                  {s.guideCollapse}
+                </>
+              ) : (
+                <>
+                  <ChevronDown className="w-3 h-3" />
+                  {s.guideExpand}
+                </>
+              )}
+            </button>
+          </div>
 
-            {serviceGuideExpanded && (
-              <div className="mt-3 space-y-3">
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 text-[11px]">
-                  <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2 space-y-2">
-                    <div className="font-semibold">{s.guideLinuxTitle}</div>
-                    <div className="text-muted-foreground leading-relaxed">
-                      {s.guideLinuxDesc1}
-                    </div>
-                    <div className="text-muted-foreground leading-relaxed">
-                      {s.guideLinuxDesc2}
-                    </div>
+          {serviceGuideExpanded && (
+            <div className="mt-3 space-y-3">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 text-[11px]">
+                <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2 space-y-2">
+                  <div className="font-semibold">{s.guideLinuxTitle}</div>
+                  <div className="text-muted-foreground leading-relaxed">
+                    {s.guideLinuxDesc1}
                   </div>
-                  <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2 space-y-2">
-                    <div className="font-semibold">{s.guideLocalTitle}</div>
-                    <div className="text-muted-foreground leading-relaxed">
-                      {s.guideLocalDesc1}
-                    </div>
-                    <div className="text-muted-foreground leading-relaxed">
-                      {s.guideLocalDesc2Prefix}{" "}
-                      <span className="font-mono">0.0.0.0</span>{" "}
-                      {s.guideLocalDesc2Suffix}
-                    </div>
+                  <div className="text-muted-foreground leading-relaxed">
+                    {s.guideLinuxDesc2}
                   </div>
                 </div>
-                <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2 space-y-2 text-[11px]">
-                  <div className="font-semibold text-foreground">
-                    {s.guidePassThroughTitle}
+                <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2 space-y-2">
+                  <div className="font-semibold">{s.guideLocalTitle}</div>
+                  <div className="text-muted-foreground leading-relaxed">
+                    {s.guideLocalDesc1}
                   </div>
                   <div className="text-muted-foreground leading-relaxed">
-                    {s.guidePassThroughModel}
-                  </div>
-                  <div className="text-muted-foreground leading-relaxed">
-                    {s.guidePassThroughQuality}
-                  </div>
-                  <div className="text-muted-foreground leading-relaxed">
-                    {s.guidePassThroughProcessing}
-                  </div>
-                  <div className="text-muted-foreground leading-relaxed">
-                    {s.guidePassThroughTasksPrefix}
-                    <span className="font-mono">resume</span>
-                    {s.guidePassThroughTasksMid}
-                    <span className="font-mono">cacheDir</span>
-                    {s.guidePassThroughTasksSuffix}
+                    {s.guideLocalDesc2Prefix}{" "}
+                    <span className="font-mono">0.0.0.0</span>{" "}
+                    {s.guideLocalDesc2Suffix}
                   </div>
                 </div>
               </div>
-            )}
-          </div>
-
-          <Card>
-            <CardContent className="pt-6 space-y-6">
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <span className="text-sm font-semibold">
-                      {s.localTitle}
-                    </span>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">
-                      {s.localDesc}
-                    </p>
-                  </div>
-                  <div className="flex bg-secondary rounded-lg p-0.5 border">
-                    <button
-                      onClick={() => void toggleDaemonMode(false)}
-                      className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-                        !daemonMode
-                          ? "bg-background text-foreground shadow-sm"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      {s.modeAuto}
-                    </button>
-                    <button
-                      onClick={() => void toggleDaemonMode(true)}
-                      className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-                        daemonMode
-                          ? "bg-background text-foreground shadow-sm"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      {s.modeFixed}
-                    </button>
-                  </div>
+              <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2 space-y-2 text-[11px]">
+                <div className="font-semibold text-foreground">
+                  {s.guidePassThroughTitle}
                 </div>
+                <div className="text-muted-foreground leading-relaxed">
+                  {s.guidePassThroughModel}
+                </div>
+                <div className="text-muted-foreground leading-relaxed">
+                  {s.guidePassThroughQuality}
+                </div>
+                <div className="text-muted-foreground leading-relaxed">
+                  {s.guidePassThroughProcessing}
+                </div>
+                <div className="text-muted-foreground leading-relaxed">
+                  {s.guidePassThroughTasksPrefix}
+                  <span className="font-mono">resume</span>
+                  {s.guidePassThroughTasksMid}
+                  <span className="font-mono">cacheDir</span>
+                  {s.guidePassThroughTasksSuffix}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
 
-                <p className="text-xs text-muted-foreground">
-                  {daemonMode ? s.modeFixedDesc : s.modeAutoDesc}
-                </p>
+        <Card>
+          <CardContent className="pt-6 space-y-6">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-sm font-semibold">
+                    {s.localTitle}
+                  </span>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    {s.localDesc}
+                  </p>
+                </div>
+                <div className="flex bg-secondary rounded-lg p-0.5 border">
+                  <button
+                    onClick={() => void toggleDaemonMode(false)}
+                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${!daemonMode
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                      }`}
+                  >
+                    {s.modeAuto}
+                  </button>
+                  <button
+                    onClick={() => void toggleDaemonMode(true)}
+                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${daemonMode
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                      }`}
+                  >
+                    {s.modeFixed}
+                  </button>
+                </div>
+              </div>
 
-                {daemonMode && (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-medium text-muted-foreground">
-                          {s.portLabel}
-                        </label>
-                        <input
-                          type="number"
-                          className="w-full border p-2 rounded text-sm bg-secondary font-mono"
-                          min={1}
-                          max={65535}
-                          step={1}
-                          value={localPort}
-                          onChange={(event) => {
-                            const nextValue = event.target.value
-                              .replace(/[^\d]/g, "")
-                              .slice(0, 5);
-                            setLocalPort(nextValue);
-                            localStorage.setItem(
-                              "config_local_port",
-                              nextValue,
-                            );
-                          }}
-                        />
-                        <p className="text-[11px] leading-5 text-muted-foreground">
-                          {s.portHintPrefix}{" "}
-                          <span className="font-mono">8000</span>
-                          {s.portHintMid}
-                          <span className="font-mono"> 8001 ~ 8020</span>
-                          {s.portHintSuffix}
-                        </p>
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-xs font-medium text-muted-foreground">
-                          {s.hostLabel}
-                        </label>
-                        <select
-                          className="w-full border border-border p-2 rounded bg-secondary text-foreground text-sm"
-                          value={localHost}
-                          onChange={(event) => {
-                            setLocalHost(event.target.value);
-                            localStorage.setItem(
-                              "config_local_host",
-                              event.target.value,
-                            );
-                          }}
-                        >
-                          <option value="127.0.0.1">{s.hostLocal}</option>
-                          <option value="0.0.0.0">{s.hostLan}</option>
-                        </select>
-                      </div>
-                    </div>
+              <p className="text-xs text-muted-foreground">
+                {daemonMode ? s.modeFixedDesc : s.modeAutoDesc}
+              </p>
 
+              {daemonMode && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <label className="text-xs font-medium text-muted-foreground">
-                          {s.localApiKeyLabel}
-                        </label>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="h-6 px-2 text-[10px] gap-1"
-                            onClick={() =>
-                              setShowLocalApiKey((value) => !value)
-                            }
-                          >
-                            {showLocalApiKey ? (
-                              <>
-                                <EyeOff className="w-3 h-3" />
-                                {s.hide}
-                              </>
-                            ) : (
-                              <>
-                                <Eye className="w-3 h-3" />
-                                {s.show}
-                              </>
-                            )}
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="h-6 px-2 text-[10px] gap-1"
-                            onClick={() => void handleCopyLocalApiKey()}
-                            disabled={!canCopyLocalApiKey}
-                          >
-                            {localApiKeyCopied ? (
-                              <>
-                                <Check className="w-3 h-3" />
-                                {s.copied}
-                              </>
-                            ) : (
-                              <>
-                                <Copy className="w-3 h-3" />
-                                {s.copy}
-                              </>
-                            )}
-                          </Button>
-                        </div>
-                      </div>
+                      <label className="text-xs font-medium text-muted-foreground">
+                        {s.portLabel}
+                      </label>
                       <input
-                        type={showLocalApiKey ? "text" : "password"}
-                        className="w-full border p-2 rounded text-sm bg-secondary disabled:opacity-70"
-                        placeholder={s.localApiKeyPlaceholder}
-                        value={localDaemonApiKey}
-                        disabled={isLocalServerRunning}
+                        type="number"
+                        className="w-full border p-2 rounded text-sm bg-secondary font-mono"
+                        min={1}
+                        max={65535}
+                        step={1}
+                        value={localPort}
                         onChange={(event) => {
-                          const nextValue = event.target.value;
-                          setLocalDaemonApiKey(nextValue);
-                          setLocalApiKeyCopied(false);
+                          const nextValue = event.target.value
+                            .replace(/[^\d]/g, "")
+                            .slice(0, 5);
+                          setLocalPort(nextValue);
                           localStorage.setItem(
-                            LOCAL_DAEMON_API_KEY_STORAGE_KEY,
+                            "config_local_port",
                             nextValue,
                           );
                         }}
                       />
-                      <p className="text-[11px] text-muted-foreground leading-5">
-                        {isLocalServerRunning
-                          ? s.localKeyLockedHint
-                          : s.localKeyManualHint}
+                      <p className="text-[11px] leading-5 text-muted-foreground">
+                        {s.portHintPrefix}{" "}
+                        <span className="font-mono">8000</span>
+                        {s.portHintMid}
+                        <span className="font-mono"> 8001 ~ 8020</span>
+                        {s.portHintSuffix}
                       </p>
                     </div>
-
-                    <div className="flex items-start justify-between gap-3 pt-0.5">
-                      <div className="space-y-0.5 pr-2">
-                        <div className="text-sm font-medium leading-none">
-                          {s.autoConnectLabel}
-                        </div>
-                        <p className="text-xs text-muted-foreground leading-relaxed">
-                          {s.autoConnectDescPrefix}
-                          <span className="font-mono"> localhost </span>
-                          {s.autoConnectDescSuffix}
-                        </p>
-                      </div>
-                      <div className="pt-0.5">
-                        <Switch
-                          checked={autoConnectRemoteAfterDaemonStart}
-                          onCheckedChange={setAutoConnectRemoteAfterDaemonStart}
-                        />
-                      </div>
-                    </div>
-                    <div className="rounded-lg border border-border bg-secondary/30 px-3 py-2.5 space-y-2.5">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <div
-                            className={`w-2 h-2 rounded-full ${serverStatus?.running ? "bg-green-500 animate-pulse" : "bg-red-500"}`}
-                          />
-                          <span className="text-xs font-bold">
-                            {serverStatus?.running ? s.running : s.stopped}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {serverStatus?.running && (
-                            <span className="text-[10px] bg-secondary px-1 rounded border font-mono text-muted-foreground">
-                              {s.portInfo
-                                .replace("{port}", String(serverStatus.port))
-                                .replace("{pid}", String(serverStatus.pid))}
-                            </span>
-                          )}
-                          {warmupTime && (
-                            <span className="text-[10px] text-green-600">
-                              {s.warmupTimeLabel.replace(
-                                "{time}",
-                                (warmupTime / 1000).toFixed(1),
-                              )}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      {serverStatus?.running && (
-                        <div className="rounded border border-border bg-background/70 px-2 py-1 text-[10px] text-muted-foreground space-y-1">
-                          <div className="font-mono break-all">
-                            {s.localApiLabel}{" "}
-                            {serverStatus.localEndpoint ||
-                              serverStatus.endpoint ||
-                              `http://127.0.0.1:${serverStatus.port}`}
-                          </div>
-                          {Array.isArray(serverStatus.lanEndpoints) &&
-                            serverStatus.lanEndpoints.length > 0 && (
-                              <div className="space-y-0.5">
-                                <div>{s.lanApiLabel}</div>
-                                {serverStatus.lanEndpoints.map(
-                                  (url: string) => (
-                                    <div
-                                      key={url}
-                                      className="font-mono break-all"
-                                    >
-                                      {url}
-                                    </div>
-                                  ),
-                                )}
-                              </div>
-                            )}
-                          <div className="space-y-0.5">
-                            <div>
-                              {s.authLabel}{" "}
-                              {serverStatus.authEnabled
-                                ? s.authEnabled
-                                : s.authDisabledLocal}
-                            </div>
-                            {serverStatus.authEnabled && (
-                              <div>
-                                {s.localApiKeyShort}{" "}
-                                <span className="font-mono">
-                                  {serverStatus.apiKeyHint ||
-                                    maskApiKey(effectiveLocalApiKey)}
-                                </span>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="flex gap-2">
-                        {serverStatus?.running ? (
-                          <>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={handleWarmup}
-                              disabled={isWarming}
-                              className="flex-1 h-8 text-xs gap-2"
-                            >
-                              <Sparkles className="w-3 h-3" />
-                              {isWarming ? s.warming : s.warmup}
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              onClick={handleStopServer}
-                              className="flex-1 h-8 text-xs"
-                            >
-                              {s.stopServer}
-                            </Button>
-                          </>
-                        ) : (
-                          <Button
-                            size="sm"
-                            onClick={handleStartServer}
-                            disabled={isStartingServer}
-                            className="flex-1 h-8 text-xs bg-green-600 hover:bg-green-700 text-white"
-                          >
-                            {isStartingServer ? s.starting : s.startServer}
-                          </Button>
-                        )}
-                      </div>
-                      <div className="pt-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => void handleOpenLocalLlamaLog()}
-                          className="w-full h-8 text-xs"
-                        >
-                          {s.viewLocalLog}
-                        </Button>
-                      </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-muted-foreground">
+                        {s.hostLabel}
+                      </label>
+                      <select
+                        className="w-full border border-border p-2 rounded bg-secondary text-foreground text-sm"
+                        value={localHost}
+                        onChange={(event) => {
+                          setLocalHost(event.target.value);
+                          localStorage.setItem(
+                            "config_local_host",
+                            event.target.value,
+                          );
+                        }}
+                      >
+                        <option value="127.0.0.1">{s.hostLocal}</option>
+                        <option value="0.0.0.0">{s.hostLan}</option>
+                      </select>
                     </div>
                   </div>
-                )}
-              </div>
 
-              <div className="space-y-3 border-t pt-4">
-                <div>
-                  <span className="text-sm font-semibold">{s.remoteTitle}</span>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">
-                    {s.remoteDesc}
-                  </p>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-muted-foreground">
-                      {s.remoteUrlLabel}
-                    </label>
-                    <input
-                      type="text"
-                      placeholder={s.remoteUrlPlaceholder}
-                      className="w-full border p-2 rounded text-sm bg-secondary disabled:opacity-80 disabled:bg-muted/50 disabled:text-muted-foreground disabled:cursor-not-allowed"
-                      value={serverUrl}
-                      disabled={isRemoteConnected}
-                      onChange={(event) => {
-                        const nextValue = event.target.value;
-                        setServerUrl(nextValue);
-                        localStorage.setItem(
-                          REMOTE_API_URL_STORAGE_KEY,
-                          nextValue,
-                        );
-                        localStorage.removeItem("config_server");
-                      }}
-                    />
-                  </div>
-                  <div className="space-y-1">
+                  <div className="space-y-1.5">
                     <div className="flex items-center justify-between gap-2">
                       <label className="text-xs font-medium text-muted-foreground">
-                        {s.remoteKeyLabel}
+                        {s.localApiKeyLabel}
                       </label>
                       <div className="flex items-center gap-1">
                         <Button
@@ -1151,9 +906,11 @@ export function ServiceView({
                           size="sm"
                           variant="outline"
                           className="h-6 px-2 text-[10px] gap-1"
-                          onClick={() => setShowRemoteApiKey((value) => !value)}
+                          onClick={() =>
+                            setShowLocalApiKey((value) => !value)
+                          }
                         >
-                          {showRemoteApiKey ? (
+                          {showLocalApiKey ? (
                             <>
                               <EyeOff className="w-3 h-3" />
                               {s.hide}
@@ -1170,10 +927,10 @@ export function ServiceView({
                           size="sm"
                           variant="outline"
                           className="h-6 px-2 text-[10px] gap-1"
-                          onClick={() => void handleCopyRemoteApiKey()}
-                          disabled={!canCopyRemoteApiKey}
+                          onClick={() => void handleCopyLocalApiKey()}
+                          disabled={!canCopyLocalApiKey}
                         >
-                          {remoteApiKeyCopied ? (
+                          {localApiKeyCopied ? (
                             <>
                               <Check className="w-3 h-3" />
                               {s.copied}
@@ -1188,310 +945,547 @@ export function ServiceView({
                       </div>
                     </div>
                     <input
-                      type={showRemoteApiKey ? "text" : "password"}
-                      className="w-full border p-2 rounded text-sm bg-secondary disabled:opacity-80 disabled:bg-muted/50 disabled:text-muted-foreground disabled:cursor-not-allowed"
-                      placeholder="sk-..."
-                      value={apiKey}
-                      disabled={isRemoteConnected}
+                      type={showLocalApiKey ? "text" : "password"}
+                      className="w-full border p-2 rounded text-sm bg-secondary disabled:opacity-70"
+                      placeholder={s.localApiKeyPlaceholder}
+                      value={localDaemonApiKey}
+                      disabled={isLocalServerRunning}
                       onChange={(event) => {
                         const nextValue = event.target.value;
-                        setApiKey(nextValue);
-                        setRemoteApiKeyCopied(false);
+                        setLocalDaemonApiKey(nextValue);
+                        setLocalApiKeyCopied(false);
                         localStorage.setItem(
-                          REMOTE_API_KEY_STORAGE_KEY,
+                          LOCAL_DAEMON_API_KEY_STORAGE_KEY,
                           nextValue,
                         );
                       }}
                     />
+                    <p className="text-[11px] text-muted-foreground leading-5">
+                      {isLocalServerRunning
+                        ? s.localKeyLockedHint
+                        : s.localKeyManualHint}
+                    </p>
                   </div>
-                </div>
-                <div className="text-[11px] text-muted-foreground">
-                  {s.remoteFormatHint}
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-[11px] text-muted-foreground leading-relaxed">
-                    {isRemoteConnected
-                      ? s.remoteModeEnabledDesc
-                      : s.remoteModeDisabledDesc}
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-xs min-w-[156px] justify-center ml-auto"
-                    disabled={isTestingRemote}
-                    onClick={() => void handleToggleRemote()}
-                  >
-                    {isTestingRemote
-                      ? s.testing
-                      : isRemoteConnected
-                        ? s.disconnectRemote
-                        : s.connectRemote}
-                  </Button>
-                </div>
 
-                {isRemoteConnected && (
-                  <div className="mt-3 rounded-lg border border-border bg-secondary/30">
-                    <button
-                      type="button"
-                      className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold hover:bg-secondary/50 transition-colors"
-                      onClick={() => setRemotePanelExpanded((value) => !value)}
-                    >
-                      <span>{s.remoteDetailTitle}</span>
-                      {remotePanelExpanded ? (
-                        <ChevronUp className="w-3.5 h-3.5" />
-                      ) : (
-                        <ChevronDown className="w-3.5 h-3.5" />
-                      )}
-                    </button>
-                    {remotePanelExpanded && (
-                      <div className="px-3 pb-3 space-y-2 text-[11px]">
-                        <p className="text-[10px] text-muted-foreground leading-relaxed">
-                          {s.remoteDetailDesc}
-                        </p>
-                        <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">
-                            {s.remoteStatusLabel}
+                  <div className="flex items-start justify-between gap-3 pt-0.5">
+                    <div className="space-y-0.5 pr-2">
+                      <div className="text-sm font-medium leading-none">
+                        {s.autoConnectLabel}
+                      </div>
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        {s.autoConnectDescPrefix}
+                        <span className="font-mono"> localhost </span>
+                        {s.autoConnectDescSuffix}
+                      </p>
+                    </div>
+                    <div className="pt-0.5">
+                      <Switch
+                        checked={autoConnectRemoteAfterDaemonStart}
+                        onCheckedChange={setAutoConnectRemoteAfterDaemonStart}
+                      />
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-border bg-secondary/30 px-3 py-2.5 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div
+                          className={`w-2 h-2 rounded-full ${serverStatus?.running ? "bg-green-500 animate-pulse" : "bg-red-500"}`}
+                        />
+                        <span className="text-xs font-bold">
+                          {serverStatus?.running ? s.running : s.stopped}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {serverStatus?.running && (
+                          <span className="text-[10px] bg-secondary px-1 rounded border font-mono text-muted-foreground">
+                            {s.portInfo
+                              .replace("{port}", String(serverStatus.port))
+                              .replace("{pid}", String(serverStatus.pid))}
                           </span>
-                          <span className="font-mono justify-self-end text-right">
-                            {remoteRuntimeLoading
-                              ? s.refreshing
-                              : runtime?.connected
-                                ? s.connected
-                                : s.disconnected}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">
-                            {s.remoteSourceLabel}
-                          </span>
-                          <span className="font-mono justify-self-end text-right">
-                            {runtime?.session?.source === "local-daemon"
-                              ? s.remoteSourceLocal
-                              : s.remoteSourceManual}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">
-                            {s.remoteBridgeLabel}
-                          </span>
-                          <span className="font-mono justify-self-end text-right break-all">
-                            {runtime?.session?.source === "local-daemon"
-                              ? s.remoteBridgeLocal
-                              : s.remoteBridgeRemote}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">
-                            {s.remoteCommLabel}
-                          </span>
-                          <span className="font-mono justify-self-end text-right">
-                            {network.wsConnected
-                              ? s.remoteCommWs
-                              : s.remoteCommHttp}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">
-                            {s.remoteRetryErrorLabel}
-                          </span>
-                          <span className="font-mono justify-self-end text-right">
-                            {network.retryCount} / {network.errorCount}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">
-                            {s.remoteFileScopeLabel}
-                          </span>
-                          <span className="font-mono justify-self-end text-right">
-                            {runtime?.fileScope === "shared-local"
-                              ? s.remoteFileScopeLocal
-                              : s.remoteFileScopeRemote}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">
-                            {s.remoteOutputLabel}
-                          </span>
-                          <span className="font-mono justify-self-end text-right">
-                            {runtime?.outputPolicy === "same-dir"
-                              ? s.remoteOutputSame
-                              : s.remoteOutputRemote}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">
-                            {s.remoteExecutionLabel}
-                          </span>
-                          <span className="font-mono justify-self-end text-right">
-                            {runtime?.executionMode ||
-                              diagnostics?.executionMode ||
-                              s.unknown}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">
-                            {s.remoteActiveTasksLabel}
-                          </span>
-                          <span className="font-mono justify-self-end text-right">
-                            {runtime?.activeTasks ??
-                              diagnostics?.activeTaskId ??
-                              0}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">
-                            {s.remoteModelLoadedLabel}
-                          </span>
-                          <span className="font-mono justify-self-end text-right">
-                            {runtime?.modelLoaded
-                              ? s.remoteModelLoaded
-                              : s.remoteModelNotLoaded}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">
-                            {s.remoteCurrentModelLabel}
-                          </span>
-                          <span className="font-mono justify-self-end text-right break-all">
-                            {runtime?.currentModel || s.none}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">
-                            {s.remoteAuthLabel}
-                          </span>
-                          <span className="font-mono justify-self-end text-right">
-                            {runtime?.authRequired === true
-                              ? s.authRequired
-                              : runtime?.authRequired === false
-                                ? s.authDisabled
-                                : s.unknown}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">
-                            {s.remoteCapabilitiesLabel}
-                          </span>
-                          <span className="font-mono justify-self-end text-right break-all">
-                            {Array.isArray(runtime?.capabilities) &&
-                            runtime.capabilities.length > 0
-                              ? runtime.capabilities.join(", ")
-                              : s.none}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">
-                            {s.remoteHealthFailuresLabel}
-                          </span>
-                          <span className="font-mono justify-self-end text-right">
-                            {diagnostics?.healthFailures ?? 0}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">
-                            {s.remoteLastSyncLabel}
-                          </span>
-                          <span className="font-mono justify-self-end text-right">
-                            {network.lastSyncAt
-                              ? new Date(
-                                  network.lastSyncAt,
-                                ).toLocaleTimeString()
-                              : "--"}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">
-                            {s.remoteLatencyLabel}
-                          </span>
-                          <span className="font-mono justify-self-end text-right">
-                            {network.lastLatencyMs ?? "--"} ms /{" "}
-                            {network.avgLatencyMs ?? "--"} ms
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                          <span className="text-muted-foreground">
-                            {s.remoteStatusInFlightLabel}
-                          </span>
-                          <span className="font-mono justify-self-end text-right">
-                            {network.lastStatusCode ?? "--"} /{" "}
-                            {network.inFlightRequests ?? 0}
-                          </span>
-                        </div>
-                        <div className="text-[10px] text-muted-foreground leading-relaxed">
-                          <div className="flex items-center justify-between gap-3">
-                            <span>
-                              {runtime?.session?.source === "local-daemon"
-                                ? s.remoteLinkLocal
-                                : s.remoteLinkRemote}
-                            </span>
-                            <button
-                              type="button"
-                              className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] hover:bg-secondary"
-                              onClick={() =>
-                                setRemoteNoticeExpanded((value) => !value)
-                              }
-                            >
-                              {remoteNoticeExpanded
-                                ? s.noticeCollapse
-                                : s.noticeExpand}
-                            </button>
-                          </div>
-                          {remoteNoticeExpanded && (
-                            <p className="mt-1.5">
-                              {remoteNotice}
-                              {runtime?.session?.source === "local-daemon"
-                                ? s.noticeLocalDesc
-                                : s.noticeRemoteDesc}
-                            </p>
-                          )}
-                        </div>
-                        {remoteLastError && (
-                          <div className="text-[10px] text-destructive">
-                            {s.remoteLastErrorLabel}: {remoteLastError}
-                          </div>
                         )}
-                        <div className="pt-2 flex flex-wrap items-center gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 text-[11px]"
-                            disabled={!remoteNetworkLogPath}
-                            onClick={() => handleOpenRemoteNetworkLog()}
-                          >
-                            {s.remoteNetworkLog}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 text-[11px]"
-                            disabled={!remoteMirrorLogPath}
-                            onClick={() => handleOpenRemoteMirrorLog()}
-                          >
-                            {s.remoteMirrorLog}
-                          </Button>
+                        {warmupTime && (
+                          <span className="text-[10px] text-green-600">
+                            {s.warmupTimeLabel.replace(
+                              "{time}",
+                              (warmupTime / 1000).toFixed(1),
+                            )}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {serverStatus?.running && (
+                      <div className="rounded border border-border bg-background/70 px-2 py-1 text-[10px] text-muted-foreground space-y-1">
+                        <div className="font-mono break-all">
+                          {s.localApiLabel}{" "}
+                          {serverStatus.localEndpoint ||
+                            serverStatus.endpoint ||
+                            `http://127.0.0.1:${serverStatus.port}`}
                         </div>
-                        <div className="pt-1 flex items-center justify-end gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 text-[11px]"
-                            disabled={remoteRuntimeLoading}
-                            onClick={() => void refreshRemoteRuntime()}
-                          >
-                            <RefreshCw
-                              className={`w-3 h-3 mr-1 ${remoteRuntimeLoading ? "animate-spin" : ""}`}
-                            />
-                            {s.refreshStatus}
-                          </Button>
+                        {Array.isArray(serverStatus.lanEndpoints) &&
+                          serverStatus.lanEndpoints.length > 0 && (
+                            <div className="space-y-0.5">
+                              <div>{s.lanApiLabel}</div>
+                              {serverStatus.lanEndpoints.map(
+                                (url: string) => (
+                                  <div
+                                    key={url}
+                                    className="font-mono break-all"
+                                  >
+                                    {url}
+                                  </div>
+                                ),
+                              )}
+                            </div>
+                          )}
+                        <div className="space-y-0.5">
+                          <div>
+                            {s.authLabel}{" "}
+                            {serverStatus.authEnabled
+                              ? s.authEnabled
+                              : s.authDisabledLocal}
+                          </div>
+                          {serverStatus.authEnabled && (
+                            <div>
+                              {s.localApiKeyShort}{" "}
+                              <span className="font-mono">
+                                {serverStatus.apiKeyHint ||
+                                  maskApiKey(effectiveLocalApiKey)}
+                              </span>
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
+
+                    <div className="flex gap-2">
+                      {serverStatus?.running ? (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={handleWarmup}
+                            disabled={isWarming}
+                            className="flex-1 h-8 text-xs gap-2"
+                          >
+                            <Sparkles className="w-3 h-3" />
+                            {isWarming ? s.warming : s.warmup}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            onClick={handleStopServer}
+                            className="flex-1 h-8 text-xs"
+                          >
+                            {s.stopServer}
+                          </Button>
+                        </>
+                      ) : (
+                        <Button
+                          size="sm"
+                          onClick={handleStartServer}
+                          disabled={isStartingServer}
+                          className="flex-1 h-8 text-xs bg-green-600 hover:bg-green-700 text-white"
+                        >
+                          {isStartingServer ? s.starting : s.startServer}
+                        </Button>
+                      )}
+                    </div>
+                    <div className="pt-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void handleOpenLocalLlamaLog()}
+                        className="w-full h-8 text-xs"
+                      >
+                        {s.viewLocalLog}
+                      </Button>
+                    </div>
                   </div>
-                )}
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-3 border-t pt-4">
+              <div>
+                <span className="text-sm font-semibold">{s.remoteTitle}</span>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  {s.remoteDesc}
+                </p>
               </div>
-            </CardContent>
-          </Card>
-        </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground">
+                    {s.remoteUrlLabel}
+                  </label>
+                  <input
+                    type="text"
+                    placeholder={s.remoteUrlPlaceholder}
+                    className="w-full border p-2 rounded text-sm bg-secondary disabled:opacity-80 disabled:bg-muted/50 disabled:text-muted-foreground disabled:cursor-not-allowed"
+                    value={serverUrl}
+                    disabled={isRemoteConnected}
+                    onChange={(event) => {
+                      const nextValue = event.target.value;
+                      setServerUrl(nextValue);
+                      localStorage.setItem(
+                        REMOTE_API_URL_STORAGE_KEY,
+                        nextValue,
+                      );
+                      localStorage.removeItem("config_server");
+                    }}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-xs font-medium text-muted-foreground">
+                      {s.remoteKeyLabel}
+                    </label>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-6 px-2 text-[10px] gap-1"
+                        onClick={() => setShowRemoteApiKey((value) => !value)}
+                      >
+                        {showRemoteApiKey ? (
+                          <>
+                            <EyeOff className="w-3 h-3" />
+                            {s.hide}
+                          </>
+                        ) : (
+                          <>
+                            <Eye className="w-3 h-3" />
+                            {s.show}
+                          </>
+                        )}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-6 px-2 text-[10px] gap-1"
+                        onClick={() => void handleCopyRemoteApiKey()}
+                        disabled={!canCopyRemoteApiKey}
+                      >
+                        {remoteApiKeyCopied ? (
+                          <>
+                            <Check className="w-3 h-3" />
+                            {s.copied}
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3 h-3" />
+                            {s.copy}
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                  <input
+                    type={showRemoteApiKey ? "text" : "password"}
+                    className="w-full border p-2 rounded text-sm bg-secondary disabled:opacity-80 disabled:bg-muted/50 disabled:text-muted-foreground disabled:cursor-not-allowed"
+                    placeholder="sk-..."
+                    value={apiKey}
+                    disabled={isRemoteConnected}
+                    onChange={(event) => {
+                      const nextValue = event.target.value;
+                      setApiKey(nextValue);
+                      setRemoteApiKeyCopied(false);
+                      localStorage.setItem(
+                        REMOTE_API_KEY_STORAGE_KEY,
+                        nextValue,
+                      );
+                    }}
+                  />
+                </div>
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                {s.remoteFormatHint}
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-[11px] text-muted-foreground leading-relaxed">
+                  {isRemoteConnected
+                    ? s.remoteModeEnabledDesc
+                    : s.remoteModeDisabledDesc}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-xs min-w-[156px] justify-center ml-auto"
+                  disabled={isTestingRemote}
+                  onClick={() => void handleToggleRemote()}
+                >
+                  {isTestingRemote
+                    ? s.testing
+                    : isRemoteConnected
+                      ? s.disconnectRemote
+                      : s.connectRemote}
+                </Button>
+              </div>
+
+              {isRemoteConnected && (
+                <div className="mt-3 rounded-lg border border-border bg-secondary/30">
+                  <button
+                    type="button"
+                    className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold hover:bg-secondary/50 transition-colors"
+                    onClick={() => setRemotePanelExpanded((value) => !value)}
+                  >
+                    <span>{s.remoteDetailTitle}</span>
+                    {remotePanelExpanded ? (
+                      <ChevronUp className="w-3.5 h-3.5" />
+                    ) : (
+                      <ChevronDown className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                  {remotePanelExpanded && (
+                    <div className="px-3 pb-3 space-y-2 text-[11px]">
+                      <p className="text-[10px] text-muted-foreground leading-relaxed">
+                        {s.remoteDetailDesc}
+                      </p>
+                      <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                        <span className="text-muted-foreground">
+                          {s.remoteStatusLabel}
+                        </span>
+                        <span className="font-mono justify-self-end text-right">
+                          {remoteRuntimeLoading
+                            ? s.refreshing
+                            : runtime?.connected
+                              ? s.connected
+                              : s.disconnected}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                        <span className="text-muted-foreground">
+                          {s.remoteSourceLabel}
+                        </span>
+                        <span className="font-mono justify-self-end text-right">
+                          {runtime?.session?.source === "local-daemon"
+                            ? s.remoteSourceLocal
+                            : s.remoteSourceManual}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                        <span className="text-muted-foreground">
+                          {s.remoteBridgeLabel}
+                        </span>
+                        <span className="font-mono justify-self-end text-right break-all">
+                          {runtime?.session?.source === "local-daemon"
+                            ? s.remoteBridgeLocal
+                            : s.remoteBridgeRemote}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                        <span className="text-muted-foreground">
+                          {s.remoteCommLabel}
+                        </span>
+                        <span className="font-mono justify-self-end text-right">
+                          {network.wsConnected
+                            ? s.remoteCommWs
+                            : s.remoteCommHttp}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                        <span className="text-muted-foreground">
+                          {s.remoteRetryErrorLabel}
+                        </span>
+                        <span className="font-mono justify-self-end text-right">
+                          {network.retryCount} / {network.errorCount}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                        <span className="text-muted-foreground">
+                          {s.remoteFileScopeLabel}
+                        </span>
+                        <span className="font-mono justify-self-end text-right">
+                          {runtime?.fileScope === "shared-local"
+                            ? s.remoteFileScopeLocal
+                            : s.remoteFileScopeRemote}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                        <span className="text-muted-foreground">
+                          {s.remoteOutputLabel}
+                        </span>
+                        <span className="font-mono justify-self-end text-right">
+                          {runtime?.outputPolicy === "same-dir"
+                            ? s.remoteOutputSame
+                            : s.remoteOutputRemote}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                        <span className="text-muted-foreground">
+                          {s.remoteExecutionLabel}
+                        </span>
+                        <span className="font-mono justify-self-end text-right">
+                          {runtime?.executionMode ||
+                            diagnostics?.executionMode ||
+                            s.unknown}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                        <span className="text-muted-foreground">
+                          {s.remoteActiveTasksLabel}
+                        </span>
+                        <span className="font-mono justify-self-end text-right">
+                          {runtime?.activeTasks ??
+                            diagnostics?.activeTaskId ??
+                            0}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                        <span className="text-muted-foreground">
+                          {s.remoteModelLoadedLabel}
+                        </span>
+                        <span className="font-mono justify-self-end text-right">
+                          {runtime?.modelLoaded
+                            ? s.remoteModelLoaded
+                            : s.remoteModelNotLoaded}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                        <span className="text-muted-foreground">
+                          {s.remoteCurrentModelLabel}
+                        </span>
+                        <span className="font-mono justify-self-end text-right break-all">
+                          {runtime?.currentModel || s.none}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                        <span className="text-muted-foreground">
+                          {s.remoteAuthLabel}
+                        </span>
+                        <span className="font-mono justify-self-end text-right">
+                          {runtime?.authRequired === true
+                            ? s.authRequired
+                            : runtime?.authRequired === false
+                              ? s.authDisabled
+                              : s.unknown}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                        <span className="text-muted-foreground">
+                          {s.remoteCapabilitiesLabel}
+                        </span>
+                        <span className="font-mono justify-self-end text-right break-all">
+                          {Array.isArray(runtime?.capabilities) &&
+                            runtime.capabilities.length > 0
+                            ? runtime.capabilities.join(", ")
+                            : s.none}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                        <span className="text-muted-foreground">
+                          {s.remoteHealthFailuresLabel}
+                        </span>
+                        <span className="font-mono justify-self-end text-right">
+                          {diagnostics?.healthFailures ?? 0}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                        <span className="text-muted-foreground">
+                          {s.remoteLastSyncLabel}
+                        </span>
+                        <span className="font-mono justify-self-end text-right">
+                          {network.lastSyncAt
+                            ? new Date(
+                              network.lastSyncAt,
+                            ).toLocaleTimeString()
+                            : "--"}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                        <span className="text-muted-foreground">
+                          {s.remoteLatencyLabel}
+                        </span>
+                        <span className="font-mono justify-self-end text-right">
+                          {network.lastLatencyMs ?? "--"} ms /{" "}
+                          {network.avgLatencyMs ?? "--"} ms
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                        <span className="text-muted-foreground">
+                          {s.remoteStatusInFlightLabel}
+                        </span>
+                        <span className="font-mono justify-self-end text-right">
+                          {network.lastStatusCode ?? "--"} /{" "}
+                          {network.inFlightRequests ?? 0}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-muted-foreground leading-relaxed">
+                        <div className="flex items-center justify-between gap-3">
+                          <span>
+                            {runtime?.session?.source === "local-daemon"
+                              ? s.remoteLinkLocal
+                              : s.remoteLinkRemote}
+                          </span>
+                          <button
+                            type="button"
+                            className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] hover:bg-secondary"
+                            onClick={() =>
+                              setRemoteNoticeExpanded((value) => !value)
+                            }
+                          >
+                            {remoteNoticeExpanded
+                              ? s.noticeCollapse
+                              : s.noticeExpand}
+                          </button>
+                        </div>
+                        {remoteNoticeExpanded && (
+                          <p className="mt-1.5">
+                            {remoteNotice}
+                            {runtime?.session?.source === "local-daemon"
+                              ? s.noticeLocalDesc
+                              : s.noticeRemoteDesc}
+                          </p>
+                        )}
+                      </div>
+                      {remoteLastError && (
+                        <div className="text-[10px] text-destructive">
+                          {s.remoteLastErrorLabel}: {remoteLastError}
+                        </div>
+                      )}
+                      <div className="pt-2 flex flex-wrap items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-[11px]"
+                          disabled={!remoteNetworkLogPath}
+                          onClick={() => handleOpenRemoteNetworkLog()}
+                        >
+                          {s.remoteNetworkLog}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-[11px]"
+                          disabled={!remoteMirrorLogPath}
+                          onClick={() => handleOpenRemoteMirrorLog()}
+                        >
+                          {s.remoteMirrorLog}
+                        </Button>
+                      </div>
+                      <div className="pt-1 flex items-center justify-end gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-[11px]"
+                          disabled={remoteRuntimeLoading}
+                          onClick={() => void refreshRemoteRuntime()}
+                        >
+                          <RefreshCw
+                            className={`w-3 h-3 mr-1 ${remoteRuntimeLoading ? "animate-spin" : ""}`}
+                          />
+                          {s.refreshStatus}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
       </div>
       {logViewer && (
         <LogViewerModal

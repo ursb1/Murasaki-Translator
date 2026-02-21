@@ -40,6 +40,29 @@ class SandboxTester:
         self.prompts = PromptRegistry(store)
         self.parsers = ParserRegistry(store)
 
+    def _resolve_rules(self, spec: Any) -> List[Dict[str, Any]]:
+        if not spec:
+            return []
+        if isinstance(spec, str):
+            try:
+                profile = self.store.load_profile("rule", spec)
+                return profile.get("rules", [])
+            except Exception:
+                return []
+        if isinstance(spec, list):
+            resolved = []
+            for item in spec:
+                if isinstance(item, dict):
+                    resolved.append(item)
+                elif isinstance(item, str):
+                    try:
+                        profile = self.store.load_profile("rule", item)
+                        resolved.extend(profile.get("rules", []))
+                    except Exception:
+                        pass
+            return resolved
+        return []
+
     def run_test(
         self,
         text: str,
@@ -86,12 +109,13 @@ class SandboxTester:
                 return SandboxResult(ok=False, source_text=text, error=f"Parser '{parser_ref}' not found.")
 
             # Processing Processor Setup
+            processing_cfg = pipeline_config.get("processing") or {}
             proc_options = v2_processing.ProcessingOptions(
-                rules_pre=v2_processing.load_rules(pipeline_config.get("rules_pre")),
-                rules_post=v2_processing.load_rules(pipeline_config.get("rules_post")),
-                glossary=v2_processing.load_glossary(pipeline_config.get("glossary")),
-                source_lang="ja",
-                enable_text_protect=bool(pipeline_config.get("text_protect", True))
+                rules_pre=v2_processing.load_rules(self._resolve_rules(processing_cfg.get("rules_pre"))),
+                rules_post=v2_processing.load_rules(self._resolve_rules(processing_cfg.get("rules_post"))),
+                glossary=v2_processing.load_glossary(processing_cfg.get("glossary")),
+                source_lang=str(processing_cfg.get("source_lang") or "ja"),
+                enable_text_protect=bool(processing_cfg.get("text_protect", True))
             )
             processor = v2_processing.ProcessingProcessor(proc_options)
             protector = processor.create_protector()
@@ -111,9 +135,24 @@ class SandboxTester:
             # Assume context building is simplified for a single block
             context_cfg = prompt.get("context") or {}
             source_format = str(context_cfg.get("source_format") or "auto").strip().lower()
-            if source_format == "jsonl":
-                # Create a mock jsonl chunk
-                text_to_translate = f'{{"id": 1, "text": {json.dumps(pre_processed)}}}'
+
+            # Check chunk type to mirror runner.py logic
+            chunk_type = pipeline_config.get("chunk_type", "block")  # Passed from frontend if available, default block
+            # In Sandbox, if we don't know the exact rule, we infer from linePolicy/chunkPolicy existence
+            if not pipeline_config.get("chunkType"):
+               has_line = bool(pipeline_config.get("line_policy"))
+               has_chunk = bool(pipeline_config.get("chunk_policy"))
+               if has_line and not has_chunk:
+                  chunk_type = "line"
+               elif pipeline_config.get("chunkType") == "line":
+                  chunk_type = "line"
+
+            use_jsonl = source_format == "jsonl" and chunk_type == "line"
+
+            if use_jsonl:
+                # Create a mock jsonl chunk matching runner.py format
+                payload = {"1": pre_processed}
+                text_to_translate = f"jsonline{json.dumps(payload, ensure_ascii=False)}"
             else:
                 text_to_translate = pre_processed
                 
@@ -138,7 +177,18 @@ class SandboxTester:
                 # Issue request
                 request = provider.build_request(messages, settings)
                 try:
-                    raw_request = json.dumps(dataclasses.asdict(request), ensure_ascii=False, indent=2)
+                    req_dict = {
+                        "model": request.model,
+                        "messages": request.messages,
+                    }
+                    if request.extra:
+                        req_dict.update(request.extra)
+                    if request.temperature is not None:
+                        req_dict["temperature"] = request.temperature
+                    if request.max_tokens is not None:
+                        req_dict["max_tokens"] = request.max_tokens
+
+                    raw_request = json.dumps(req_dict, ensure_ascii=False, indent=2)
                 except Exception:
                     raw_request = str(request)
                     
