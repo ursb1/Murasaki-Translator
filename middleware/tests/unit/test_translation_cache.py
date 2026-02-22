@@ -1,4 +1,5 @@
-﻿from pathlib import Path
+﻿import json
+from pathlib import Path
 
 import pytest
 
@@ -94,3 +95,25 @@ def test_translation_cache_load_corrupt_keeps_blocks(tmp_path: Path):
     ok = cache.load()
     assert ok is False
     assert cache.get_block(0).dst == "A"
+
+
+@pytest.mark.unit
+def test_translation_cache_persists_engine_and_chunk_metadata(tmp_path: Path):
+    output_path = tmp_path / "out.txt"
+    cache = TranslationCache(str(output_path))
+    cache.add_block(0, "a", "A")
+    ok = cache.save(
+        model_name="m1",
+        glossary_path="g.json",
+        concurrency=1,
+        engine_mode="v2",
+        chunk_type="line",
+        pipeline_id="pipeline_demo",
+    )
+    assert ok is True
+
+    raw = Path(cache.cache_path).read_text(encoding="utf-8")
+    data = json.loads(raw)
+    assert data.get("engineMode") == "v2"
+    assert data.get("chunkType") == "line"
+    assert data.get("pipelineId") == "pipeline_demo"

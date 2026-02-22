@@ -54,7 +54,37 @@ export const isLikelyTranslatedOutput = (
   filePath: string,
   modelNames: string[],
   supportedExtensions: string[],
+  providerNames: string[] = [],
 ) => {
+  const providerHints = [
+    "openai",
+    "deepseek",
+    "anthropic",
+    "google",
+    "xai",
+    "azure",
+    "groq",
+    "cohere",
+    "mistral",
+    "moonshot",
+    "minimax",
+    "zhipu",
+    "baidu",
+    "siliconflow",
+    "volcengine",
+    "aliyun",
+    "hunyuan",
+    "openrouter",
+  ];
+  const normalizeSuffixToken = (value: string) =>
+    String(value || "")
+      .trim()
+      .replace(/\.gguf$/i, "")
+      .replace(/[\\/*?:"<>|]/g, "_")
+      .toLowerCase();
+  const escapeRegex = (value: string) =>
+    value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
   const fileName = (filePath || "").split(/[/\\]/).pop() || "";
   const lowerName = fileName.toLowerCase();
   const extIndex = lowerName.lastIndexOf(".");
@@ -67,12 +97,36 @@ export const isLikelyTranslatedOutput = (
   const baseLower = baseName.toLowerCase();
   if (baseLower.endsWith("_translated")) return true;
   for (const model of modelNames || []) {
-    const normalized = String(model || "")
-      .trim()
-      .replace(/\.gguf$/i, "")
-      .toLowerCase();
+    const normalized = normalizeSuffixToken(model);
     if (!normalized) continue;
     if (baseLower.endsWith(`_${normalized}`)) return true;
+  }
+  for (const provider of providerNames || []) {
+    const normalized = normalizeSuffixToken(provider);
+    if (!normalized) continue;
+    const v2SuffixPattern = new RegExp(
+      `_${escapeRegex(normalized)}_[^_].+$`,
+      "i",
+    );
+    if (v2SuffixPattern.test(baseName)) return true;
+  }
+
+  // Fallback: provider list may be unavailable during startup or profile sync.
+  // Treat `<name>_{provider}_{model}` as translated output when provider/model tokens
+  // look like mainstream API identifiers.
+  const fallbackMatch = baseName.match(/_([^_]+)_(.+)$/);
+  if (fallbackMatch) {
+    const providerToken = normalizeSuffixToken(fallbackMatch[1]);
+    const modelToken = normalizeSuffixToken(fallbackMatch[2]);
+    const providerLooksKnown = providerHints.some((hint) =>
+      providerToken.includes(hint),
+    );
+    const modelLooksLikeLlm =
+      /\d/.test(modelToken) ||
+      /(gpt|claude|gemini|deepseek|qwen|glm|llama|mistral|yi|sonnet|opus|haiku|command|ernie|kimi|doubao)/i.test(
+        modelToken,
+      );
+    if (providerLooksKnown && modelLooksLikeLlm) return true;
   }
   return false;
 };

@@ -20,6 +20,7 @@ export interface TranslationConfig {
   lineCheck: boolean;
   lineToleranceAbs: number;
   lineTolerancePct: number;
+  chunkMode?: "chunk" | "line";
   anchorCheck: boolean;
   anchorCheckRetries: number;
   saveCot: boolean;
@@ -96,6 +97,32 @@ export interface CacheData {
     dstChars: number;
   };
   blocks: CacheBlock[];
+}
+
+/** V2 行模式缓存行 */
+export interface V2CacheLine {
+  index: number;
+  src: string;
+  dst: string;
+  status: "none" | "processed" | "edited";
+  inputTokens?: number;
+  outputTokens?: number;
+  retries?: number;
+}
+
+/** V2 缓存数据（行模式） */
+export interface V2CacheData {
+  version: "v2-line";
+  pipelineId: string;
+  providerName?: string;
+  outputPath: string;
+  stats: {
+    lineCount: number;
+    srcChars: number;
+    dstChars: number;
+    totalTokens?: number;
+  };
+  lines: V2CacheLine[];
 }
 
 export interface WatchFolderConfig {
@@ -224,13 +251,127 @@ export interface RemoteDiagnostics {
 }
 
 export interface RemoteHfDownloadStatus {
-  status: "starting" | "checking" | "connecting" | "downloading" | "resuming" | "complete" | "skipped" | "error" | "cancelled";
+  status:
+    | "starting"
+    | "checking"
+    | "connecting"
+    | "downloading"
+    | "resuming"
+    | "complete"
+    | "skipped"
+    | "error"
+    | "cancelled";
   percent: number;
   speed?: string;
   downloaded?: string;
   total?: string;
   filePath?: string;
   error?: string;
+}
+
+export interface ApiStatsResult<T> {
+  ok: boolean;
+  data?: T;
+  error?: string;
+}
+
+export interface ApiStatsOverview {
+  apiProfileId: string;
+  range?: { fromTs?: string; toTs?: string };
+  totalEvents: number;
+  totalRequests: number;
+  successRequests: number;
+  failedRequests: number;
+  inflightRequests: number;
+  successRate: number;
+  totalRetries: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  avgLatencyMs: number;
+  p50LatencyMs: number;
+  p95LatencyMs: number;
+  totalDurationMs: number;
+  requestsPerMinuteAvg: number;
+  peakRequestsPerMinute: number;
+  statusCodeCounts: Record<string, number>;
+  sourceCounts: Record<string, number>;
+  errorTypeCounts: Record<string, number>;
+  byHour: Array<{ hour: number; count: number }>;
+  latestRequestAt?: string;
+}
+
+export interface ApiStatsTrendPoint {
+  bucketStart: string;
+  value: number;
+  requests: number;
+  errors: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+export interface ApiStatsTrend {
+  apiProfileId: string;
+  range?: { fromTs?: string; toTs?: string };
+  metric: "requests" | "latency" | "input_tokens" | "output_tokens";
+  interval: "minute" | "hour" | "day";
+  points: ApiStatsTrendPoint[];
+}
+
+export interface ApiStatsBreakdownItem {
+  key: string;
+  count: number;
+  ratio: number;
+}
+
+export interface ApiStatsBreakdown {
+  apiProfileId: string;
+  range?: { fromTs?: string; toTs?: string };
+  dimension: "status_code" | "source" | "error_type" | "model" | "hour";
+  items: ApiStatsBreakdownItem[];
+}
+
+export interface ApiStatsRecord {
+  requestId: string;
+  apiProfileId: string;
+  startedAt: string;
+  endedAt?: string;
+  phaseFinal: "request_end" | "request_error" | "inflight";
+  source: string;
+  origin: string;
+  runId?: string;
+  pipelineId?: string;
+  endpointId?: string;
+  endpointLabel?: string;
+  model?: string;
+  method?: string;
+  path?: string;
+  url?: string;
+  statusCode?: number;
+  durationMs?: number;
+  inputTokens: number;
+  outputTokens: number;
+  retryCount: number;
+  errorType?: string;
+  errorMessage?: string;
+  requestPayload?: unknown;
+  responsePayload?: unknown;
+  requestHeaders?: Record<string, string>;
+  responseHeaders?: Record<string, string>;
+}
+
+export interface ApiStatsRecords {
+  apiProfileId: string;
+  range?: { fromTs?: string; toTs?: string };
+  page: number;
+  pageSize: number;
+  total: number;
+  items: ApiStatsRecord[];
+}
+
+export interface ApiStatsClearResult {
+  apiProfileId: string;
+  deleted: number;
+  kept: number;
 }
 
 export interface ElectronAPI {
@@ -303,15 +444,188 @@ export interface ElectronAPI {
     config: any,
     runId?: string,
   ) => void;
+  pipelineV2ProfilesPath: () => Promise<string>;
+  pipelineV2ProfilesList: (
+    kind: string,
+    options?: { preferLocal?: boolean },
+  ) => Promise<
+    { id: string; name: string; filename: string; chunk_type?: string }[]
+  >;
+  pipelineV2ProfilesLoad: (
+    kind: string,
+    id: string,
+  ) => Promise<{ id: string; name: string; yaml: string; data: any } | null>;
+  pipelineV2ProfilesLoadBatch: (
+    kind: string,
+    ids: string[],
+  ) => Promise<Array<{ id: string; result: any | null }>>;
+  pipelineV2ProfilesGet: (
+    kind: string,
+    id: string,
+  ) => Promise<Record<string, any> | null>;
+  pipelineV2ProfilesSave: (
+    kind: string,
+    id: string,
+    yamlText: string,
+    options?: { allowOverwrite?: boolean },
+  ) => Promise<{
+    ok: boolean;
+    id?: string;
+    error?: string;
+    warnings?: string[];
+  }>;
+  pipelineV2ProfilesDelete: (
+    kind: string,
+    id: string,
+  ) => Promise<{ ok: boolean; error?: string }>;
+  pipelineV2ApiTest: (payload: {
+    baseUrl: string;
+    apiKey?: string;
+    timeoutMs?: number;
+    model?: string;
+    apiProfileId?: string;
+  }) => Promise<{
+    ok: boolean;
+    status?: number;
+    latencyMs?: number;
+    url?: string;
+    message?: string;
+    modelCount?: number;
+  }>;
+  pipelineV2ApiModels: (payload: {
+    baseUrl: string;
+    apiKey?: string;
+    timeoutMs?: number;
+    apiProfileId?: string;
+  }) => Promise<{
+    ok: boolean;
+    status?: number;
+    url?: string;
+    message?: string;
+    models?: string[];
+  }>;
+  pipelineV2ApiConcurrencyTest: (payload: {
+    baseUrl: string;
+    apiKey?: string;
+    timeoutMs?: number;
+    maxConcurrency?: number;
+    model?: string;
+    apiProfileId?: string;
+  }) => Promise<{
+    ok: boolean;
+    maxConcurrency?: number;
+    url?: string;
+    message?: string;
+    statusCounts?: Record<string, number>;
+    latencyMs?: number;
+  }>;
+  apiStatsOverview: (payload: {
+    apiProfileId?: string;
+    fromTs?: string;
+    toTs?: string;
+  }) => Promise<ApiStatsResult<ApiStatsOverview>>;
+  apiStatsTrend: (payload: {
+    apiProfileId?: string;
+    metric?: "requests" | "latency" | "input_tokens" | "output_tokens";
+    interval?: "minute" | "hour" | "day";
+    fromTs?: string;
+    toTs?: string;
+  }) => Promise<ApiStatsResult<ApiStatsTrend>>;
+  apiStatsBreakdown: (payload: {
+    apiProfileId?: string;
+    dimension?: "status_code" | "source" | "error_type" | "model" | "hour";
+    fromTs?: string;
+    toTs?: string;
+  }) => Promise<ApiStatsResult<ApiStatsBreakdown>>;
+  apiStatsRecords: (payload: {
+    apiProfileId?: string;
+    fromTs?: string;
+    toTs?: string;
+    page?: number;
+    pageSize?: number;
+    statusCode?: number;
+    source?: string;
+    phase?: "request_end" | "request_error" | "inflight";
+    query?: string;
+  }) => Promise<ApiStatsResult<ApiStatsRecords>>;
+  apiStatsClear: (payload: {
+    apiProfileId?: string;
+    beforeTs?: string;
+  }) => Promise<ApiStatsResult<ApiStatsClearResult>>;
+  pipelineV2SandboxTest: (payload: {
+    text: string;
+    pipeline: Record<string, any>;
+    apiProfileId?: string;
+  }) => Promise<{
+    ok: boolean;
+    data?: {
+      ok: boolean;
+      source_text: string;
+      pre_processed?: string;
+      raw_request: string;
+      raw_response: string;
+      parsed_result: string;
+      post_processed?: string;
+      pre_traces?: Array<{
+        rule: any;
+        type: string;
+        pattern: string;
+        before: string;
+        after: string;
+      }>;
+      post_traces?: Array<{
+        rule: any;
+        type: string;
+        pattern: string;
+        before: string;
+        after: string;
+      }>;
+      pre_rules_count?: number;
+      post_rules_count?: number;
+      error?: string;
+    };
+    error?: string;
+  }>;
+  pipelineV2Run: (payload: {
+    filePath: string;
+    pipelineId: string;
+    profilesDir: string;
+    outputPath?: string;
+    outputDir?: string;
+    rulesPrePath?: string;
+    rulesPostPath?: string;
+    rulesPre?: any[];
+    rulesPost?: any[];
+    glossaryPath?: string;
+    sourceLang?: string;
+    enableQuality?: boolean;
+    textProtect?: boolean;
+    resume?: boolean;
+    cacheDir?: string;
+    saveCache?: boolean;
+    runId?: string;
+  }) => Promise<{ ok: boolean; runId: string; code?: number; error?: any }>;
   stopTranslation: () => void;
+  pipelineV2Stop: () => void;
   retranslateBlock: (options: {
     src: string;
     index: number;
     modelPath: string;
     config: any;
+    useV2?: boolean;
+    pipelineId?: string;
   }) => Promise<any>;
   onLogUpdate: (callback: (chunk: string) => void) => Unsubscribe;
-  onProcessExit: (callback: (payload: ProcessExitPayload) => void) => Unsubscribe;
+  onPipelineV2Log: (
+    callback: (data: {
+      runId: string;
+      message: string;
+      level?: string;
+    }) => void,
+  ) => Unsubscribe;
+  onProcessExit: (
+    callback: (payload: ProcessExitPayload) => void,
+  ) => Unsubscribe;
 
   // Retranslate Progress
   onRetranslateLog: (
@@ -477,7 +791,10 @@ export interface ElectronAPI {
     error?: string;
   }>;
   getMainProcessLogs: () => Promise<string[]>;
-  readTextTail: (path: string, options?: { maxBytes?: number; lineCount?: number }) => Promise<{
+  readTextTail: (
+    path: string,
+    options?: { maxBytes?: number; lineCount?: number },
+  ) => Promise<{
     exists: boolean;
     path?: string;
     lineCount?: number;
@@ -494,16 +811,18 @@ export interface ElectronAPI {
     id: string,
     enabled: boolean,
   ) => Promise<{ ok: boolean; error?: string }>;
-  watchFolderRemove: (
-    id: string,
-  ) => Promise<{ ok: boolean; error?: string }>;
+  watchFolderRemove: (id: string) => Promise<{ ok: boolean; error?: string }>;
   watchFolderList: () => Promise<{
     ok: boolean;
     entries?: WatchFolderEntry[];
     error?: string;
   }>;
   onWatchFolderFileAdded: (
-    callback: (payload: { watchId: string; path: string; addedAt: string }) => void,
+    callback: (payload: {
+      watchId: string;
+      path: string;
+      addedAt: string;
+    }) => void,
   ) => Unsubscribe;
 
   // Rule System
@@ -538,7 +857,9 @@ export interface ElectronAPI {
     limit?: number,
   ) => Promise<RemoteApiResponse<RemoteNetworkEvent[]>>;
   remoteDiagnostics: () => Promise<RemoteApiResponse<RemoteDiagnostics>>;
-  remoteHfCheckNetwork: () => Promise<RemoteApiResponse<{ status: string; message?: string }>>;
+  remoteHfCheckNetwork: () => Promise<
+    RemoteApiResponse<{ status: string; message?: string }>
+  >;
   remoteHfListRepos: (orgName: string) => Promise<RemoteApiResponse<any>>;
   remoteHfListFiles: (repoId: string) => Promise<RemoteApiResponse<any>>;
   remoteHfDownloadStart: (

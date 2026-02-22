@@ -58,6 +58,7 @@ import {
   normalizeWatchFolderConfig,
   type WatchFolderConfig,
 } from "../lib/watchFolder";
+import { applyFileEngineMode } from "../lib/engineModeSwitch";
 
 // ============ Types ============
 
@@ -67,6 +68,7 @@ interface LibraryViewProps {
   onProofreadFile?: (cachePath: string) => void;
   isRunning?: boolean;
   remoteRuntime?: UseRemoteRuntimeResult;
+  globalEngineMode?: "v1" | "v2";
 }
 
 interface QueueImportPreview {
@@ -84,7 +86,9 @@ const LIBRARY_QUEUE_KEY = "library_queue";
 const FILE_QUEUE_KEY = "file_queue";
 const WATCH_FOLDERS_KEY = "watch_folders";
 const SUPPORTED_EXTENSIONS = [".txt", ".epub", ".srt", ".ass", ".ssa"];
-const WATCH_FILE_TYPES = SUPPORTED_EXTENSIONS.map((ext) => ext.replace(".", ""));
+const WATCH_FILE_TYPES = SUPPORTED_EXTENSIONS.map((ext) =>
+  ext.replace(".", ""),
+);
 
 // ============ Helpers ============
 
@@ -95,33 +99,69 @@ const getModelNameFromPath = (modelPath?: string) => {
   return name.replace(/\.gguf$/i, "");
 };
 
+const getProviderNameFromModelRef = (modelRef?: string) => {
+  const raw = String(modelRef || "").trim();
+  if (!raw) return "";
+  if (/^https?:\/\//i.test(raw)) return "";
+  if (/^[a-zA-Z]:[\\/]/.test(raw)) return "";
+  if (raw.startsWith("/") || raw.startsWith("./") || raw.startsWith("../")) {
+    return "";
+  }
+  const normalized = raw.replace(/\\/g, "/");
+  const parts = normalized.split("/").filter(Boolean);
+  if (parts.length < 2) return "";
+  const provider = String(parts[0] || "").trim();
+  if (!provider) return "";
+  return provider;
+};
+
 function getCachePath(
   filePath: string,
   outputDir?: string,
   modelPath?: string,
+  options?: { cacheDir?: string; engineMode?: "v1" | "v2" },
 ): string {
   // Handle both slash types correctly. lastIndexOf returns -1 if not found, checking both ensures we find the real separator.
   const lastSep = Math.max(
     filePath.lastIndexOf("\\"),
     filePath.lastIndexOf("/"),
   );
-  const dir = outputDir
-    ? outputDir
-    : lastSep === -1
-      ? "."
-      : filePath.substring(0, lastSep);
+  const preferredDir = String(options?.cacheDir || "").trim();
+  const dir = preferredDir
+    ? preferredDir
+    : outputDir
+      ? outputDir
+      : lastSep === -1
+        ? "."
+        : filePath.substring(0, lastSep);
   const baseName = filePath.substring(lastSep + 1).replace(/\.[^.]+$/, "");
   const extMatch = filePath.match(/\.[^.]+$/);
   const ext = extMatch ? extMatch[0] : "";
   const modelName = getModelNameFromPath(modelPath);
-  const outputName = modelName ? `${baseName}_${modelName}${ext}` : `${baseName}${ext}`;
-  const sep =
-    dir.includes("\\") && !dir.includes("/") ? "\\" : "/";
-  const joined = dir.endsWith("\\") || dir.endsWith("/")
-    ? `${dir}${outputName}`
-    : `${dir}${sep}${outputName}`;
+  const mode = options?.engineMode === "v2" ? "v2" : "v1";
+  const outputName =
+    mode === "v2"
+      ? `${baseName}_translated${ext}`
+      : modelName
+        ? `${baseName}_${modelName}${ext}`
+        : `${baseName}${ext}`;
+  const sep = dir.includes("\\") && !dir.includes("/") ? "\\" : "/";
+  const joined =
+    dir.endsWith("\\") || dir.endsWith("/")
+      ? `${dir}${outputName}`
+      : `${dir}${sep}${outputName}`;
   return `${joined}.cache.json`;
 }
+
+const resolveCachePathFromOutput = (outputPath: string, cacheDir?: string) => {
+  if (!outputPath) return "";
+  const dir = String(cacheDir || "").trim();
+  if (!dir) return `${outputPath}.cache.json`;
+  const fileName = outputPath.split(/[/\\]/).pop() || outputPath;
+  const sep = dir.includes("\\") && !dir.includes("/") ? "\\" : "/";
+  const prefix = dir.endsWith("\\") || dir.endsWith("/") ? dir : `${dir}${sep}`;
+  return `${prefix}${fileName}.cache.json`;
+};
 
 // ============ Texts ============
 
@@ -198,7 +238,8 @@ const texts = {
     batchConfig: "批量配置",
     batchConfigTitle: "批量配置 ({count} 个文件)",
     configDesc: "覆盖全局设置，为此文件指定独立参数",
-    configWarning: "修改前请确保您了解正在修改的内容，错误的配置可能导致翻译过程异常或结果质量下降。",
+    configWarning:
+      "修改前请确保您了解正在修改的内容，错误的配置可能导致翻译过程异常或结果质量下降。",
     useGlobal: "使用全局默认配置",
     useGlobalDesc: "取消勾选以自定义此文件的翻译参数",
     followGlobal: "跟随全局",
@@ -248,11 +289,19 @@ const texts = {
     on: "开",
     off: "关",
 
+    engineModeLocal: "本地翻译",
+    engineModeApi: "API 翻译",
+    apiPipeline: "翻译方案",
+    apiPipelineHelp: "选择在 API 管理器中配置好的翻译方案",
+    selectPipeline: "选择翻译方案...",
+    noPipelines: "暂无方案，请先在 API 管理器中配置",
+
     save: "保存配置",
     cancel: "取消",
     browse: "浏览",
     reset: "重置",
     notSet: "未设置",
+    masked: "已隐藏",
     unnamedProfile: "未命名配置",
     currentGlobal: "当前全局",
     seed: "随机种子 (Seed)",
@@ -263,7 +312,8 @@ const texts = {
       script: "剧本模式",
       short: "单句模式",
     },
-    shortModeWarning: "短句模式会导致翻译效率和质量下降，建议使用轻小说或剧本模式。",
+    shortModeWarning:
+      "短句模式会导致翻译效率和质量下降，建议使用轻小说或剧本模式。",
     kvOptions: {
       f16: "F16 (原生质量)",
       q8_0: "Q8_0 (节约显存)",
@@ -338,9 +388,11 @@ const texts = {
     scanSubdirs: "Scan Subdirs",
     confirmClear: "Are you sure you want to clear the translation queue?",
     confirmRemoveTitle: "Confirm Remove",
-    confirmRemoveDesc: "Are you sure you want to remove this file from the queue?",
+    confirmRemoveDesc:
+      "Are you sure you want to remove this file from the queue?",
     confirmRemoveSelectedTitle: "Confirm Remove Selected",
-    confirmRemoveSelectedDesc: "Are you sure you want to remove the {count} selected files?",
+    confirmRemoveSelectedDesc:
+      "Are you sure you want to remove the {count} selected files?",
     supportedTypes: "Supports .txt .epub .srt .ass .ssa",
     queueTitle: "Translation Queue",
     emptyQueue: "Queue is empty",
@@ -364,7 +416,8 @@ const texts = {
     batchConfig: "Batch Config",
     batchConfigTitle: "Batch Config ({count} files)",
     configDesc: "Override global settings with file-specific parameters",
-    configWarning: "Please ensure you understand what you are modifying. Incorrect settings may cause translation errors or quality degradation.",
+    configWarning:
+      "Please ensure you understand what you are modifying. Incorrect settings may cause translation errors or quality degradation.",
     useGlobal: "Use Global Defaults",
     useGlobalDesc: "Uncheck to customize parameters for this file",
     followGlobal: "Use Global",
@@ -413,12 +466,20 @@ const texts = {
     on: "On",
     off: "Off",
 
+    engineModeLocal: "Local Translation",
+    engineModeApi: "API Translation",
+    apiPipeline: "Translation Plan",
+    apiPipelineHelp: "Select a plan configured in API Manager",
+    selectPipeline: "Select a plan...",
+    noPipelines: "No plans yet. Configure one in API Manager first.",
+
     save: "Save Config",
     cancel: "Cancel",
     browse: "Browse",
     reset: "Reset",
 
     notSet: "Not set",
+    masked: "Hidden",
     unnamedProfile: "Untitled profile",
 
     presetOptions: {
@@ -426,7 +487,8 @@ const texts = {
       script: "Script Mode (Galgame)",
       short: "Short Mode",
     },
-    shortModeWarning: "Short mode is only for isolated sentences. Use Novel or Script mode for documents.",
+    shortModeWarning:
+      "Short mode is only for isolated sentences. Use Novel or Script mode for documents.",
     kvOptions: {
       f16: "F16 (Native Quality)",
       q8_0: "Q8_0 (VRAM Saver)",
@@ -528,7 +590,8 @@ const texts = {
     batchConfig: "一括設定",
     batchConfigTitle: "一括設定 ({count} 件)",
     configDesc: "グローバル設定を上書きして個別パラメータを指定",
-    configWarning: "変更前に内容を理解していることを確認してください。誤った設定は翻訳の異常や品質低下につながる可能性があります。",
+    configWarning:
+      "変更前に内容を理解していることを確認してください。誤った設定は翻訳の異常や品質低下につながる可能性があります。",
     useGlobal: "グローバルデフォルトを使用",
     useGlobalDesc: "チェックを外すとこのファイルのパラメータをカスタマイズ",
     followGlobal: "グローバルに従う",
@@ -563,8 +626,7 @@ const texts = {
     alignmentMode: "補助アラインメント",
     saveCot: "CoT エクスポート",
     anchorCheck: "アンカーチェック",
-    anchorCheckDesc:
-      "EPUB/SRT/ASS/整列TXTの重要アンカー欠落時に自動再試行。",
+    anchorCheckDesc: "EPUB/SRT/ASS/整列TXTの重要アンカー欠落時に自動再試行。",
     anchorCheckRetries: "アンカー再試行回数",
     sectionStrategy: "翻訳方針とモデル",
     rulesProfileSection: "ルール設定",
@@ -577,12 +639,20 @@ const texts = {
     on: "オン",
     off: "オフ",
 
+    engineModeLocal: "ローカル翻訳",
+    engineModeApi: "API翻訳",
+    apiPipeline: "翻訳プラン",
+    apiPipelineHelp: "APIマネージャーで設定したプランを選択",
+    selectPipeline: "プランを選択...",
+    noPipelines: "プランがありません。APIマネージャーで設定してください。",
+
     save: "設定を保存",
     cancel: "キャンセル",
     browse: "参照",
     reset: "リセット",
 
     notSet: "未設定",
+    masked: "非表示",
     unnamedProfile: "名称未設定",
 
     presetOptions: {
@@ -590,7 +660,8 @@ const texts = {
       script: "スクリプトモード (ギャルゲー)",
       short: "短文モード",
     },
-    shortModeWarning: "短文モードは単文向けです。ドキュメントには小説またはスクリプトモードを推奨します。",
+    shortModeWarning:
+      "短文モードは単文向けです。ドキュメントには小説またはスクリプトモードを推奨します。",
     kvOptions: {
       f16: "F16 (ネイティブ品質)",
       q8_0: "Q8_0 (VRAM節約)",
@@ -624,6 +695,8 @@ interface FileConfigModalProps {
   onSave: (config: FileConfig) => void;
   onClose: () => void;
   remoteRuntime?: UseRemoteRuntimeResult;
+  globalEngineMode?: "v1" | "v2";
+  v2Profiles?: Array<{ id: string; name: string; providerName?: string }>;
 }
 
 interface RemoteModelInfo {
@@ -643,12 +716,18 @@ export function FileConfigModal({
   onSave,
   onClose,
   remoteRuntime,
+  globalEngineMode,
+  v2Profiles = [],
 }: FileConfigModalProps) {
   const t = texts[lang];
   const [config, setConfig] = useState<FileConfig>({ ...item.config });
+  const fileEngineMode = config.engineMode || globalEngineMode || "v1";
+  const isApiMode = fileEngineMode === "v2";
   const isRemoteMode = Boolean(remoteRuntime?.isRemoteMode);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
-  const [availableRemoteModels, setAvailableRemoteModels] = useState<RemoteModelInfo[]>([]);
+  const [availableRemoteModels, setAvailableRemoteModels] = useState<
+    RemoteModelInfo[]
+  >([]);
   const [preProfiles, setPreProfiles] = useState<RuleProfileSummary[]>([]);
   const [postProfiles, setPostProfiles] = useState<RuleProfileSummary[]>([]);
 
@@ -796,7 +875,7 @@ export function FileConfigModal({
     onChange: (val: string) => void;
     placeholder?: string;
     onBrowse?: () => void;
-    type?: "text" | "number";
+    type?: "text" | "number" | "password";
     min?: number;
     max?: number;
     step?: number;
@@ -872,8 +951,8 @@ export function FileConfigModal({
         className="bg-card border border-border rounded-xl shadow-2xl w-[600px] max-h-[90vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header - Optimized Layout */}
-        <div className="px-5 py-4 border-b border-border bg-gradient-to-r from-purple-500/5 to-transparent shrink-0">
+        {/* Header */}
+        <div className="px-5 py-4 border-b border-border bg-secondary/30 shrink-0">
           <div className="flex items-center gap-4">
             {/* Left: Icon and Title */}
             <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -893,21 +972,23 @@ export function FileConfigModal({
               </div>
             </div>
 
-            {/* Right: Toggle and Close */}
+            {/* Right: useGlobal toggle (local only) + Close */}
             <div className="flex items-center gap-3 shrink-0">
-              <label className="flex items-center gap-2 cursor-pointer select-none">
-                <span
-                  className={`text-xs font-medium ${config.useGlobalDefaults ? "text-primary" : "text-muted-foreground"}`}
-                >
-                  {t.useGlobal}
-                </span>
-                <Switch
-                  checked={config.useGlobalDefaults}
-                  onCheckedChange={(c) =>
-                    setConfig((prev) => ({ ...prev, useGlobalDefaults: c }))
-                  }
-                />
-              </label>
+              {!isApiMode && (
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <span
+                    className={`text-xs font-medium ${config.useGlobalDefaults ? "text-primary" : "text-muted-foreground"}`}
+                  >
+                    {t.useGlobal}
+                  </span>
+                  <Switch
+                    checked={config.useGlobalDefaults}
+                    onCheckedChange={(c) =>
+                      setConfig((prev) => ({ ...prev, useGlobalDefaults: c }))
+                    }
+                  />
+                </label>
+              )}
               <button
                 onClick={onClose}
                 className="p-1.5 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
@@ -916,12 +997,76 @@ export function FileConfigModal({
               </button>
             </div>
           </div>
+
+          {/* Engine Mode Switcher */}
+          <div className="flex mt-3 bg-secondary/40 rounded-lg p-0.5 gap-0.5">
+            {(["v1", "v2"] as const).map((mode) => {
+              const active = fileEngineMode === mode;
+              return (
+                <button
+                  key={mode}
+                  onClick={() => setConfig((prev) => applyFileEngineMode(prev, mode))}
+                  className={`flex-1 text-xs font-medium py-1.5 rounded-md transition-all ${
+                    active
+                      ? "bg-background text-foreground shadow-sm border border-border/50"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {mode === "v1" ? t.engineModeLocal : t.engineModeApi}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
-        {/* Content - Always Visible */}
+        {/* Content */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
-          {/* Warning Banner */}
-          {!config.useGlobalDefaults && (
+          {/* === API Mode: Pipeline Selector === */}
+          {isApiMode && (
+            <div className="space-y-4">
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                {t.apiPipeline}
+              </h4>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium flex items-center gap-1.5 text-foreground">
+                    <Zap className="w-3.5 h-3.5 shrink-0 opacity-70" />
+                    {t.apiPipeline}
+                    <UITooltip content={t.apiPipelineHelp}>
+                      <Info className="w-3 h-3 text-muted-foreground/50 hover:text-primary cursor-help" />
+                    </UITooltip>
+                  </label>
+                </div>
+                {v2Profiles.length > 0 ? (
+                  <select
+                    value={config.v2PipelineId || ""}
+                    onChange={(e) =>
+                      setConfig((prev) => ({
+                        ...prev,
+                        v2PipelineId: e.target.value || undefined,
+                      }))
+                    }
+                    className="w-full h-8 px-2.5 text-sm rounded-md border transition-all outline-none bg-background/50 border-border focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
+                  >
+                    <option value="">{t.selectPipeline}</option>
+                    {v2Profiles.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                        {p.providerName ? ` (${p.providerName})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="text-xs text-muted-foreground/70 italic py-2">
+                    {t.noPipelines}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Warning Banner (local mode only) */}
+          {!isApiMode && !config.useGlobalDefaults && (
             <div className="flex items-start gap-2.5 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
               <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
               <p className="text-xs text-amber-600 dark:text-amber-400 leading-relaxed">
@@ -930,38 +1075,41 @@ export function FileConfigModal({
             </div>
           )}
 
-          {/* Strategy Section */}
-          <div className="space-y-4">
-            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-              {t.sectionStrategy}
-            </h4>
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label
-                  className={`text-xs font-medium flex items-center gap-1.5 ${config.useGlobalDefaults ? "text-muted-foreground" : "text-foreground"}`}
-                >
-                  <Settings className="w-3.5 h-3.5 shrink-0 opacity-70" />
-                  {t.preset}
-                  <UITooltip content={t.help?.preset}>
-                    <Info className="w-3 h-3 text-muted-foreground/50 hover:text-primary cursor-help" />
-                  </UITooltip>
-                </label>
-                <span className="text-[10px] text-muted-foreground/50 tabular-nums">
-                  {t.currentGlobal}: {globalPreset}
-                </span>
-              </div>
-              <select
-                value={
-                  !config.useGlobalDefaults && config.preset ? config.preset : ""
-                }
-                disabled={config.useGlobalDefaults}
-                onChange={(e) =>
-                  setConfig((prev) => ({
-                    ...prev,
-                    preset: e.target.value || undefined,
-                  }))
-                }
-                className={`
+          {/* Strategy Section (local mode only) */}
+          {!isApiMode && (
+            <div className="space-y-4">
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                {t.sectionStrategy}
+              </h4>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label
+                    className={`text-xs font-medium flex items-center gap-1.5 ${config.useGlobalDefaults ? "text-muted-foreground" : "text-foreground"}`}
+                  >
+                    <Settings className="w-3.5 h-3.5 shrink-0 opacity-70" />
+                    {t.preset}
+                    <UITooltip content={t.help?.preset}>
+                      <Info className="w-3 h-3 text-muted-foreground/50 hover:text-primary cursor-help" />
+                    </UITooltip>
+                  </label>
+                  <span className="text-[10px] text-muted-foreground/50 tabular-nums">
+                    {t.currentGlobal}: {globalPreset}
+                  </span>
+                </div>
+                <select
+                  value={
+                    !config.useGlobalDefaults && config.preset
+                      ? config.preset
+                      : ""
+                  }
+                  disabled={config.useGlobalDefaults}
+                  onChange={(e) =>
+                    setConfig((prev) => ({
+                      ...prev,
+                      preset: e.target.value || undefined,
+                    }))
+                  }
+                  className={`
                   w-full h-8 px-2.5 text-sm rounded-md border transition-all outline-none
                   ${
                     config.useGlobalDefaults
@@ -969,48 +1117,48 @@ export function FileConfigModal({
                       : "bg-background/50 border-border focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
                   }
                 `}
-              >
-                <option
-                  value=""
-                  disabled={!config.useGlobalDefaults && !config.preset}
                 >
-                  {config.useGlobalDefaults ? globalPreset : t.notSet}
-                </option>
-                <option value="novel">{t.presetOptions.novel}</option>
-                <option value="script">{t.presetOptions.script}</option>
-                <option value="short">{t.presetOptions.short}</option>
-              </select>
-            </div>
-
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label
-                  className={`text-xs font-medium flex items-center gap-1.5 ${config.useGlobalDefaults ? "text-muted-foreground" : "text-foreground"}`}
-                >
-                  <Cpu className="w-3.5 h-3.5 shrink-0 opacity-70" />
-                  {t.modelOverride}
-                </label>
-                <span className="text-[10px] text-muted-foreground/50 tabular-nums">
-                  {t.currentGlobal}:{" "}
-                  {globalModel ? globalModel.split(/[/\\]/).pop() : t.notSet}
-                </span>
+                  <option
+                    value=""
+                    disabled={!config.useGlobalDefaults && !config.preset}
+                  >
+                    {config.useGlobalDefaults ? globalPreset : t.notSet}
+                  </option>
+                  <option value="novel">{t.presetOptions.novel}</option>
+                  <option value="script">{t.presetOptions.script}</option>
+                  <option value="short">{t.presetOptions.short}</option>
+                </select>
               </div>
-              <select
-                value={
-                  config.useGlobalDefaults
-                    ? ""
-                    : (isRemoteMode ? config.remoteModel : config.model) || ""
-                }
-                disabled={config.useGlobalDefaults}
-                onChange={(e) =>
-                  setConfig((prev) => ({
-                    ...prev,
-                    ...(isRemoteMode
-                      ? { remoteModel: e.target.value || undefined }
-                      : { model: e.target.value || undefined }),
-                  }))
-                }
-                className={`
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label
+                    className={`text-xs font-medium flex items-center gap-1.5 ${config.useGlobalDefaults ? "text-muted-foreground" : "text-foreground"}`}
+                  >
+                    <Cpu className="w-3.5 h-3.5 shrink-0 opacity-70" />
+                    {t.modelOverride}
+                  </label>
+                  <span className="text-[10px] text-muted-foreground/50 tabular-nums">
+                    {t.currentGlobal}:{" "}
+                    {globalModel ? globalModel.split(/[/\\]/).pop() : t.notSet}
+                  </span>
+                </div>
+                <select
+                  value={
+                    config.useGlobalDefaults
+                      ? ""
+                      : (isRemoteMode ? config.remoteModel : config.model) || ""
+                  }
+                  disabled={config.useGlobalDefaults}
+                  onChange={(e) =>
+                    setConfig((prev) => ({
+                      ...prev,
+                      ...(isRemoteMode
+                        ? { remoteModel: e.target.value || undefined }
+                        : { model: e.target.value || undefined }),
+                    }))
+                  }
+                  className={`
                   w-full h-8 px-2.5 text-sm rounded-md border transition-all outline-none
                   ${
                     config.useGlobalDefaults
@@ -1018,37 +1166,38 @@ export function FileConfigModal({
                       : "bg-background/50 border-border focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
                   }
                 `}
-              >
-                <option value="">
-                  {config.useGlobalDefaults
-                    ? globalModel
-                      ? globalModel.split(/[/\\]/).pop()
-                      : t.notSet
-                    : t.followGlobal}
-                </option>
-                {isRemoteMode
-                  ? availableRemoteModels.map((model) => (
-                    <option key={model.path} value={model.path}>
-                      {model.name || model.path}
-                    </option>
-                  ))
-                  : availableModels.map((model) => (
-                    <option key={model} value={model}>
-                      {model.replace(".gguf", "")}
-                    </option>
-                  ))}
-              </select>
-            </div>
-
-            {!config.useGlobalDefaults && config.preset === "short" && (
-              <div className="flex items-start gap-1.5 p-2 rounded bg-amber-500/10 border border-amber-500/20">
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
-                <p className="text-[10px] text-amber-600 dark:text-amber-400 leading-relaxed">
-                  {t.shortModeWarning}
-                </p>
+                >
+                  <option value="">
+                    {config.useGlobalDefaults
+                      ? globalModel
+                        ? globalModel.split(/[/\\]/).pop()
+                        : t.notSet
+                      : t.followGlobal}
+                  </option>
+                  {isRemoteMode
+                    ? availableRemoteModels.map((model) => (
+                        <option key={model.path} value={model.path}>
+                          {model.name || model.path}
+                        </option>
+                      ))
+                    : availableModels.map((model) => (
+                        <option key={model} value={model}>
+                          {model.replace(".gguf", "")}
+                        </option>
+                      ))}
+                </select>
               </div>
-            )}
-          </div>
+
+              {!config.useGlobalDefaults && config.preset === "short" && (
+                <div className="flex items-start gap-1.5 p-2 rounded bg-amber-500/10 border border-amber-500/20">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-amber-600 dark:text-amber-400 leading-relaxed">
+                    {t.shortModeWarning}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* 1.5 Rule Profile Section */}
           <div className="space-y-4">
@@ -1183,145 +1332,148 @@ export function FileConfigModal({
             </div>
           </div>
 
-          <div className="h-px bg-border/50" />
+          {/* Core Params + Engine Tuning + Features (local mode only) */}
+          {!isApiMode && (
+            <>
+              <div className="h-px bg-border/50" />
 
-          {/* Core Params Section */}
-          <div className="space-y-4">
-            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-              {t.sectionCoreParams}
-            </h4>
-            <div className="grid grid-cols-2 gap-4">
-              <InputRow
-                icon={Gauge}
-                label={t.contextSize}
-                value={config.contextSize}
-                onChange={(val) =>
-                  setConfig((prev) => ({
-                    ...prev,
-                    contextSize: parseInt(val) || undefined,
-                  }))
-                }
-                type="number"
-                step={1024}
-                globalValue={globalCtx}
-                helpText={t.help?.contextSize}
-              />
-              <InputRow
-                icon={LayoutGrid}
-                label={t.concurrency}
-                value={config.concurrency}
-                onChange={(val) =>
-                  setConfig((prev) => ({
-                    ...prev,
-                    concurrency: parseInt(val) || undefined,
-                  }))
-                }
-                type="number"
-                min={1}
-                max={8}
-                globalValue={globalConcurrency}
-                helpText={t.help?.concurrency}
-              />
-              <InputRow
-                icon={Zap}
-                label={t.temperature}
-                value={config.temperature}
-                onChange={(val) =>
-                  setConfig((prev) => ({
-                    ...prev,
-                    temperature: parseFloat(val) || undefined,
-                  }))
-                }
-                type="number"
-                step={0.1}
-                min={0}
-                max={2}
-                globalValue={globalTemp}
-                helpText={t.help?.temperature}
-              />
-              <InputRow
-                icon={Cpu}
-                label={t.gpuLayers}
-                value={config.gpuLayers}
-                onChange={(val) =>
-                  setConfig((prev) => ({
-                    ...prev,
-                    gpuLayers: val === "" ? -1 : parseInt(val) || -1,
-                  }))
-                }
-                type="number"
-                globalValue={globalGpu}
-                helpText={t.help?.gpuLayers}
-              />
-            </div>
-          </div>
-
-          <div className="h-px bg-border/50" />
-
-          {/* Advanced Params Section */}
-          <div className="space-y-4">
-            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-              {t.sectionEngineTuning}
-            </h4>
-            <div className="grid grid-cols-2 gap-4">
-              <InputRow
-                icon={Scale}
-                label={t.repPenaltyBase}
-                value={config.repPenaltyBase}
-                onChange={(val) =>
-                  setConfig((prev) => ({
-                    ...prev,
-                    repPenaltyBase: parseFloat(val) || undefined,
-                  }))
-                }
-                type="number"
-                step={0.01}
-                globalValue={globalRepBase}
-                helpText={t.help?.repPenaltyBase}
-              />
-              <InputRow
-                icon={Scale}
-                label={t.repPenaltyMax}
-                value={config.repPenaltyMax}
-                onChange={(val) =>
-                  setConfig((prev) => ({
-                    ...prev,
-                    repPenaltyMax: parseFloat(val) || undefined,
-                  }))
-                }
-                type="number"
-                step={0.01}
-                globalValue={globalRepMax}
-                helpText={t.help?.repPenaltyMax}
-              />
-
-              {/* KV Cache */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label
-                    className={`text-xs font-medium flex items-center gap-1.5 ${config.useGlobalDefaults ? "text-muted-foreground" : "text-foreground"}`}
-                  >
-                    <MemoryStick className="w-3.5 h-3.5 shrink-0 opacity-70" />
-                    {t.kvCacheType}
-                  </label>
-                  <span className="text-[10px] text-muted-foreground/50 tabular-nums">
-                    {t.currentGlobal}: {globalKvCache}
-                  </span>
+              {/* Core Params Section */}
+              <div className="space-y-4">
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                  {t.sectionCoreParams}
+                </h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <InputRow
+                    icon={Gauge}
+                    label={t.contextSize}
+                    value={config.contextSize}
+                    onChange={(val) =>
+                      setConfig((prev) => ({
+                        ...prev,
+                        contextSize: parseInt(val) || undefined,
+                      }))
+                    }
+                    type="number"
+                    step={1024}
+                    globalValue={globalCtx}
+                    helpText={t.help?.contextSize}
+                  />
+                  <InputRow
+                    icon={LayoutGrid}
+                    label={t.concurrency}
+                    value={config.concurrency}
+                    onChange={(val) =>
+                      setConfig((prev) => ({
+                        ...prev,
+                        concurrency: parseInt(val) || undefined,
+                      }))
+                    }
+                    type="number"
+                    min={1}
+                    max={8}
+                    globalValue={globalConcurrency}
+                    helpText={t.help?.concurrency}
+                  />
+                  <InputRow
+                    icon={Zap}
+                    label={t.temperature}
+                    value={config.temperature}
+                    onChange={(val) =>
+                      setConfig((prev) => ({
+                        ...prev,
+                        temperature: parseFloat(val) || undefined,
+                      }))
+                    }
+                    type="number"
+                    step={0.1}
+                    min={0}
+                    max={2}
+                    globalValue={globalTemp}
+                    helpText={t.help?.temperature}
+                  />
+                  <InputRow
+                    icon={Cpu}
+                    label={t.gpuLayers}
+                    value={config.gpuLayers}
+                    onChange={(val) =>
+                      setConfig((prev) => ({
+                        ...prev,
+                        gpuLayers: val === "" ? -1 : parseInt(val) || -1,
+                      }))
+                    }
+                    type="number"
+                    globalValue={globalGpu}
+                    helpText={t.help?.gpuLayers}
+                  />
                 </div>
-                <select
-                  value={
-                    !config.useGlobalDefaults && config.kvCacheType
-                      ? config.kvCacheType
-                      : ""
-                  }
-                  disabled={config.useGlobalDefaults}
-                  onChange={(e) =>
-                    setConfig((prev) => ({
-                      ...prev,
-                      kvCacheType: e.target.value || undefined,
-                    }))
-                  }
-                  className={`
+              </div>
+
+              <div className="h-px bg-border/50" />
+
+              {/* Advanced Params Section */}
+              <div className="space-y-4">
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                  {t.sectionEngineTuning}
+                </h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <InputRow
+                    icon={Scale}
+                    label={t.repPenaltyBase}
+                    value={config.repPenaltyBase}
+                    onChange={(val) =>
+                      setConfig((prev) => ({
+                        ...prev,
+                        repPenaltyBase: parseFloat(val) || undefined,
+                      }))
+                    }
+                    type="number"
+                    step={0.01}
+                    globalValue={globalRepBase}
+                    helpText={t.help?.repPenaltyBase}
+                  />
+                  <InputRow
+                    icon={Scale}
+                    label={t.repPenaltyMax}
+                    value={config.repPenaltyMax}
+                    onChange={(val) =>
+                      setConfig((prev) => ({
+                        ...prev,
+                        repPenaltyMax: parseFloat(val) || undefined,
+                      }))
+                    }
+                    type="number"
+                    step={0.01}
+                    globalValue={globalRepMax}
+                    helpText={t.help?.repPenaltyMax}
+                  />
+
+                  {/* KV Cache */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label
+                        className={`text-xs font-medium flex items-center gap-1.5 ${config.useGlobalDefaults ? "text-muted-foreground" : "text-foreground"}`}
+                      >
+                        <MemoryStick className="w-3.5 h-3.5 shrink-0 opacity-70" />
+                        {t.kvCacheType}
+                      </label>
+                      <span className="text-[10px] text-muted-foreground/50 tabular-nums">
+                        {t.currentGlobal}: {globalKvCache}
+                      </span>
+                    </div>
+                    <select
+                      value={
+                        !config.useGlobalDefaults && config.kvCacheType
+                          ? config.kvCacheType
+                          : ""
+                      }
+                      disabled={config.useGlobalDefaults}
+                      onChange={(e) =>
+                        setConfig((prev) => ({
+                          ...prev,
+                          kvCacheType: e.target.value || undefined,
+                        }))
+                      }
+                      className={`
                                         w-full h-8 px-2.5 text-sm rounded-md border transition-all outline-none
                                         ${
                                           config.useGlobalDefaults
@@ -1329,40 +1481,42 @@ export function FileConfigModal({
                                             : "bg-background/50 border-border focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
                                         }
                                     `}
-                >
-                  <option
-                    value=""
-                    disabled={!config.useGlobalDefaults && !config.kvCacheType}
-                  >
-                    {config.useGlobalDefaults ? globalKvCache : t.notSet}
-                  </option>
-                  <option value="f16">{t.kvOptions.f16}</option>
-                  <option value="q8_0">{t.kvOptions.q8_0}</option>
-                  <option value="q5_1">{t.kvOptions.q5_1}</option>
-                  <option value="q4_0">{t.kvOptions.q4_0}</option>
-                </select>
-              </div>
+                    >
+                      <option
+                        value=""
+                        disabled={
+                          !config.useGlobalDefaults && !config.kvCacheType
+                        }
+                      >
+                        {config.useGlobalDefaults ? globalKvCache : t.notSet}
+                      </option>
+                      <option value="f16">{t.kvOptions.f16}</option>
+                      <option value="q8_0">{t.kvOptions.q8_0}</option>
+                      <option value="q5_1">{t.kvOptions.q5_1}</option>
+                      <option value="q4_0">{t.kvOptions.q4_0}</option>
+                    </select>
+                  </div>
 
-              {/* Seed Input */}
-              <InputRow
-                icon={Sparkles}
-                label={t.seed}
-                value={config.seed}
-                onChange={(val) =>
-                  setConfig((prev) => ({
-                    ...prev,
-                    seed: val ? parseInt(val) : undefined,
-                  }))
-                }
-                type="number"
-                placeholder={t.random}
-                globalValue={globalSeed || t.random}
-                helpText={t.help?.seed}
-              />
+                  {/* Seed Input */}
+                  <InputRow
+                    icon={Sparkles}
+                    label={t.seed}
+                    value={config.seed}
+                    onChange={(val) =>
+                      setConfig((prev) => ({
+                        ...prev,
+                        seed: val ? parseInt(val) : undefined,
+                      }))
+                    }
+                    type="number"
+                    placeholder={t.random}
+                    globalValue={globalSeed || t.random}
+                    helpText={t.help?.seed}
+                  />
 
-              {/* Flash Attention */}
-              <div
-                className={`
+                  {/* Flash Attention */}
+                  <div
+                    className={`
                   col-span-2 flex items-center justify-between p-3 rounded-lg border transition-colors
                   ${
                     config.useGlobalDefaults
@@ -1370,23 +1524,23 @@ export function FileConfigModal({
                       : "bg-background/30 border-border"
                   }
                 `}
-              >
-                <div className="flex items-center gap-2">
-                  <Zap
-                    className={`w-4 h-4 ${config.useGlobalDefaults ? "text-muted-foreground" : "text-amber-500"}`}
-                  />
-                  <span
-                    className={`text-sm font-medium ${config.useGlobalDefaults ? "text-muted-foreground" : "text-foreground"}`}
                   >
-                    {t.flashAttn}
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-[10px] text-muted-foreground">
-                    {t.currentGlobal}: {globalFlashAttn ? t.on : t.off}
-                  </span>
-                  <select
-                    className={`
+                    <div className="flex items-center gap-2">
+                      <Zap
+                        className={`w-4 h-4 ${config.useGlobalDefaults ? "text-muted-foreground" : "text-amber-500"}`}
+                      />
+                      <span
+                        className={`text-sm font-medium ${config.useGlobalDefaults ? "text-muted-foreground" : "text-foreground"}`}
+                      >
+                        {t.flashAttn}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] text-muted-foreground">
+                        {t.currentGlobal}: {globalFlashAttn ? t.on : t.off}
+                      </span>
+                      <select
+                        className={`
                       h-8 text-sm rounded-md border outline-none
                       ${
                         config.useGlobalDefaults
@@ -1394,118 +1548,119 @@ export function FileConfigModal({
                           : "bg-background/50 border-border focus:ring-2 focus:ring-primary/20"
                       }
                     `}
-                    value={
-                      config.useGlobalDefaults
-                        ? globalFlashAttn
-                          ? "true"
-                          : "false"
-                        : config.flashAttn === undefined
-                          ? "default"
-                          : config.flashAttn
-                            ? "true"
-                            : "false"
-                    }
-                    disabled={config.useGlobalDefaults}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setConfig((prev) => ({
-                        ...prev,
-                        flashAttn:
-                          val === "default" ? undefined : val === "true",
-                      }));
-                    }}
-                  >
-                    <option value="default" disabled>
-                      {t.notSet}
-                    </option>
-                    <option value="true">{t.on}</option>
-                    <option value="false">{t.off}</option>
-                  </select>
+                        value={
+                          config.useGlobalDefaults
+                            ? globalFlashAttn
+                              ? "true"
+                              : "false"
+                            : config.flashAttn === undefined
+                              ? "default"
+                              : config.flashAttn
+                                ? "true"
+                                : "false"
+                        }
+                        disabled={config.useGlobalDefaults}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setConfig((prev) => ({
+                            ...prev,
+                            flashAttn:
+                              val === "default" ? undefined : val === "true",
+                          }));
+                        }}
+                      >
+                        <option value="default" disabled>
+                          {t.notSet}
+                        </option>
+                        <option value="true">{t.on}</option>
+                        <option value="false">{t.off}</option>
+                      </select>
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
-          </div>
 
-          <div className="h-px bg-border/50" />
+              <div className="h-px bg-border/50" />
 
-          {/* Features Section */}
-          <div className="space-y-4">
-            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-              {t.sectionFeatureToggles}
-            </h4>
-            <div className="grid grid-cols-2 gap-4">
-              <div
-                className={`
+              {/* Features Section */}
+              <div className="space-y-4">
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                  {t.sectionFeatureToggles}
+                </h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <div
+                    className={`
                                 flex items-center justify-between p-3 rounded-lg border transition-colors
                                 ${config.useGlobalDefaults ? "bg-secondary/20 border-transparent opacity-60" : "bg-background/30 border-border"}
                             `}
-              >
-                <div className="flex items-center gap-2">
-                  <AlignLeft
-                    className={`w-4 h-4 ${config.useGlobalDefaults ? "text-muted-foreground" : "text-indigo-500"}`}
-                  />
-                  <span
-                    className={`text-sm font-medium ${config.useGlobalDefaults ? "text-muted-foreground" : "text-foreground"}`}
                   >
-                    {t.alignmentMode}
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-[10px] text-muted-foreground">
-                    {t.currentGlobal}: {globalAlignmentMode ? t.on : t.off}
-                  </span>
-                  <Switch
-                    checked={
-                      config.useGlobalDefaults
-                        ? globalAlignmentMode
-                        : (config.alignmentMode ?? globalAlignmentMode)
-                    }
-                    disabled={config.useGlobalDefaults}
-                    onCheckedChange={(c) =>
-                      setConfig((prev) => ({ ...prev, alignmentMode: c }))
-                    }
-                    className="scale-75"
-                  />
-                </div>
-              </div>
+                    <div className="flex items-center gap-2">
+                      <AlignLeft
+                        className={`w-4 h-4 ${config.useGlobalDefaults ? "text-muted-foreground" : "text-indigo-500"}`}
+                      />
+                      <span
+                        className={`text-sm font-medium ${config.useGlobalDefaults ? "text-muted-foreground" : "text-foreground"}`}
+                      >
+                        {t.alignmentMode}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] text-muted-foreground">
+                        {t.currentGlobal}: {globalAlignmentMode ? t.on : t.off}
+                      </span>
+                      <Switch
+                        checked={
+                          config.useGlobalDefaults
+                            ? globalAlignmentMode
+                            : (config.alignmentMode ?? globalAlignmentMode)
+                        }
+                        disabled={config.useGlobalDefaults}
+                        onCheckedChange={(c) =>
+                          setConfig((prev) => ({ ...prev, alignmentMode: c }))
+                        }
+                        className="scale-75"
+                      />
+                    </div>
+                  </div>
 
-              <div
-                className={`
+                  <div
+                    className={`
                                 flex items-center justify-between p-3 rounded-lg border transition-colors
                                 ${config.useGlobalDefaults ? "bg-secondary/20 border-transparent opacity-60" : "bg-background/30 border-border"}
                             `}
-              >
-                <div className="flex items-center gap-2">
-                  <FileText
-                    className={`w-4 h-4 ${config.useGlobalDefaults ? "text-muted-foreground" : "text-amber-500"}`}
-                  />
-                  <span
-                    className={`text-sm font-medium ${config.useGlobalDefaults ? "text-muted-foreground" : "text-foreground"}`}
                   >
-                    {t.saveCot}
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-[10px] text-muted-foreground">
-                    {t.currentGlobal}: {globalSaveCot ? t.on : t.off}
-                  </span>
-                  <Switch
-                    checked={
-                      config.useGlobalDefaults
-                        ? globalSaveCot
-                        : (config.saveCot ?? false)
-                    }
-                    disabled={config.useGlobalDefaults}
-                    onCheckedChange={(c) =>
-                      setConfig((prev) => ({ ...prev, saveCot: c }))
-                    }
-                    className="scale-75"
-                  />
+                    <div className="flex items-center gap-2">
+                      <FileText
+                        className={`w-4 h-4 ${config.useGlobalDefaults ? "text-muted-foreground" : "text-amber-500"}`}
+                      />
+                      <span
+                        className={`text-sm font-medium ${config.useGlobalDefaults ? "text-muted-foreground" : "text-foreground"}`}
+                      >
+                        {t.saveCot}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] text-muted-foreground">
+                        {t.currentGlobal}: {globalSaveCot ? t.on : t.off}
+                      </span>
+                      <Switch
+                        checked={
+                          config.useGlobalDefaults
+                            ? globalSaveCot
+                            : (config.saveCot ?? false)
+                        }
+                        disabled={config.useGlobalDefaults}
+                        onCheckedChange={(c) =>
+                          setConfig((prev) => ({ ...prev, saveCot: c }))
+                        }
+                        className="scale-75"
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
-
-            </div>
-          </div>
+            </>
+          )}
         </div>
 
         {/* Footer */}
@@ -1544,6 +1699,7 @@ export function LibraryView({
   onProofreadFile,
   isRunning = false,
   remoteRuntime,
+  globalEngineMode,
 }: LibraryViewProps) {
   const t = texts[lang];
   const { alertProps, showConfirm } = useAlertModal();
@@ -1596,8 +1752,9 @@ export function LibraryView({
     "all" | "pending" | "completed" | "failed"
   >("all");
   const [showImportModal, setShowImportModal] = useState(false);
-  const [importPreview, setImportPreview] =
-    useState<QueueImportPreview | null>(null);
+  const [importPreview, setImportPreview] = useState<QueueImportPreview | null>(
+    null,
+  );
   const [importMode, setImportMode] = useState<"merge" | "replace">("merge");
   const [showWatchModal, setShowWatchModal] = useState(false);
   const [watchFolders, setWatchFolders] = useState<WatchFolderConfig[]>(() => {
@@ -1625,10 +1782,111 @@ export function LibraryView({
   const [watchDraft, setWatchDraft] =
     useState<WatchFolderConfig>(createWatchDraft);
   const [knownModelNames, setKnownModelNames] = useState<string[]>([]);
+  const [hasLoadedModelNames, setHasLoadedModelNames] = useState(false);
+  const [knownV2ProviderNames, setKnownV2ProviderNames] = useState<string[]>(
+    [],
+  );
+  const [hasLoadedV2Providers, setHasLoadedV2Providers] = useState(false);
+  const [v2Profiles, setV2Profiles] = useState<
+    Array<{ id: string; name: string; providerName?: string }>
+  >([]);
+
+  useEffect(() => {
+    let alive = true;
+    const loadV2Profiles = async () => {
+      try {
+        const [pipelineProfiles, apiProfiles] = await Promise.all([
+          window.api?.pipelineV2ProfilesList?.("pipeline", {
+            preferLocal: true,
+          }),
+          window.api?.pipelineV2ProfilesList?.("api", { preferLocal: true }),
+        ]);
+        if (!alive) return;
+        const providerNames = new Set<string>();
+        const providerNameById = new Map<string, string>();
+        (apiProfiles || []).forEach((profile: any) => {
+          const id = String(profile?.id || "").trim();
+          const name = String(profile?.name || "").trim();
+          if (id) {
+            providerNames.add(id);
+            providerNameById.set(id, name || id);
+          }
+          if (name) providerNames.add(name);
+        });
+
+        const pipelineProviderById = new Map<string, string>();
+        if (
+          Array.isArray(pipelineProfiles) &&
+          pipelineProfiles.length > 0 &&
+          window.api?.pipelineV2ProfilesLoadBatch
+        ) {
+          try {
+            const details = await window.api.pipelineV2ProfilesLoadBatch(
+              "pipeline",
+              pipelineProfiles.map((p: any) => String(p?.id || "").trim()),
+            );
+            details.forEach((entry: any) => {
+              const pipelineId = String(entry?.id || "").trim();
+              const providerId = String(entry?.result?.data?.provider || "").trim();
+              if (!pipelineId || !providerId) return;
+              providerNames.add(providerId);
+              pipelineProviderById.set(
+                pipelineId,
+                providerNameById.get(providerId) || providerId,
+              );
+            });
+          } catch (e) {
+            console.warn(
+              "[LibraryView] Failed to load pipeline provider mappings:",
+              e,
+            );
+          }
+        }
+
+        if (Array.isArray(pipelineProfiles)) {
+          setV2Profiles(
+            pipelineProfiles.map((p: any) => {
+              const id = String(p?.id || "").trim();
+              return {
+                id,
+                name: p?.name || id,
+                providerName:
+                  pipelineProviderById.get(id) || String(p?.providerName || ""),
+              };
+            }),
+          );
+        } else {
+          setV2Profiles([]);
+        }
+
+        setKnownV2ProviderNames(Array.from(providerNames));
+      } catch {
+        if (!alive) return;
+        setV2Profiles([]);
+        setKnownV2ProviderNames([]);
+      } finally {
+        if (alive) {
+          setHasLoadedV2Providers(true);
+        }
+      }
+    };
+    void loadV2Profiles();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const containerRef = useRef<HTMLDivElement>(null);
+  const addFilesRef = useRef<
+    (paths: string[], options?: { source?: "manual" | "watch" }) => void
+  >(() => {});
+  const pendingWatchPathsRef = useRef<string[]>([]);
 
   const pushNotice = useCallback(
-    (next: { type: "info" | "warning" | "error" | "success"; message: string }) => {
+    (next: {
+      type: "info" | "warning" | "error" | "success";
+      message: string;
+    }) => {
       setNotice(next);
       if (noticeTimerRef.current) {
         clearTimeout(noticeTimerRef.current);
@@ -1637,9 +1895,12 @@ export function LibraryView({
     },
     [],
   );
-  const watchNoticePrefix = t.watchNoticePrefix || "翻译监控: ";
+  const watchNoticePrefix = t.watchNoticePrefix;
   const pushWatchNotice = useCallback(
-    (next: { type: "info" | "warning" | "error" | "success"; message: string }) =>
+    (next: {
+      type: "info" | "warning" | "error" | "success";
+      message: string;
+    }) =>
       pushNotice({
         ...next,
         message: `${watchNoticePrefix}${next.message}`,
@@ -1709,6 +1970,7 @@ export function LibraryView({
       }
       if (!alive) return;
       setKnownModelNames(Array.from(names));
+      setHasLoadedModelNames(true);
     };
     void loadModelNames();
     return () => {
@@ -1739,46 +2001,9 @@ export function LibraryView({
 
   useEffect(() => {
     if (!window.api?.watchFolderAdd) return;
-    let cancelled = false;
-    const bootstrapWatchFolders = async () => {
-      watchFolders.forEach((entry) => {
-        void window.api.watchFolderAdd(entry);
-      });
-
-      if (!window.api?.scanDirectory) return;
-      const targets = watchFolders.filter((entry) => entry.enabled && entry.path);
-      if (targets.length === 0) return;
-
-      try {
-        const results = await Promise.all(
-          targets.map(async (entry) => {
-            const files = await window.api!.scanDirectory(
-              entry.path,
-              entry.includeSubdirs,
-            );
-            return filterWatchFilesByTypes(
-              files || [],
-              entry.fileTypes,
-              SUPPORTED_EXTENSIONS,
-            );
-          }),
-        );
-        if (cancelled) return;
-        const merged = Array.from(new Set(results.flat()));
-        addFiles(merged, { source: "watch" });
-      } catch (e) {
-        if (cancelled) return;
-        console.error("[LibraryView] Watch folders initial scan failed:", e);
-        pushWatchNotice({
-          type: "error",
-          message: t.scanFailed.replace("{count}", String(targets.length)),
-        });
-      }
-    };
-    void bootstrapWatchFolders();
-    return () => {
-      cancelled = true;
-    };
+    watchFolders.forEach((entry) => {
+      void window.api.watchFolderAdd(entry);
+    });
   }, []);
 
   const buildModelNamesForFilter = useCallback(() => {
@@ -1793,18 +2018,39 @@ export function LibraryView({
     return Array.from(names);
   }, [knownModelNames]);
 
+  const buildProviderNamesForFilter = useCallback(() => {
+    const names = new Set<string>();
+    const addName = (value: string | null | undefined) => {
+      const normalized = String(value || "").trim();
+      if (normalized) names.add(normalized);
+    };
+    const addFromModelRef = (value: string | null | undefined) => {
+      const provider = getProviderNameFromModelRef(value || "");
+      if (provider) names.add(provider);
+    };
+    knownV2ProviderNames.forEach((name) => {
+      addName(name);
+    });
+    v2Profiles.forEach((profile) => {
+      addName(profile.providerName);
+    });
+    addFromModelRef(localStorage.getItem("config_remote_model"));
+    queue.forEach((item) => {
+      addFromModelRef(item.config?.remoteModel);
+    });
+    return Array.from(names);
+  }, [knownV2ProviderNames, queue, v2Profiles]);
+
   // Add files
   const addFiles = useCallback(
-    (
-      paths: string[],
-      options?: { source?: "manual" | "watch" },
-    ) => {
+    (paths: string[], options?: { source?: "manual" | "watch" }) => {
       const existingPaths = new Set(queue.map((q) => q.path));
       const newItems: QueueItem[] = [];
       let skippedUnsupported = 0;
       let skippedDuplicate = 0;
       let skippedTranslated = 0;
       const modelNames = buildModelNamesForFilter();
+      const providerNames = buildProviderNamesForFilter();
 
       for (const path of paths) {
         const ext = "." + path.split(".").pop()?.toLowerCase();
@@ -1817,6 +2063,7 @@ export function LibraryView({
             path,
             modelNames,
             SUPPORTED_EXTENSIONS,
+            providerNames,
           )
         ) {
           skippedTranslated += 1;
@@ -1843,8 +2090,7 @@ export function LibraryView({
         setQueue((prev) => [...prev, ...newItems]);
       }
 
-      const prefix =
-        options?.source === "watch" ? watchNoticePrefix : "";
+      const prefix = options?.source === "watch" ? watchNoticePrefix : "";
       const messages: string[] = [];
       if (newItems.length > 0) {
         messages.push(
@@ -1853,18 +2099,12 @@ export function LibraryView({
       }
       if (skippedTranslated > 0) {
         messages.push(
-          t.ignoredTranslated.replace(
-            "{count}",
-            String(skippedTranslated),
-          ),
+          t.ignoredTranslated.replace("{count}", String(skippedTranslated)),
         );
       }
       if (skippedUnsupported > 0) {
         messages.push(
-          t.ignoredUnsupported.replace(
-            "{count}",
-            String(skippedUnsupported),
-          ),
+          t.ignoredUnsupported.replace("{count}", String(skippedUnsupported)),
         );
       }
       if (skippedDuplicate > 0) {
@@ -1894,18 +2134,77 @@ export function LibraryView({
       t,
       watchNoticePrefix,
       buildModelNamesForFilter,
+      buildProviderNamesForFilter,
     ],
   );
 
   useEffect(() => {
+    addFilesRef.current = addFiles;
+  }, [addFiles]);
+
+  const isWatchFilterReady = hasLoadedModelNames && hasLoadedV2Providers;
+
+  useEffect(() => {
+    if (!isWatchFilterReady) return;
+    if (pendingWatchPathsRef.current.length === 0) return;
+    const pending = Array.from(new Set(pendingWatchPathsRef.current));
+    pendingWatchPathsRef.current = [];
+    addFiles(pending, { source: "watch" });
+  }, [addFiles, isWatchFilterReady]);
+
+  useEffect(() => {
+    if (!isWatchFilterReady || !window.api?.scanDirectory) return;
+    let cancelled = false;
+    const targets = watchFolders.filter((entry) => entry.enabled && entry.path);
+    if (targets.length === 0) return;
+
+    const scanWatchFolders = async () => {
+      try {
+        const results = await Promise.all(
+          targets.map(async (entry) => {
+            const files = await window.api!.scanDirectory(
+              entry.path,
+              entry.includeSubdirs,
+            );
+            return filterWatchFilesByTypes(
+              files || [],
+              entry.fileTypes,
+              SUPPORTED_EXTENSIONS,
+            );
+          }),
+        );
+        if (cancelled) return;
+        const merged = Array.from(new Set(results.flat()));
+        addFilesRef.current(merged, { source: "watch" });
+      } catch (e) {
+        if (cancelled) return;
+        console.error("[LibraryView] Watch folders initial scan failed:", e);
+        pushWatchNotice({
+          type: "error",
+          message: t.scanFailed.replace("{count}", String(targets.length)),
+        });
+      }
+    };
+
+    void scanWatchFolders();
+    return () => {
+      cancelled = true;
+    };
+  }, [isWatchFilterReady, pushWatchNotice, t.scanFailed, watchFolders]);
+
+  useEffect(() => {
     const unsubscribe = window.api?.onWatchFolderFileAdded?.((payload) => {
       if (!payload?.path) return;
+      if (!isWatchFilterReady) {
+        pendingWatchPathsRef.current.push(payload.path);
+        return;
+      }
       addFiles([payload.path], { source: "watch" });
     });
     return () => {
       unsubscribe?.();
     };
-  }, [addFiles]);
+  }, [addFiles, isWatchFilterReady]);
 
   const handleAddFiles = async () => {
     if (isRunning) {
@@ -1999,9 +2298,7 @@ export function LibraryView({
       return;
     }
     setWatchFolders((prev) =>
-      prev.map((entry) =>
-        entry.id === id ? { ...entry, enabled } : entry,
-      ),
+      prev.map((entry) => (entry.id === id ? { ...entry, enabled } : entry)),
     );
   };
 
@@ -2155,12 +2452,16 @@ export function LibraryView({
         .find((item) => item && item.length > 0);
       if (folder) {
         const sep = folder.includes("\\") ? "\\" : "/";
-        const normalized = folder.endsWith("\\") || folder.endsWith("/")
-          ? folder.slice(0, -1)
-          : folder;
+        const normalized =
+          folder.endsWith("\\") || folder.endsWith("/")
+            ? folder.slice(0, -1)
+            : folder;
         defaultPath = `${normalized}${sep}${fileName}`;
       }
-      if (!defaultPath || (!defaultPath.includes("\\") && !defaultPath.includes("/"))) {
+      if (
+        !defaultPath ||
+        (!defaultPath.includes("\\") && !defaultPath.includes("/"))
+      ) {
         const modelsPath = await window.api?.getModelsPath?.();
         if (modelsPath) {
           const sep = modelsPath.includes("\\") ? "\\" : "/";
@@ -2394,7 +2695,10 @@ export function LibraryView({
     );
     pushNotice({
       type: "success",
-      message: t.clearedCompletedNotice.replace("{count}", String(completedCount)),
+      message: t.clearedCompletedNotice.replace(
+        "{count}",
+        String(completedCount),
+      ),
     });
   }, [queue, isRunning, lang, pushNotice, t]);
 
@@ -2604,7 +2908,10 @@ export function LibraryView({
             // Logic copied from ProofreadView: history record -> cache path
             if (match.cachePath) targetPath = match.cachePath;
             else if (match.outputPath)
-              targetPath = match.outputPath + ".cache.json";
+              targetPath = resolveCachePathFromOutput(
+                match.outputPath,
+                match.config?.cacheDir,
+              );
             else targetPath = match.filePath + ".cache.json";
           }
         }
@@ -2614,15 +2921,28 @@ export function LibraryView({
 
       // Strategy 2: Default Guess (Fallback if not in history)
       if (!targetPath) {
+        const useGlobalDefaults = !item.config || item.config.useGlobalDefaults;
         let outputDir = item.config?.outputDir;
-        if (!outputDir && item.config?.useGlobalDefaults) {
+        if (!outputDir && useGlobalDefaults) {
           outputDir = localStorage.getItem("config_output_dir") || undefined;
         }
         let modelPath = item.config?.model;
-        if (!modelPath) {
+        if (!modelPath && useGlobalDefaults) {
           modelPath = localStorage.getItem("config_model") || undefined;
         }
-        targetPath = getCachePath(item.path, outputDir, modelPath);
+        let cacheDir = item.config?.cacheDir;
+        if (!cacheDir && useGlobalDefaults) {
+          cacheDir = localStorage.getItem("config_cache_dir") || undefined;
+        }
+        const storedEngineMode = localStorage.getItem("config_engine_mode");
+        const engineMode =
+          item.config?.engineMode ||
+          globalEngineMode ||
+          (storedEngineMode === "v2" ? "v2" : "v1");
+        targetPath = getCachePath(item.path, outputDir, modelPath, {
+          cacheDir,
+          engineMode,
+        });
       }
 
       console.log("[Proofread] Resolved target:", targetPath);
@@ -2694,9 +3014,7 @@ export function LibraryView({
               <h3 className="text-2xl font-bold text-foreground">
                 {t.dropReleaseTitle}
               </h3>
-              <p className="text-base text-muted-foreground">
-                {t.dropHint}
-              </p>
+              <p className="text-base text-muted-foreground">{t.dropHint}</p>
             </div>
             <div className="flex gap-2 mt-2">
               {["txt", "epub", "srt", "ass"].map((ext) => (
@@ -3016,104 +3334,104 @@ export function LibraryView({
                       }}
                       onDrop={(e) => handleReorderDrop(e, queueIndex)}
                     >
-                    {/* Checkbox */}
-                    <input
-                      type="checkbox"
-                      checked={selectedItems.has(item.id)}
-                      onChange={() => toggleSelection(item.id)}
-                      className="w-4 h-4 rounded border-border shrink-0 accent-primary"
-                    />
+                      {/* Checkbox */}
+                      <input
+                        type="checkbox"
+                        checked={selectedItems.has(item.id)}
+                        onChange={() => toggleSelection(item.id)}
+                        className="w-4 h-4 rounded border-border shrink-0 accent-primary"
+                      />
 
-                    {/* Drag Handle - Larger Hit Area */}
-                    <div
-                      className={`p-2 -m-1 rounded shrink-0 transition-colors ${
-                        isRunning || isFilterActive
-                          ? "opacity-20 cursor-not-allowed"
-                          : "hover:bg-secondary cursor-grab active:cursor-grabbing text-muted-foreground/30 hover:text-foreground"
-                      }`}
-                      draggable={!isRunning && !isFilterActive}
-                      onDragStart={(e) => handleDragStart(e, queueIndex)}
-                      onDragEnd={handleDragEnd}
-                      title={t.dragToReorder}
-                    >
-                      <GripVertical className="w-5 h-5" />
-                    </div>
+                      {/* Drag Handle - Larger Hit Area */}
+                      <div
+                        className={`p-2 -m-1 rounded shrink-0 transition-colors ${
+                          isRunning || isFilterActive
+                            ? "opacity-20 cursor-not-allowed"
+                            : "hover:bg-secondary cursor-grab active:cursor-grabbing text-muted-foreground/30 hover:text-foreground"
+                        }`}
+                        draggable={!isRunning && !isFilterActive}
+                        onDragStart={(e) => handleDragStart(e, queueIndex)}
+                        onDragEnd={handleDragEnd}
+                        title={t.dragToReorder}
+                      >
+                        <GripVertical className="w-5 h-5" />
+                      </div>
 
-                    {/* File Icon */}
-                    <FileIcon type={item.fileType} />
+                      {/* File Icon */}
+                      <FileIcon type={item.fileType} />
 
-                    {/* File Info */}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-foreground truncate">
-                        {item.fileName}
-                      </p>
-                      <div className="flex items-center gap-2">
-                        <p
-                          className="text-[11px] text-muted-foreground/60 truncate max-w-[300px]"
-                          title={item.path}
-                        >
-                          {item.path}
+                      {/* File Info */}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-foreground truncate">
+                          {item.fileName}
                         </p>
-                        {/* Status Badges */}
-                        {item.config?.useGlobalDefaults === false && (
-                          <span className="text-[9px] px-1.5 py-px rounded bg-purple-500/10 text-purple-500 font-medium">
-                            {t.custom}
-                          </span>
-                        )}
+                        <div className="flex items-center gap-2">
+                          <p
+                            className="text-[11px] text-muted-foreground/60 truncate max-w-[300px]"
+                            title={item.path}
+                          >
+                            {item.path}
+                          </p>
+                          {/* Status Badges */}
+                          {item.config?.useGlobalDefaults === false && (
+                            <span className="text-[9px] px-1.5 py-px rounded bg-purple-500/10 text-purple-500 font-medium">
+                              {t.custom}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex items-center gap-1 shrink-0">
+                        <UITooltip content={t.config}>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="w-8 h-8 focus-visible:ring-0"
+                            onClick={() => setConfigItem(item)}
+                          >
+                            <Settings className="w-4 h-4 text-muted-foreground hover:text-foreground" />
+                          </Button>
+                        </UITooltip>
+
+                        <UITooltip content={t.proofread}>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="w-8 h-8 focus-visible:ring-0"
+                            onClick={() => handleProofread(item)}
+                          >
+                            <ClipboardCheck
+                              className={`w-4 h-4 ${item.status === "completed" ? "text-primary" : "text-muted-foreground"} hover:text-primary transition-colors`}
+                            />
+                          </Button>
+                        </UITooltip>
+
+                        <UITooltip content={t.moveToTop}>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="w-8 h-8 focus-visible:ring-0"
+                            onClick={() => handleMoveToTop(item.id)}
+                          >
+                            <ArrowUp className="w-4 h-4 text-muted-foreground hover:text-primary" />
+                          </Button>
+                        </UITooltip>
+
+                        <UITooltip content={t.remove}>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className={`w-8 h-8 focus-visible:ring-0 ${isRunning ? "opacity-50 cursor-not-allowed" : ""}`}
+                            onClick={() => handleRemove(item.id)}
+                            disabled={isRunning}
+                          >
+                            <Trash2 className="w-4 h-4 text-muted-foreground hover:text-red-500" />
+                          </Button>
+                        </UITooltip>
                       </div>
                     </div>
-
-                    {/* Actions */}
-                    <div className="flex items-center gap-1 shrink-0">
-                      <UITooltip content={t.config}>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="w-8 h-8 focus-visible:ring-0"
-                          onClick={() => setConfigItem(item)}
-                        >
-                          <Settings className="w-4 h-4 text-muted-foreground hover:text-foreground" />
-                        </Button>
-                      </UITooltip>
-
-                      <UITooltip content={t.proofread}>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="w-8 h-8 focus-visible:ring-0"
-                          onClick={() => handleProofread(item)}
-                        >
-                          <ClipboardCheck
-                            className={`w-4 h-4 ${item.status === "completed" ? "text-primary" : "text-muted-foreground"} hover:text-primary transition-colors`}
-                          />
-                        </Button>
-                      </UITooltip>
-
-                      <UITooltip content={t.moveToTop}>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="w-8 h-8 focus-visible:ring-0"
-                          onClick={() => handleMoveToTop(item.id)}
-                        >
-                          <ArrowUp className="w-4 h-4 text-muted-foreground hover:text-primary" />
-                        </Button>
-                      </UITooltip>
-
-                      <UITooltip content={t.remove}>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className={`w-8 h-8 focus-visible:ring-0 ${isRunning ? "opacity-50 cursor-not-allowed" : ""}`}
-                          onClick={() => handleRemove(item.id)}
-                          disabled={isRunning}
-                        >
-                          <Trash2 className="w-4 h-4 text-muted-foreground hover:text-red-500" />
-                        </Button>
-                      </UITooltip>
-                    </div>
-                  </div>
-                );
+                  );
                 })}
               </div>
             )}
@@ -3131,6 +3449,8 @@ export function LibraryView({
             }
             onClose={() => setConfigItem(null)}
             remoteRuntime={remoteRuntime}
+            v2Profiles={v2Profiles}
+            globalEngineMode={globalEngineMode}
           />
         )}
 
@@ -3184,7 +3504,10 @@ export function LibraryView({
                     .replace("{total}", String(importSummary.total))
                     .replace("{added}", String(importSummary.added))
                     .replace("{duplicate}", String(importSummary.duplicate))
-                    .replace("{unsupported}", String(importSummary.unsupported))}
+                    .replace(
+                      "{unsupported}",
+                      String(importSummary.unsupported),
+                    )}
                 </div>
               </div>
               <div className="px-5 py-3 border-t flex justify-end gap-2">
@@ -3369,7 +3692,9 @@ export function LibraryView({
                                     type="button"
                                     onClick={() => {
                                       const next = active
-                                        ? entry.fileTypes.filter((t) => t !== type)
+                                        ? entry.fileTypes.filter(
+                                            (t) => t !== type,
+                                          )
                                         : [...entry.fileTypes, type];
                                       applyWatchFolderUpdate(entry.id, {
                                         fileTypes: next,
@@ -3406,7 +3731,10 @@ export function LibraryView({
                                 type="checkbox"
                                 checked={entry.enabled}
                                 onChange={(e) =>
-                                  handleToggleWatchFolder(entry.id, e.target.checked)
+                                  handleToggleWatchFolder(
+                                    entry.id,
+                                    e.target.checked,
+                                  )
                                 }
                                 className="w-4 h-4 rounded border-border accent-primary"
                               />

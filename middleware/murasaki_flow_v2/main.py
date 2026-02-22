@@ -1,0 +1,117 @@
+"""Pipeline V2 entrypoint."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+
+# Windows 控制台 UTF-8 兼容（与 V1 一致）
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+except Exception:
+    pass
+
+from murasaki_flow_v2.registry.profile_store import ProfileStore
+from murasaki_flow_v2.pipelines.runner import (
+    PipelineRunner,
+    PipelineStopRequested,
+)
+from murasaki_flow_v2.utils.log_protocol import emit_error
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Murasaki Flow V2")
+    parser.add_argument("--file", required=True, help="Input file path")
+    parser.add_argument("--pipeline", required=True, help="Pipeline profile id or path")
+    parser.add_argument("--profiles-dir", required=True, help="Base directory for profiles")
+    parser.add_argument("--output", help="Custom output path")
+    parser.add_argument("--rules-pre", dest="rules_pre", help="Pre-process rules (JSON)")
+    parser.add_argument("--rules-post", dest="rules_post", help="Post-process rules (JSON)")
+    parser.add_argument("--glossary", help="Glossary JSON file")
+    parser.add_argument("--resume", action="store_true", help="Resume from temp progress")
+    parser.add_argument("--cache-dir", help="Custom directory to store cache files")
+    parser.add_argument("--no-cache", action="store_true", help="Disable cache saving")
+    parser.add_argument("--stop-flag", help="Stop request marker file path")
+    parser.add_argument("--run-id", help="Run identifier for tracing and stats")
+    parser.add_argument("--source-lang", default="ja", help="Source language for QC (e.g. ja)")
+    parser.add_argument("--enable-quality", action="store_true", help="Enable V1 quality checks")
+    parser.add_argument("--disable-quality", action="store_true", help="Disable V1 quality checks")
+    parser.add_argument("--text-protect", action="store_true", help="Enable text protection")
+    parser.add_argument("--no-text-protect", action="store_true", help="Disable text protection")
+    args = parser.parse_args()
+
+    if not os.path.exists(args.file):
+        print(f"[Error] Input file not found: {args.file}")
+        return 1
+
+    try:
+        store = ProfileStore(args.profiles_dir)
+        pipeline_profile = store.load_profile("pipeline", args.pipeline)
+        processing_cfg: dict[str, object] = {}
+        processing_requested = False
+        if args.rules_pre:
+            processing_cfg["rules_pre"] = args.rules_pre
+            processing_requested = True
+        if args.rules_post:
+            processing_cfg["rules_post"] = args.rules_post
+            processing_requested = True
+        if args.enable_quality:
+            processing_cfg["enable_quality"] = True
+            processing_requested = True
+        if args.disable_quality:
+            processing_cfg["enable_quality"] = False
+            processing_requested = True
+        if args.text_protect:
+            processing_cfg["text_protect"] = True
+            processing_requested = True
+        if args.no_text_protect:
+            processing_cfg["text_protect"] = False
+            processing_requested = True
+
+        existing_processing = (
+            pipeline_profile.get("processing")
+            if isinstance(pipeline_profile.get("processing"), dict)
+            else {}
+        )
+        if args.source_lang and (processing_requested or existing_processing):
+            processing_cfg["source_lang"] = args.source_lang
+        if args.glossary:
+            pipeline_profile["glossary"] = args.glossary
+            if processing_requested or existing_processing:
+                processing_cfg["glossary"] = args.glossary
+        if processing_requested or existing_processing:
+            pipeline_profile["processing"] = {**existing_processing, **processing_cfg}
+
+        print(f"[FlowV2] Provider: {pipeline_profile.get('provider')}")
+        print(f"[FlowV2] Prompt: {pipeline_profile.get('prompt')}")
+        print(f"[FlowV2] Parser: {pipeline_profile.get('parser')}")
+        print(f"[FlowV2] LinePolicy: {pipeline_profile.get('line_policy')}")
+        print(f"[FlowV2] ChunkPolicy: {pipeline_profile.get('chunk_policy')}")
+
+        runner = PipelineRunner(store, pipeline_profile, run_id=args.run_id)
+        output_path = runner.run(
+            args.file,
+            output_path=args.output,
+            resume=bool(args.resume),
+            save_cache=not bool(args.no_cache),
+            cache_dir=args.cache_dir,
+            stop_flag_path=args.stop_flag,
+        )
+    except PipelineStopRequested:
+        print("[FlowV2] Stop requested. Preserved temp/cache for resume.")
+        return 130
+    except Exception as e:
+        import traceback
+        error_msg = f"{str(e)}\n\n{traceback.format_exc()}"
+        emit_error(error_msg, title="Pipeline V2 Fatal Error")
+        print(f"[FlowV2] Fatal error: {e}", file=sys.stderr)
+        return 1
+        
+    print(f"[FlowV2] Output saved: {output_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

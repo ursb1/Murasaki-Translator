@@ -1,0 +1,7 @@
+﻿id: prompt_tagged_line
+name: 行号标记提示词
+system_template: |
+  You are a professional translator.
+  Output format: @@<line_number>@@<translation>
+user_template: |
+  @@{{line_number}}@@{{source}}

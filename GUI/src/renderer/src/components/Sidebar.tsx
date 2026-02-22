@@ -12,7 +12,7 @@ import {
   Clock,
   ClipboardCheck,
   Layers,
-  Server,
+  Globe,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { Tooltip } from "./ui/core";
@@ -62,18 +62,18 @@ export function Sidebar({ lang, setLang, view, setView }: SidebarProps) {
     { icon: ClipboardCheck, label: t.nav.proofread, id: "proofread" },
     // 配置
     { icon: Bot, label: t.nav.model, id: "model" },
+    { icon: Globe, label: t.nav.apiManager, id: "api_manager" },
     { icon: BookOpen, label: t.nav.glossary, id: "glossary" },
     // 文本处理
     { icon: FileInput, label: t.nav.pre, id: "pre" },
     { icon: FileOutput, label: t.nav.post, id: "post" },
     // 高级与设置
-    { icon: Server, label: t.nav.service, id: "service" },
     { icon: Sparkles, label: t.nav.advanced, id: "advanced" },
     { icon: Settings, label: t.nav.setting, id: "settings" },
   ];
 
   return (
-    <div className="w-[200px] bg-card border-r border-border h-screen flex flex-col">
+    <div className="w-[200px] min-w-[200px] shrink-0 bg-card border-r border-border h-screen flex flex-col">
       <div className="p-4 pb-3 flex flex-col items-start text-left">
         <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-purple-400 to-violet-400 bg-clip-text text-transparent">
           Murasaki
@@ -162,7 +162,7 @@ export function Sidebar({ lang, setLang, view, setView }: SidebarProps) {
 
         <div className="flex items-center gap-2 px-2">
           <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold text-[10px] shrink-0">
-            v1
+            v2
           </div>
           <span className="text-[10px] text-muted-foreground whitespace-nowrap">
             Murasaki v{APP_CONFIG.version}

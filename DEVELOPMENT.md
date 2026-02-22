@@ -102,7 +102,7 @@ npm run build:win
 
 ## 9. 调试指南
 
-项目提供了 `.vscode/launch.json` 调试配置，支持 Electron 主进程和 Python 后端的断点调试。
+可在本地创建 `.vscode/launch.json` 调试配置，用于 Electron 主进程和 Python 后端断点调试。
 
 ### 前置准备
 
@@ -113,7 +113,7 @@ npm run build:win
 middleware/.venv/bin/pip install debugpy
 ```
 
-VSCode 调试配置（`.vscode/launch.json`）已指向 `middleware/.venv/bin/python3`，打开项目后 VSCode 会自动提示安装推荐扩展（`ms-python.debugpy` 等）。
+建议将本地 VSCode 调试配置（`.vscode/launch.json`）中的 Python 解释器指向 `middleware/.venv/bin/python3`，并安装推荐扩展（如 `ms-python.debugpy`）。
 
 > **注意**：`.vscode/` 目录在 `.gitignore` 中，不会提交到仓库。如需共享调试配置，可参考本节内容手动创建。
 

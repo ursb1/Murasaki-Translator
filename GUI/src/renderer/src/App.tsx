@@ -3,12 +3,12 @@ import { Sidebar } from "./components/Sidebar";
 import { Dashboard } from "./components/Dashboard";
 import { SettingsView } from "./components/SettingsView";
 import { AdvancedView } from "./components/AdvancedView";
-import { ServiceView } from "./components/ServiceView";
 import { ModelView } from "./components/ModelView";
 import { GlossaryView } from "./components/GlossaryView";
 import { HistoryView } from "./components/HistoryView";
 import { LibraryView } from "./components/LibraryView";
 import ProofreadView from "./components/ProofreadView";
+import { ApiManagerView } from "./components/ApiManagerView";
 
 import { Language, translations } from "./lib/i18n";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -24,6 +24,7 @@ import { ToastHost } from "./components/ui/ToastHost";
 export type View =
   | "dashboard"
   | "library"
+  | "api_manager"
   | "settings"
   | "model"
   | "glossary"
@@ -37,7 +38,9 @@ export type View =
 function AppContent() {
   const [lang, setLang] = useState<Language>(() => {
     const stored = localStorage.getItem("app_lang");
-    return stored === "zh" || stored === "en" || stored === "jp" ? stored : "zh";
+    return stored === "zh" || stored === "en" || stored === "jp"
+      ? stored
+      : "zh";
   });
   const [view, setView] = useState<View>("dashboard");
   const [proofreadHasChanges, setProofreadHasChanges] = useState(false);
@@ -57,6 +60,7 @@ function AppContent() {
       const validViews: View[] = [
         "dashboard",
         "library",
+        "api_manager",
         "settings",
         "model",
         "service",
@@ -132,14 +136,16 @@ function AppContent() {
           }}
         />
       )}
-      {view === "model" && <ModelView lang={lang} remoteRuntime={remoteRuntime} />}
-      {view === "glossary" && <GlossaryView lang={lang} />}
-      {view === "service" && (
-        <ServiceView lang={lang} remoteRuntime={remoteRuntime} />
+      {view === "model" && (
+        <ModelView lang={lang} remoteRuntime={remoteRuntime} />
       )}
+      {view === "glossary" && <GlossaryView lang={lang} />}
       {view === "pre" && <RuleEditor lang={lang} mode="pre" />}
       {view === "post" && <RuleEditor lang={lang} mode="post" />}
-      {view === "advanced" && <AdvancedView lang={lang} />}
+      {view === "advanced" && (
+        <AdvancedView lang={lang} remoteRuntime={remoteRuntime} />
+      )}
+      {view === "api_manager" && <ApiManagerView lang={lang} />}
       {view === "history" && (
         <HistoryView lang={lang} onNavigate={handleSwitchView} />
       )}

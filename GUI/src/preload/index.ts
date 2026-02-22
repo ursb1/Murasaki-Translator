@@ -62,6 +62,92 @@ const api = {
       config,
       runId,
     }),
+  pipelineV2ProfilesPath: () => ipcRenderer.invoke("pipelinev2-profiles-path"),
+  pipelineV2ProfilesList: (kind: string, options?: { preferLocal?: boolean }) =>
+    ipcRenderer.invoke("pipelinev2-profiles-list", kind, options),
+  pipelineV2ProfilesLoad: (kind: string, id: string) =>
+    ipcRenderer.invoke("pipelinev2-profiles-load", kind, id),
+  pipelineV2ProfilesLoadBatch: (kind: string, ids: string[]) =>
+    ipcRenderer.invoke("pipelinev2-profiles-load-batch", kind, ids),
+  pipelineV2ProfilesSave: (
+    kind: string,
+    id: string,
+    yamlText: string,
+    options?: { allowOverwrite?: boolean },
+  ) =>
+    ipcRenderer.invoke("pipelinev2-profiles-save", kind, id, yamlText, options),
+  pipelineV2ProfilesDelete: (kind: string, id: string) =>
+    ipcRenderer.invoke("pipelinev2-profiles-delete", kind, id),
+  pipelineV2ApiTest: (payload: {
+    baseUrl: string;
+    apiKey?: string;
+    timeoutMs?: number;
+    model?: string;
+    apiProfileId?: string;
+  }) => ipcRenderer.invoke("pipelinev2-api-test", payload),
+  pipelineV2ApiModels: (payload: {
+    baseUrl: string;
+    apiKey?: string;
+    timeoutMs?: number;
+    apiProfileId?: string;
+  }) => ipcRenderer.invoke("pipelinev2-api-models", payload),
+  pipelineV2ApiConcurrencyTest: (payload: {
+    baseUrl: string;
+    apiKey?: string;
+    timeoutMs?: number;
+    maxConcurrency?: number;
+    model?: string;
+    apiProfileId?: string;
+  }) => ipcRenderer.invoke("pipelinev2-api-concurrency-test", payload),
+  apiStatsOverview: (payload: {
+    apiProfileId?: string;
+    fromTs?: string;
+    toTs?: string;
+  }) => ipcRenderer.invoke("api-stats-overview", payload),
+  apiStatsTrend: (payload: {
+    apiProfileId?: string;
+    metric?: "requests" | "latency" | "input_tokens" | "output_tokens";
+    interval?: "minute" | "hour" | "day";
+    fromTs?: string;
+    toTs?: string;
+  }) => ipcRenderer.invoke("api-stats-trend", payload),
+  apiStatsBreakdown: (payload: {
+    apiProfileId?: string;
+    dimension?: "status_code" | "source" | "error_type" | "model" | "hour";
+    fromTs?: string;
+    toTs?: string;
+  }) => ipcRenderer.invoke("api-stats-breakdown", payload),
+  apiStatsRecords: (payload: {
+    apiProfileId?: string;
+    fromTs?: string;
+    toTs?: string;
+    page?: number;
+    pageSize?: number;
+    statusCode?: number;
+    source?: string;
+    phase?: "request_end" | "request_error" | "inflight";
+    query?: string;
+  }) => ipcRenderer.invoke("api-stats-records", payload),
+  apiStatsClear: (payload: { apiProfileId?: string; beforeTs?: string }) =>
+    ipcRenderer.invoke("api-stats-clear", payload),
+  pipelineV2Run: (payload: {
+    filePath: string;
+    pipelineId: string;
+    profilesDir: string;
+    outputPath?: string;
+    outputDir?: string;
+    rulesPrePath?: string;
+    rulesPostPath?: string;
+    glossaryPath?: string;
+    sourceLang?: string;
+    enableQuality?: boolean;
+    textProtect?: boolean;
+    resume?: boolean;
+    cacheDir?: string;
+    saveCache?: boolean;
+    runId?: string;
+  }) => ipcRenderer.invoke("pipelinev2-run", payload),
+  pipelineV2Stop: () => ipcRenderer.send("stop-pipelinev2"),
   getHardwareSpecs: () => ipcRenderer.invoke("get-hardware-specs"),
   stopTranslation: () => ipcRenderer.send("stop-translation"),
   getGlossaries: () => ipcRenderer.invoke("get-glossaries"),
@@ -77,6 +163,8 @@ const api = {
     ipcRenderer.send("show-notification", { title, body }),
   onLogUpdate: (callback: (log: string) => void) =>
     addIpcListener("log-update", callback),
+  onPipelineV2Log: (callback: (data: any) => void) =>
+    addIpcListener("pipelinev2-log", callback),
   onProcessExit: (callback: (payload: ProcessExitPayload) => void) =>
     addIpcListener("process-exit", (payload: any) => {
       if (typeof payload === "number" || payload === null) {
@@ -84,11 +172,23 @@ const api = {
         return;
       }
       callback({
-        code: typeof payload?.code === "number" || payload?.code === null ? payload.code : null,
-        signal: typeof payload?.signal === "string" || payload?.signal === null ? payload.signal : null,
+        code:
+          typeof payload?.code === "number" || payload?.code === null
+            ? payload.code
+            : null,
+        signal:
+          typeof payload?.signal === "string" || payload?.signal === null
+            ? payload.signal
+            : null,
         stopRequested: Boolean(payload?.stopRequested),
       });
     }),
+
+  pipelineV2SandboxTest: (payload: {
+    text: string;
+    pipeline: Record<string, any>;
+    apiProfileId?: string;
+  }) => ipcRenderer.invoke("pipelinev2-sandbox-test", payload),
 
   // Glossary Management
   readGlossaryFile: (filename: string) =>
@@ -126,7 +226,11 @@ const api = {
     ipcRenderer.invoke("watch-folder-remove", id),
   watchFolderList: () => ipcRenderer.invoke("watch-folder-list"),
   onWatchFolderFileAdded: (
-    callback: (payload: { watchId: string; path: string; addedAt: string }) => void,
+    callback: (payload: {
+      watchId: string;
+      path: string;
+      addedAt: string;
+    }) => void,
   ) => addIpcListener("watch-folder-file-added", callback),
 
   // Server Manager
@@ -175,8 +279,10 @@ const api = {
   // Debug Export
   readServerLog: () => ipcRenderer.invoke("read-server-log"),
   getMainProcessLogs: () => ipcRenderer.invoke("get-main-process-logs"),
-  readTextTail: (path: string, options?: { maxBytes?: number; lineCount?: number }) =>
-    ipcRenderer.invoke("read-text-tail", path, options),
+  readTextTail: (
+    path: string,
+    options?: { maxBytes?: number; lineCount?: number },
+  ) => ipcRenderer.invoke("read-text-tail", path, options),
 
   // Theme Sync (for Windows title bar)
   setTheme: (theme: "dark" | "light") => ipcRenderer.send("set-theme", theme),

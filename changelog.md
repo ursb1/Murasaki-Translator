@@ -1,5 +1,38 @@
 # Murasaki Translator - Changelog
 
+## [2.0.0] - 2026-02-22
+
+### Pipeline V2 引擎上线（核心）
+
+*   新增 `murasaki_flow_v2` 独立运行时，包含 Provider/Prompt/Parser/Policy/Chunk 全链路注册与执行，支持从配置组合成可复用 Pipeline。
+*   新增 Pipeline V2 Runner：支持并发执行（含自适应并发 `concurrency=0`）、中断/强杀、断点恢复（resume + cache + fingerprint），并可按需启用质量检查与文本保护。
+*   新增 Flow V2 结构化日志协议与统计上报：统一输出路径、缓存路径、重试事件、告警事件与最终统计。
+*   修复发布包（含嵌入式 Python）下 Pipeline V2 的模块导入兼容性问题，并将本地字体权限收敛为仅允许 `local-fonts`。
+
+### API 管理中心（GUI）
+
+*   新增 `ApiManagerView` 页面与侧栏入口，支持 API / Pipeline / Prompt / Parser / Policy / Chunk 六类配置的一体化管理。
+*   支持 YAML 编辑、引用联动更新、本地/服务端双路径读写、批量加载、冲突提示与安全校验。
+*   新增联机工具：API 连通性测试、模型列表探测、并发压测、Pipeline Sandbox 单条链路调试（预处理→请求→响应→解析→后处理）。
+
+### 主流程切换到双引擎模式
+
+*   Dashboard 新增 `v1 / v2` 引擎切换：`v1` 继续本地模型翻译，`v2` 走 API Pipeline 翻译。
+*   队列与历史记录接入 V2 字段：支持单文件覆盖 `engineMode`，并在 `useGlobalDefaults=false` 时允许文件级 `v2PipelineId` 覆盖全局 Pipeline；历史记录新增 `engineVersion`、`v2Config`、`v2Stats`。
+*   运行态监控分离：V1 显示硬件监控，V2 显示 API 监控（URL / Ping / RPM / 并发）。
+
+### 后端服务与配置体系
+
+*   新增 Pipeline V2 本地 API Server（Loopback-only），提供 profiles CRUD、校验与 sandbox 接口；服务不可用时自动回退本地文件模式。
+*   新增配置目录迁移与默认模板下发：自动从旧 `pipeline_v2_profiles` 迁移到用户目录，并补齐默认 profiles。
+*   新增 OpenAI 兼容 Provider 与 Pool Provider（多端点权重分发、RPM 限流、API Key 轮换、超时与请求参数透传）。
+
+### 解析与策略能力扩展
+
+*   新增多种 Parser：`plain` / `line_strict` / `json_array` / `json_object` / `jsonl` / `tagged_line` / `regex` / `any` / `python`。
+*   新增 Pipeline 规则校验：字段合法性、引用完整性、Prompt/Parser 组合约束、Chunk/LinePolicy 约束、Python 脚本风险告警。
+*   新增 Sandbox 规则追踪输出，便于定位预处理与后处理链路问题。
+
 ## [1.8.0] - 2026-02-14
 
 ### 校对与重翻

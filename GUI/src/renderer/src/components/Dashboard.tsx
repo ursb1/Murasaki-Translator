@@ -5,6 +5,7 @@ import {
   useCallback,
   forwardRef,
   useImperativeHandle,
+  type MouseEvent,
 } from "react";
 import {
   Play,
@@ -50,6 +51,7 @@ import {
   Brush,
 } from "recharts";
 import { HardwareMonitorBar, MonitorData } from "./HardwareMonitorBar";
+import { ApiMonitorBar, ApiMonitorData } from "./ApiMonitorBar";
 import { AlertModal } from "./ui/AlertModal";
 import { useAlertModal } from "../hooks/useAlertModal";
 import { FileIcon } from "./ui/FileIcon";
@@ -62,7 +64,23 @@ import {
 import type { ProcessExitPayload } from "../types/api";
 import { FileConfigModal } from "./LibraryView";
 import { stripSystemMarkersForDisplay } from "../lib/displayText";
+import {
+  resolveQueueItemEngineMode,
+  resolveQueueItemPipelineId,
+  shouldIgnoreEngineModeToggle,
+} from "../lib/engineModeSwitch";
 import type { UseRemoteRuntimeResult } from "../hooks/useRemoteRuntime";
+import { resolveRuleListForRun } from "../lib/rulesConfig";
+import {
+  formatProgressCount,
+  formatProgressPercent,
+} from "../lib/progressDisplay";
+import {
+  applyFinalPayloadToV2HistoryStats,
+  applyProgressPayloadToV2HistoryStats,
+  applyRetryEventToV2HistoryStats,
+  createEmptyV2HistoryStats,
+} from "../lib/v2HistoryStats";
 
 // Window.api type is defined in src/types/api.d.ts
 
@@ -116,7 +134,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
             status: "pending" as const,
           })) as QueueItem[];
         }
-      } catch (e) { }
+      } catch (e) {
+        // Ignore legacy queue parse failure and continue with empty queue.
+      }
       return [];
     });
 
@@ -136,7 +156,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
             });
             setCompletedFiles(completed);
           }
-        } catch (e) { }
+        } catch (e) {
+          // Ignore malformed persisted queue and keep current in-memory state.
+        }
       }
     }, [active]);
 
@@ -187,17 +209,187 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       };
     }, []);
 
-
     // Monitors
     const [monitorData, setMonitorData] = useState<MonitorData | null>(null);
+    const [apiMonitorData, setApiMonitorData] = useState<ApiMonitorData>({
+      url: "",
+      ping: null,
+      rpm: 0,
+      concurrency: 0,
+    });
+
+    // --- V1/V2 引擎模式 ---
+    const [engineMode, setEngineMode] = useState<"v1" | "v2">(
+      () => (localStorage.getItem("config_engine_mode") as "v1" | "v2") || "v1",
+    );
+    const [v2PipelineId, setV2PipelineId] = useState<string>(() => {
+      // 优先读 Dashboard 自己的存储，再 fallback 到 ApiManager 的选择
+      const dashboardVal = localStorage.getItem("config_v2_pipeline_id");
+      if (dashboardVal) return dashboardVal;
+      try {
+        const apiMgrVal = localStorage.getItem(
+          "murasaki.v2.active_pipeline_id",
+        );
+        if (apiMgrVal) return JSON.parse(apiMgrVal) as string;
+      } catch {
+        /* ignore */
+      }
+      return "";
+    });
+    const [v2Profiles, setV2Profiles] = useState<
+      Array<{
+        id: string;
+        name: string;
+        providerName?: string;
+        chunkType?: "line" | "block";
+      }>
+    >([]);
+    const engineModeRef = useRef(engineMode);
+    useEffect(() => {
+      engineModeRef.current = engineMode;
+    }, [engineMode]);
+    useEffect(() => {
+      localStorage.setItem("config_engine_mode", engineMode);
+    }, [engineMode]);
+    useEffect(() => {
+      localStorage.setItem("config_v2_pipeline_id", v2PipelineId);
+    }, [v2PipelineId]);
+
+    // V2 Pipeline profiles 加载
+    useEffect(() => {
+      if (!active || engineMode !== "v2") return;
+      window.api
+        ?.pipelineV2ProfilesList?.("pipeline")
+        .then((profiles: any[]) => {
+          if (Array.isArray(profiles)) {
+            setV2Profiles(
+              profiles.map((p: any) => ({
+                id: p.id,
+                name: p.name || p.id,
+                providerName: p.providerName,
+                chunkType: normalizeChunkType(p.chunk_type ?? p.chunkType),
+              })),
+            );
+            // 如果当前没选择但ApiManager有选择，自动同步
+            if (!v2PipelineId && profiles.length > 0) {
+              try {
+                const apiMgrVal = localStorage.getItem(
+                  "murasaki.v2.active_pipeline_id",
+                );
+                if (apiMgrVal) {
+                  const parsed = JSON.parse(apiMgrVal) as string;
+                  if (profiles.some((p: any) => p.id === parsed)) {
+                    setV2PipelineId(parsed);
+                  }
+                }
+              } catch {
+                /* ignore */
+              }
+            }
+          }
+        });
+    }, [active, engineMode]);
+
+    // Extract provider info for API Monitor
+    const [isRunning, setIsRunning] = useState(false);
+
+    // Sync running state
+    useEffect(() => {
+      onRunningChange?.(isRunning);
+    }, [isRunning, onRunningChange]);
+
+    useEffect(() => {
+      if (engineMode !== "v2" || !v2PipelineId || !active) return;
+
+      let isSubscribed = true;
+      const loadProviderInfo = async (probeLatency: boolean) => {
+        try {
+          const pipeProfile = await window.api?.pipelineV2ProfilesLoad?.(
+            "pipeline",
+            v2PipelineId,
+          );
+          const pipeData = pipeProfile?.data;
+          const providerId = String(pipeData?.provider || "").trim();
+          if (!providerId || !isSubscribed) return;
+
+          const provProfile = await window.api?.pipelineV2ProfilesLoad?.(
+            "api",
+            providerId,
+          );
+          const provData = provProfile?.data;
+          if (
+            !provData ||
+            (!provData.url && !provData.baseUrl && !provData.base_url) ||
+            !isSubscribed
+          )
+            return;
+
+          const targetUrl = (
+            provData.base_url ||
+            provData.baseUrl ||
+            provData.url ||
+            ""
+          ).trim();
+          const apiKey = (
+            provData.api_key ||
+            provData.apiKey ||
+            ""
+          ).trim();
+          const rawConcurrency =
+            pipeData?.settings?.concurrency ?? pipeData?.concurrency ?? 0;
+          const resolvedConcurrency = Number.isFinite(Number(rawConcurrency))
+            ? Number(rawConcurrency)
+            : 0;
+          setApiMonitorData((prev) => ({
+            ...prev,
+            url: targetUrl,
+            concurrency: resolvedConcurrency,
+          }));
+
+          if (!probeLatency) return;
+
+          const startAt = Date.now();
+          const pingRes = await window.api?.pipelineV2ApiModels?.({
+            baseUrl: targetUrl,
+            apiKey: apiKey || undefined,
+            timeoutMs: 5000,
+          });
+
+          if (isSubscribed) {
+            setApiMonitorData((prev) => ({
+              ...prev,
+              ping: pingRes?.ok ? Math.max(0, Date.now() - startAt) : null,
+            }));
+          }
+        } catch (e) {
+          console.error("Failed to load provider info for monitor", e);
+        }
+      };
+
+      loadProviderInfo(isRunning);
+
+      const intervalId = setInterval(() => {
+        if (!isRunning) return;
+        loadProviderInfo(true);
+      }, 30000);
+
+      return () => {
+        isSubscribed = false;
+        clearInterval(intervalId);
+      };
+    }, [engineMode, v2PipelineId, active, isRunning]);
 
     const [modelPath, setModelPath] = useState<string>("");
     const [promptPreset, setPromptPreset] = useState<string>(
       () => localStorage.getItem("config_preset") || "novel",
     );
     const [glossaryPath, setGlossaryPath] = useState<string>("");
-    const [localGlossaries, setLocalGlossaries] = useState<GlossaryOption[]>([]);
-    const [remoteGlossaries, setRemoteGlossaries] = useState<GlossaryOption[]>([]);
+    const [localGlossaries, setLocalGlossaries] = useState<GlossaryOption[]>(
+      [],
+    );
+    const [remoteGlossaries, setRemoteGlossaries] = useState<GlossaryOption[]>(
+      [],
+    );
     const [models, setModels] = useState<string[]>([]);
     const [modelsInfoMap, setModelsInfoMap] = useState<
       Record<string, { paramsB?: number; sizeGB?: number }>
@@ -212,7 +404,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
     const isRemoteModeRef = useRef(isRemoteMode);
     const glossarySelectionEphemeralRef = useRef(false);
     const activeModelPath = isRemoteMode ? remoteModelPath : modelPath;
-    const activeModelsCount = isRemoteMode ? remoteModels.length : models.length;
+    const activeModelsCount = isRemoteMode
+      ? remoteModels.length
+      : models.length;
     const preferredGlossaries =
       isRemoteMode && localGlossaries.length === 0
         ? remoteGlossaries
@@ -221,7 +415,6 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       ? remoteModels.find((model) => model.path === remoteModelPath)
       : null;
     const { alertProps, showAlert, showConfirm } = useAlertModal();
-
 
     useEffect(() => {
       if (!active) return;
@@ -254,7 +447,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
             const info = await window.api?.getModelInfo(model);
             if (info)
               infoMap[model] = { paramsB: info.paramsB, sizeGB: info.sizeGB };
-          } catch (e) { }
+          } catch (e) {
+            // Ignore model info fetch failures and keep remaining model metadata.
+          }
         }
         setModelsInfoMap(infoMap);
       }
@@ -280,7 +475,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       }
       setRemoteLoading(true);
       try {
-        // @ts-ignore
+        // @ts-ignore - preload typings do not declare remoteModels yet.
         const result = await window.api?.remoteModels?.();
         if (result?.ok && Array.isArray(result.data)) {
           const mapped = result.data
@@ -306,14 +501,13 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         return;
       }
       try {
-        // @ts-ignore
+        // @ts-ignore - preload typings do not declare remoteGlossaries yet.
         const result = await window.api?.remoteGlossaries?.();
         if (result?.ok && Array.isArray(result.data)) {
           const mapped = result.data
             .map((item: any) => {
               const rawPath = String(item?.path || "").trim();
-              const baseFromPath =
-                rawPath.split(/[/\\]/).pop() || "";
+              const baseFromPath = rawPath.split(/[/\\]/).pop() || "";
               const rawName = String(item?.name || baseFromPath || "").trim();
               if (!rawName) return null;
               const fileName = rawName.endsWith(".json")
@@ -384,13 +578,6 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       () => localStorage.getItem("config_alignment_mode") === "true",
     );
 
-    const [isRunning, setIsRunning] = useState(false);
-
-    // Sync running state
-    useEffect(() => {
-      onRunningChange?.(isRunning);
-    }, [isRunning, onRunningChange]);
-
     const [isReordering, setIsReordering] = useState(false);
     const [configItem, setConfigItem] = useState<QueueItem | null>(null);
     const [logs, setLogs] = useState<string[]>([]);
@@ -402,6 +589,14 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       if (value === "novel") return labels.novel;
       if (value === "script") return labels.script;
       return labels.short;
+    };
+
+    const normalizeChunkType = (raw: unknown): "line" | "block" | undefined => {
+      if (typeof raw !== "string") return undefined;
+      const normalized = raw.trim().toLowerCase();
+      if (normalized === "line") return "line";
+      if (normalized === "block" || normalized === "legacy") return "block";
+      return undefined;
     };
 
     // Collapsible Panels
@@ -439,6 +634,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       sourceLines: number;
       sourceChars: number;
       outputPath: string;
+      cacheDir: string;
+      cachePath: string;
       speeds: number[];
     }>({
       total: 0,
@@ -448,17 +645,35 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       sourceLines: 0,
       sourceChars: 0,
       outputPath: "",
+      cacheDir: "",
+      cachePath: "",
       speeds: [],
     });
     const finalStatsRef = useRef<{
       totalTime?: number;
       avgSpeed?: number;
     } | null>(null);
+    const v2StatsRef = useRef<NonNullable<TranslationRecord["v2Stats"]> | null>(
+      null,
+    );
 
     // Ref to hold the fresh checkAndStart function (avoids closure stale state in handleProcessExit)
     const checkAndStartRef = useRef<
-      (inputPath: string, index: number) => Promise<void>
+      (
+        inputPath: string,
+        index: number,
+        modeOverride?: "v1" | "v2",
+      ) => Promise<void>
     >(() => Promise.resolve());
+    const currentRunEngineModeRef = useRef<"v1" | "v2" | null>(null);
+
+    const resolveEngineModeForQueueIndex = useCallback(
+      (index: number): "v1" | "v2" => {
+        const queueItem = queueRef.current[index];
+        return resolveQueueItemEngineMode(queueItem, engineModeRef.current);
+      },
+      [],
+    );
 
     // Auto-scroll ref
     const activeQueueItemRef = useRef<HTMLDivElement>(null);
@@ -483,7 +698,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       type: "success" | "warning" | "error";
       message: string;
     } | null>(null);
-    const runNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const runNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+      null,
+    );
     const [displayElapsed, setDisplayElapsed] = useState(0); // 本地平滑计时(基于后端数据)
     const [displayRemaining, setDisplayRemaining] = useState(0); // 本地平滑倒计时
     const [chartData, setChartData] = useState<any[]>([]);
@@ -540,6 +757,11 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       },
       [],
     );
+    const toFiniteNumber = (value: unknown): number | null => {
+      if (typeof value !== "number" || !Number.isFinite(value)) return null;
+      return value;
+    };
+    const lastJsonMonitorAtRef = useRef(0);
 
     useEffect(() => {
       return () => {
@@ -569,7 +791,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       } else {
         const savedModel = localStorage.getItem("config_model");
         if (savedModel) setModelPath(savedModel);
-        const savedGlossary = localStorage.getItem("config_glossary_path") || "";
+        const savedGlossary =
+          localStorage.getItem("config_glossary_path") || "";
         setGlossaryPath(savedGlossary);
         glossarySelectionEphemeralRef.current = false;
       }
@@ -642,7 +865,10 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       const code = payload?.code ?? null;
       const signal = payload?.signal ?? null;
       const stopRequested = payload?.stopRequested === true;
+      const runModeAtExit =
+        currentRunEngineModeRef.current || engineModeRef.current;
       setIsRunning(false);
+      currentRunEngineModeRef.current = null;
       const success = code === 0;
       const finalStatus: TranslationRecord["status"] = success
         ? "completed"
@@ -684,21 +910,31 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           finalStatsRef.current?.avgSpeed ??
           (effectiveDuration > 0
             ? Number(
-              (progressDataRef.current.chars / effectiveDuration).toFixed(1),
-            )
+                (progressDataRef.current.chars / effectiveDuration).toFixed(1),
+              )
             : 0);
+        const resolvedCachePath = progressDataRef.current.outputPath
+          ? progressDataRef.current.cachePath ||
+            resolveCachePath(
+              progressDataRef.current.outputPath,
+              progressDataRef.current.cacheDir,
+            )
+          : "";
         updateRecord(currentRecordIdRef.current, {
           endTime: new Date().toISOString(),
           duration: Math.round(effectiveDuration),
           status: finalStatus,
-          executionMode: remoteInfoRef.current?.executionMode as any || "local",
-          remoteInfo: remoteInfoRef.current ? {
-            serverUrl: remoteInfoRef.current.serverUrl || "",
-            source: remoteInfoRef.current.source || "",
-            taskId: remoteInfoRef.current.taskId,
-            model: remoteInfoRef.current.model,
-            serverVersion: remoteInfoRef.current.serverVersion,
-          } : undefined,
+          executionMode:
+            (remoteInfoRef.current?.executionMode as any) || "local",
+          remoteInfo: remoteInfoRef.current
+            ? {
+                serverUrl: remoteInfoRef.current.serverUrl || "",
+                source: remoteInfoRef.current.source || "",
+                taskId: remoteInfoRef.current.taskId,
+                model: remoteInfoRef.current.model,
+                serverVersion: remoteInfoRef.current.serverVersion,
+              }
+            : undefined,
           totalBlocks: progressDataRef.current.total,
           completedBlocks: progressDataRef.current.current,
           totalLines: progressDataRef.current.lines,
@@ -706,9 +942,15 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           sourceLines: progressDataRef.current.sourceLines,
           sourceChars: progressDataRef.current.sourceChars,
           outputPath: progressDataRef.current.outputPath,
+          cachePath: resolvedCachePath || undefined,
           avgSpeed: avgSpeed,
+          ...(runModeAtExit === "v2" && v2StatsRef.current
+            ? { v2Stats: v2StatsRef.current }
+            : {}),
           logs: logsBufferRef.current.slice(-MAX_HISTORY_LOG_LINES),
-          llamaLogs: llamaLogsBufferRef.current.slice(-MAX_HISTORY_LLAMA_LOG_LINES),
+          llamaLogs: llamaLogsBufferRef.current.slice(
+            -MAX_HISTORY_LLAMA_LOG_LINES,
+          ),
           triggers: triggersBufferRef.current,
         });
         if (progressDataRef.current.outputPath) {
@@ -723,9 +965,12 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           sourceLines: 0,
           sourceChars: 0,
           outputPath: "",
+          cacheDir: "",
+          cachePath: "",
           speeds: [],
         };
         finalStatsRef.current = null;
+        v2StatsRef.current = null;
         llamaLogsBufferRef.current = [];
       }
 
@@ -765,7 +1010,12 @@ export const Dashboard = forwardRef<any, DashboardProps>(
 
           setTimeout(() => {
             if (queue[nextIndex]) {
-              checkAndStartRef.current(queue[nextIndex].path, nextIndex);
+              const nextMode = resolveEngineModeForQueueIndex(nextIndex);
+              checkAndStartRef.current(
+                queue[nextIndex].path,
+                nextIndex,
+                nextMode,
+              );
             }
           }, 1000);
         } else if (currentItem) {
@@ -850,7 +1100,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
 
           if (log.startsWith("JSON_REMOTE_INFO:")) {
             try {
-              const data = JSON.parse(log.substring("JSON_REMOTE_INFO:".length));
+              const data = JSON.parse(
+                log.substring("JSON_REMOTE_INFO:".length),
+              );
               remoteInfoRef.current = data;
             } catch (e) {
               console.error("JSON_REMOTE_INFO Parse Error:", e);
@@ -867,7 +1119,10 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                   : String(data?.line || "").trim();
               if (line) {
                 llamaLogsBufferRef.current.push(line);
-                if (llamaLogsBufferRef.current.length > MAX_HISTORY_LLAMA_LOG_LINES) {
+                if (
+                  llamaLogsBufferRef.current.length >
+                  MAX_HISTORY_LLAMA_LOG_LINES
+                ) {
                   llamaLogsBufferRef.current = llamaLogsBufferRef.current.slice(
                     -MAX_HISTORY_LLAMA_LOG_LINES,
                   );
@@ -884,6 +1139,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
               const monitorPayload = JSON.parse(
                 log.substring("JSON_MONITOR:".length),
               );
+              lastJsonMonitorAtRef.current = Date.now();
               setMonitorData(monitorPayload);
               if (typeof monitorPayload.vram_percent === "number") {
                 pushChartPoint("vram", monitorPayload.vram_percent);
@@ -912,38 +1168,93 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           if (log.startsWith("JSON_PROGRESS:")) {
             try {
               const data = JSON.parse(log.substring("JSON_PROGRESS:".length));
+              const realtimeSpeedChars =
+                toFiniteNumber(data.realtime_speed_chars) ??
+                toFiniteNumber(data.speed_chars);
+              const realtimeSpeedLines =
+                toFiniteNumber(data.realtime_speed_lines) ??
+                toFiniteNumber(data.speed_lines);
+              const realtimeSpeedGen =
+                toFiniteNumber(data.realtime_speed_gen) ??
+                toFiniteNumber(data.speed_gen);
+              const realtimeSpeedEval =
+                toFiniteNumber(data.realtime_speed_eval) ??
+                toFiniteNumber(data.speed_eval);
+              const realtimeSpeedTokens =
+                toFiniteNumber(data.realtime_speed_tokens) ??
+                (realtimeSpeedGen ?? 0) + (realtimeSpeedEval ?? 0);
+
               // 直接使用后端数据，不保留旧值(避免上一次运行的残留)
               setProgress((prev) => ({
                 current:
-                  typeof data.current === "number" ? data.current : prev.current,
+                  typeof data.current === "number"
+                    ? data.current
+                    : prev.current,
                 total: typeof data.total === "number" ? data.total : prev.total,
                 percent:
-                  typeof data.percent === "number" ? data.percent : prev.percent,
+                  typeof data.percent === "number"
+                    ? data.percent
+                    : prev.percent,
                 elapsed:
-                  typeof data.elapsed === "number" ? data.elapsed : prev.elapsed,
+                  typeof data.elapsed === "number"
+                    ? data.elapsed
+                    : prev.elapsed,
                 remaining:
                   typeof data.remaining === "number"
                     ? Math.max(0, data.remaining)
                     : prev.remaining,
                 speedLines:
-                  typeof data.speed_lines === "number"
-                    ? data.speed_lines
+                  typeof realtimeSpeedLines === "number"
+                    ? realtimeSpeedLines
                     : prev.speedLines,
                 speedChars:
-                  typeof data.speed_chars === "number"
-                    ? data.speed_chars
+                  typeof realtimeSpeedChars === "number"
+                    ? realtimeSpeedChars
                     : prev.speedChars,
                 speedEval:
-                  typeof data.speed_eval === "number"
-                    ? data.speed_eval
+                  typeof realtimeSpeedEval === "number"
+                    ? realtimeSpeedEval
                     : prev.speedEval,
                 speedGen:
-                  typeof data.speed_gen === "number"
-                    ? data.speed_gen
+                  typeof realtimeSpeedGen === "number"
+                    ? realtimeSpeedGen
                     : prev.speedGen,
                 // If block changed, reset retries
                 retries: data.current !== prev.current ? 0 : prev.retries,
               }));
+
+              const payloadRpm = toFiniteNumber(data.api_rpm);
+              const payloadRequests = toFiniteNumber(data.total_requests);
+              const payloadElapsed = toFiniteNumber(data.elapsed);
+              const fallbackRpm =
+                payloadRequests !== null &&
+                payloadElapsed !== null &&
+                payloadElapsed > 0
+                  ? (payloadRequests / payloadElapsed) * 60
+                  : null;
+              if (
+                data.api_ping !== undefined ||
+                data.api_concurrency !== undefined ||
+                data.api_url !== undefined ||
+                payloadRpm !== null ||
+                fallbackRpm !== null
+              ) {
+                setApiMonitorData((prev) => ({
+                  ...prev,
+                  ping: data.api_ping !== undefined ? data.api_ping : prev.ping,
+                  concurrency:
+                    data.api_concurrency !== undefined
+                      ? data.api_concurrency
+                      : prev.concurrency,
+                  url: data.api_url !== undefined ? data.api_url : prev.url,
+                  rpm:
+                    payloadRpm !== null
+                      ? payloadRpm
+                      : fallbackRpm !== null
+                        ? fallbackRpm
+                        : prev.rpm,
+                }));
+              }
 
               // Track for history record
               progressDataRef.current = {
@@ -956,22 +1267,39 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                 sourceChars:
                   data.source_chars ?? progressDataRef.current.sourceChars,
                 outputPath: progressDataRef.current.outputPath, // 保留已设置的输出路径
+                cacheDir: progressDataRef.current.cacheDir,
+                cachePath: progressDataRef.current.cachePath,
                 speeds:
                   data.speed_chars > 0
                     ? [
-                      ...progressDataRef.current.speeds,
-                      data.speed_chars,
-                    ].slice(-20)
+                        ...progressDataRef.current.speeds,
+                        data.speed_chars,
+                      ].slice(-20)
                     : progressDataRef.current.speeds,
               };
+              if (v2StatsRef.current) {
+                v2StatsRef.current = applyProgressPayloadToV2HistoryStats(
+                  v2StatsRef.current,
+                  data as Record<string, unknown>,
+                );
+              }
 
-              // Update legacy values only if chart history is empty (fallback)
-              // The primary chart driver is now JSON_MONITOR
+              const shouldUseProgressAsChartDriver =
+                engineModeRef.current === "v2" ||
+                Date.now() - lastJsonMonitorAtRef.current > 1500;
               if (
-                chartHistoriesRef.current.chars.length === 0 &&
-                data.speed_chars > 0
+                shouldUseProgressAsChartDriver &&
+                realtimeSpeedChars !== null &&
+                realtimeSpeedChars >= 0
               ) {
-                pushChartPoint("chars", data.speed_chars);
+                pushChartPoint("chars", realtimeSpeedChars);
+              }
+              if (
+                shouldUseProgressAsChartDriver &&
+                Number.isFinite(realtimeSpeedTokens) &&
+                realtimeSpeedTokens >= 0
+              ) {
+                pushChartPoint("tokens", realtimeSpeedTokens);
               }
               scheduleChartRefresh();
             } catch (e) {
@@ -993,7 +1321,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                       ? "empty_retry"
                       : data.type === "anchor_missing"
                         ? "anchor_missing"
-                        : "line_mismatch";
+                        : data.type === "provider_error"
+                          ? "provider_error"
+                          : "line_mismatch";
               const retryMessages = t.dashboard.retryMessages;
               const coverageText =
                 typeof data.coverage === "number"
@@ -1006,25 +1336,38 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                 message:
                   data.type === "repetition"
                     ? retryMessages.repPenalty.replace(
-                      "{value}",
-                      String(data.penalty),
-                    )
+                        "{value}",
+                        String(data.penalty),
+                      )
                     : data.type === "glossary"
-                      ? retryMessages.glossaryCoverage
-                        .replace("{coverage}", coverageText)
-                  : data.type === "empty"
-                    ? retryMessages.emptyBlock
-                      .replace("{block}", String(data.block))
-                    : data.type === "anchor_missing"
-                      ? retryMessages.anchorMissing
-                        .replace("{block}", String(data.block))
-                      : retryMessages.lineMismatch
-                        .replace("{block}", String(data.block))
-                        .replace(
-                          "{diff}",
-                          String(data.src_lines - data.dst_lines),
-                        ),
+                      ? retryMessages.glossaryCoverage.replace(
+                          "{coverage}",
+                          coverageText,
+                        )
+                      : data.type === "empty"
+                        ? retryMessages.emptyBlock.replace(
+                            "{block}",
+                            String(data.block),
+                          )
+                        : data.type === "anchor_missing"
+                          ? retryMessages.anchorMissing.replace(
+                              "{block}",
+                              String(data.block),
+                            )
+                          : data.type === "provider_error"
+                            ? retryMessages.providerError
+                            : retryMessages.lineMismatch
+                                .replace("{block}", String(data.block))
+                                .replace(
+                                  "{diff}",
+                                  String(data.src_lines - data.dst_lines),
+                                ),
               });
+              if (v2StatsRef.current) {
+                v2StatsRef.current = applyRetryEventToV2HistoryStats(
+                  v2StatsRef.current,
+                );
+              }
             } catch (e) {
               console.error("JSON_RETRY Parse Error:", e, log);
             }
@@ -1032,7 +1375,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
             try {
               const jsonStr = log.substring(
                 log.indexOf("JSON_PREVIEW_BLOCK:") +
-                "JSON_PREVIEW_BLOCK:".length,
+                  "JSON_PREVIEW_BLOCK:".length,
               );
               const data = JSON.parse(jsonStr);
               // Update specific block
@@ -1049,7 +1392,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                     "last_preview_blocks",
                     JSON.stringify(next),
                   );
-                } catch (e) { }
+                } catch (e) {
+                  // Best-effort persistence; ignore storage quota/runtime errors.
+                }
                 return next;
               });
             } catch (e) {
@@ -1061,22 +1406,42 @@ export const Dashboard = forwardRef<any, DashboardProps>(
               const data = JSON.parse(
                 log.substring("JSON_OUTPUT_PATH:".length),
               );
-              progressDataRef.current.outputPath = data.path || "";
-              if (data.path) setLastOutputPath(data.path);
+              const outputPath = data.path || "";
+              progressDataRef.current.outputPath = outputPath;
+              progressDataRef.current.cachePath = outputPath
+                ? resolveCachePath(outputPath, progressDataRef.current.cacheDir)
+                : "";
+              if (outputPath) setLastOutputPath(outputPath);
             } catch (e) {
               console.error("Output Path Parse Error:", e);
+            }
+            return;
+          } else if (log.startsWith("JSON_CACHE_PATH:")) {
+            // V2 发射的精准缓存路径（覆盖 resolveCachePath 的推导值）
+            try {
+              const data = JSON.parse(log.substring("JSON_CACHE_PATH:".length));
+              if (data.path) {
+                progressDataRef.current.cachePath = data.path;
+              }
+            } catch (e) {
+              console.error("JSON_CACHE_PATH Parse Error:", e);
             }
             return;
           } else if (log.startsWith("JSON_WARNING:")) {
             // Quality check warnings from backend
             try {
               const data = JSON.parse(log.substring("JSON_WARNING:".length));
+              const warningBlock =
+                typeof data.block === "number" ? data.block : 0;
+              const warningLine =
+                typeof data.line === "number" ? data.line : undefined;
               triggersBufferRef.current.push({
                 time: new Date().toISOString(),
                 type: (data.type
                   ? `warning_${data.type}`
                   : "warning_quality") as any,
-                block: data.block || 0,
+                block: warningBlock,
+                line: warningLine,
                 message: data.message || "",
               });
             } catch (e) {
@@ -1121,6 +1486,12 @@ export const Dashboard = forwardRef<any, DashboardProps>(
 
               // Update history record with final stats
               if (currentRecordIdRef.current) {
+                if (v2StatsRef.current) {
+                  v2StatsRef.current = applyFinalPayloadToV2HistoryStats(
+                    v2StatsRef.current,
+                    data as Record<string, unknown>,
+                  );
+                }
                 updateRecord(currentRecordIdRef.current, {
                   sourceLines: data.sourceLines,
                   sourceChars: data.sourceChars,
@@ -1128,6 +1499,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                   totalChars: data.outputChars,
                   avgSpeed: data.avgSpeed,
                   duration: data.totalTime,
+                  ...(v2StatsRef.current ? { v2Stats: v2StatsRef.current } : {}),
                 });
               }
             } catch (e) {
@@ -1156,6 +1528,25 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         unsubscribeLog?.();
         unsubscribeExit?.();
       };
+    }, []);
+
+    // pipelinev2-log: 接收 V2 stderr/debug 日志并显示
+    useEffect(() => {
+      const unsubscribeV2Log = window.api?.onPipelineV2Log?.(
+        (data: { runId?: string; message?: string; level?: string }) => {
+          const msg = (data.message || "").trim();
+          if (!msg) return;
+          const prefix = data.level === "error" ? "[V2 stderr] " : "[V2] ";
+          setLogs((prev) => [...prev.slice(-200), `${prefix}${msg}`]);
+          logsBufferRef.current.push(`${prefix}${msg}`);
+          if (logsBufferRef.current.length > MAX_HISTORY_LOG_LINES) {
+            logsBufferRef.current = logsBufferRef.current.slice(
+              -MAX_HISTORY_LOG_LINES,
+            );
+          }
+        },
+      );
+      return () => unsubscribeV2Log?.();
     }, []);
 
     // 快捷键监听 (带有依赖数组，防止闭包陷阱)
@@ -1252,8 +1643,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           setDisplayRemaining(Math.floor(progress.remaining));
         } else if (localStartTimeRef.current > 0) {
           // 后端尚未给出 elapsed，先用本地计时避免一直为 0
-          const localElapsed =
-            (Date.now() - localStartTimeRef.current) / 1000;
+          const localElapsed = (Date.now() - localStartTimeRef.current) / 1000;
           setDisplayElapsed(Math.floor(localElapsed));
           setDisplayRemaining(0);
         }
@@ -1437,14 +1827,16 @@ export const Dashboard = forwardRef<any, DashboardProps>(
     }, [t, showConfirm]);
 
     const handleRetryFailed = useCallback(() => {
-      const failedCount = queue.filter((item) => item.status === "failed").length;
+      const failedCount = queue.filter(
+        (item) => item.status === "failed",
+      ).length;
       if (failedCount === 0) {
         pushQueueNotice({ type: "info", message: t.dashboard.retryFailedNone });
         return;
       }
       const nextQueue = queue.map((item) =>
         item.status === "failed"
-          ? { ...item, status: "pending", error: undefined }
+          ? { ...item, status: "pending" as const, error: undefined }
           : item,
       );
       setQueue(nextQueue);
@@ -1569,6 +1961,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       forceResume?: boolean,
       glossaryOverride?: string,
     ) => {
+      currentRunEngineModeRef.current = "v1";
       setIsRunning(true);
       setDisplayElapsed(0);
       setDisplayRemaining(0);
@@ -1598,6 +1991,10 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         speedGen: 0,
         retries: 0,
       });
+      setApiMonitorData((prev) => ({
+        ...prev,
+        rpm: 0,
+      }));
       setPreviewBlocks({});
       setLastOutputPath("");
       localStorage.removeItem("last_preview_blocks"); // Clear persisted preview
@@ -1611,34 +2008,10 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       const pickCustom = <T,>(customValue: T | undefined, globalValue: T): T =>
         customValue !== undefined ? customValue : globalValue;
 
-      const resolveRulesFromProfile = (
-        mode: "pre" | "post",
-        profileId?: string,
-      ) => {
-        if (!profileId) return undefined;
-        try {
-          const raw = localStorage.getItem(`config_rules_${mode}_profiles`);
-          if (!raw) return undefined;
-          const parsed = JSON.parse(raw);
-          if (!Array.isArray(parsed)) return undefined;
-          const match = parsed.find((profile: any) => profile?.id === profileId);
-          if (match && Array.isArray(match.rules)) {
-            return match.rules;
-          }
-        } catch (e) {
-          console.error("Failed to resolve rule profile:", e);
-        }
-        return undefined;
-      };
+      const normalizedChunkMode: "chunk" | "line" = "chunk";
 
-      const resolvedPreRules = resolveRulesFromProfile(
-        "pre",
-        customConfig.rulesPreProfileId,
-      );
-      const resolvedPostRules = resolveRulesFromProfile(
-        "post",
-        customConfig.rulesPostProfileId,
-      );
+      const resolvedPreRules = resolveRuleListForRun("pre", customConfig);
+      const resolvedPostRules = resolveRuleListForRun("post", customConfig);
 
       // 根据 ctx 自动计算 chunk-size
       const ctxValue =
@@ -1656,13 +2029,13 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       const effectiveModelPath = (
         isRemoteMode
           ? customConfig.remoteModel ||
-          localStorage.getItem("config_remote_model") ||
-          remoteModelPath ||
-          ""
+            localStorage.getItem("config_remote_model") ||
+            remoteModelPath ||
+            ""
           : customConfig.model ||
-          localStorage.getItem("config_model") ||
-          modelPath ||
-          ""
+            localStorage.getItem("config_model") ||
+            modelPath ||
+            ""
       ).trim();
       if (!effectiveModelPath && !isRemoteMode) {
         // Use custom AlertModal
@@ -1676,6 +2049,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           t.dashboard.selectModelDesc,
         );
         setIsRunning(false);
+        currentRunEngineModeRef.current = null;
         activeRunIdRef.current = null;
         return;
       }
@@ -1687,6 +2061,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
             : parseInt(localStorage.getItem("config_gpu") || "-1", 10) || -1,
         ctxSize: ctxValue.toString(),
         chunkSize: calculatedChunkSize.toString(),
+        chunkMode: normalizedChunkMode,
         outputDir:
           customConfig.outputDir !== undefined
             ? customConfig.outputDir
@@ -1698,19 +2073,15 @@ export const Dashboard = forwardRef<any, DashboardProps>(
               ? glossaryOverride
               : glossaryPath,
         preset: pickCustom(customConfig.preset, promptPreset || "novel"),
-        rulesPre: Array.isArray(resolvedPreRules)
-          ? resolvedPreRules
-          : JSON.parse(localStorage.getItem("config_rules_pre") || "[]"),
-        rulesPost: Array.isArray(resolvedPostRules)
-          ? resolvedPostRules
-          : JSON.parse(localStorage.getItem("config_rules_post") || "[]"),
+        rulesPre: resolvedPreRules,
+        rulesPost: resolvedPostRules,
 
         // Device Mode
         deviceMode: pickCustom(
           customConfig.deviceMode,
           (localStorage.getItem("config_device_mode") || "auto") as
-          | "auto"
-          | "cpu",
+            | "auto"
+            | "cpu",
         ),
 
         // Just ensure no style overrides causing issues here, actual display is in the JSX
@@ -1750,16 +2121,15 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           customConfig.anchorCheckRetries,
           parseInt(localStorage.getItem("config_anchor_check_retries") || "1"),
         ),
-        strictMode:
-          pickCustom(
-            customConfig.lineCheck,
-            localStorage.getItem("config_line_check") !== "false",
-          )
-            ? pickCustom(
+        strictMode: pickCustom(
+          customConfig.lineCheck,
+          localStorage.getItem("config_line_check") !== "false",
+        )
+          ? pickCustom(
               customConfig.strictMode,
               localStorage.getItem("config_strict_mode") || "off",
             )
-            : "off",
+          : "off",
         repPenaltyBase:
           customConfig.repPenaltyBase ??
           parseFloat(localStorage.getItem("config_rep_penalty_base") || "1.0"),
@@ -1786,7 +2156,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         ),
         cotCoverageThreshold: pickCustom(
           customConfig.cotCoverageThreshold,
-          parseInt(localStorage.getItem("config_cot_coverage_threshold") || "80"),
+          parseInt(
+            localStorage.getItem("config_cot_coverage_threshold") || "80",
+          ),
         ),
         coverageRetries: pickCustom(
           customConfig.coverageRetries,
@@ -1798,9 +2170,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           forceResume !== undefined
             ? forceResume
             : pickCustom(
-              customConfig.resume,
-              localStorage.getItem("config_resume") === "true",
-            ),
+                customConfig.resume,
+                localStorage.getItem("config_resume") === "true",
+              ),
 
         // Dynamic Retry Strategy (动态重试策略)
         retryTempBoost: pickCustom(
@@ -1820,8 +2192,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         remoteUrl: pickCustom(
           (customConfig as any).remoteUrl,
           remoteRuntime?.runtime?.session?.url ||
-          localStorage.getItem("config_remote_url") ||
-          "",
+            localStorage.getItem("config_remote_url") ||
+            "",
         ),
         apiKey: pickCustom(
           (customConfig as any).apiKey,
@@ -1846,7 +2218,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
             : localStorage.getItem("config_use_large_batch") === "true",
         physicalBatchSize: pickCustom(
           customConfig.physicalBatchSize,
-          parseInt(localStorage.getItem("config_physical_batch_size") || "1024"),
+          parseInt(
+            localStorage.getItem("config_physical_batch_size") || "1024",
+          ),
         ),
         seed:
           customConfig.seed !== undefined
@@ -1880,7 +2254,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
             : localStorage.getItem("config_save_cot") === "true",
         modelPath: effectiveModelPath,
         remoteModel: isRemoteMode ? effectiveModelPath : undefined,
-        executionMode: isRemoteMode ? "remote" : "local",
+        executionMode: (isRemoteMode ? "remote" : "local") as
+          | "local"
+          | "remote",
       };
 
       // Create history record
@@ -1889,18 +2265,36 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       logsBufferRef.current = [];
       triggersBufferRef.current = [];
       llamaLogsBufferRef.current = [];
+      v2StatsRef.current = null;
 
       // 重置远程信息(新任务开始)
       remoteInfoRef.current = null;
 
-      const finalConfig = { ...config, highFidelity: undefined };
+      const finalConfig = {
+        ...config,
+        highFidelity: undefined,
+        outputDir: config.outputDir ?? undefined,
+      };
+      progressDataRef.current = {
+        total: 0,
+        current: 0,
+        lines: 0,
+        chars: 0,
+        sourceLines: 0,
+        sourceChars: 0,
+        outputPath: "",
+        cacheDir: String(finalConfig.cacheDir || ""),
+        cachePath: "",
+        speeds: [],
+      };
+      const recordModelLabel =
+        effectiveModelPath.split(/[/\\]/).pop() || effectiveModelPath;
 
       const newRecord: TranslationRecord = {
         id: recordId,
-        fileName: inputPath.split(/[/\\]/).pop() || inputPath,
+        fileName: inputPath.split("\\").join("/").split("/").pop() || inputPath,
         filePath: inputPath,
-        modelName:
-          effectiveModelPath.split(/[/\\]/).pop() || effectiveModelPath,
+        modelName: recordModelLabel,
         startTime: new Date().toISOString(),
         status: "running",
         totalBlocks: 0,
@@ -1924,6 +2318,222 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       );
     };
 
+    // --- V2 Pipeline 启动 ---
+    const startV2Translation = async (
+      inputPath: string,
+      forceResume?: boolean,
+      glossaryOverride?: string,
+    ) => {
+      const item = queueRef.current.find((q) => q.path === inputPath);
+      const itemConfig = item?.config;
+      const customConfig: FileConfig =
+        itemConfig && !itemConfig.useGlobalDefaults ? itemConfig : {};
+      const effectivePipelineId = resolveQueueItemPipelineId(item, v2PipelineId);
+      if (!effectivePipelineId) {
+        showAlert({
+          title: t.dashboard.selectPipelineTitle,
+          description: t.dashboard.selectPipelineDesc,
+          variant: "warning",
+        });
+        return;
+      }
+
+      currentRunEngineModeRef.current = "v2";
+      setIsRunning(true);
+      setDisplayElapsed(0);
+      setDisplayRemaining(0);
+      const runId = `v2_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      activeRunIdRef.current = runId;
+      localStartTimeRef.current = Date.now();
+      lastBackendElapsedRef.current = 0;
+      lastBackendUpdateRef.current = 0;
+      hasReceivedProgressRef.current = false;
+
+      if (chartRenderTimerRef.current !== null) {
+        window.clearTimeout(chartRenderTimerRef.current);
+        chartRenderTimerRef.current = null;
+      }
+      setChartData([]);
+      chartHistoriesRef.current = { chars: [], tokens: [], vram: [], gpu: [] };
+      setProgress({
+        current: 0,
+        total: 0,
+        percent: 0,
+        elapsed: 0,
+        remaining: 0,
+        speedLines: 0,
+        speedChars: 0,
+        speedEval: 0,
+        speedGen: 0,
+        retries: 0,
+      });
+      setApiMonitorData((prev) => ({
+        ...prev,
+        rpm: 0,
+      }));
+      setPreviewBlocks({});
+      setLastOutputPath("");
+      localStorage.removeItem("last_preview_blocks");
+      remoteInfoRef.current = null;
+
+      const resolvedGlossaryPath =
+        customConfig.glossaryPath !== undefined
+          ? customConfig.glossaryPath
+          : glossaryOverride !== undefined
+            ? glossaryOverride
+            : glossaryPath;
+      const resolvedOutputDir =
+        customConfig.outputDir !== undefined
+          ? customConfig.outputDir
+          : localStorage.getItem("config_output_dir") || "";
+      const resolvedResume =
+        forceResume !== undefined
+          ? forceResume
+          : (customConfig.resume ??
+            localStorage.getItem("config_resume") === "true");
+      const resolvedCacheDir =
+        customConfig.cacheDir !== undefined
+          ? customConfig.cacheDir
+          : localStorage.getItem("config_cache_dir") || "";
+      progressDataRef.current = {
+        total: 0,
+        current: 0,
+        lines: 0,
+        chars: 0,
+        sourceLines: 0,
+        sourceChars: 0,
+        outputPath: "",
+        cacheDir: String(resolvedCacheDir || ""),
+        cachePath: "",
+        speeds: [],
+      };
+
+      const selectedProfile = v2Profiles.find(
+        (p) => p.id === effectivePipelineId,
+      );
+      let pipelineName = selectedProfile?.name || effectivePipelineId;
+      let providerName = selectedProfile?.providerName;
+      let chunkType = selectedProfile?.chunkType;
+
+      try {
+        const pipelineProfile = await window.api?.pipelineV2ProfilesLoad?.(
+          "pipeline",
+          effectivePipelineId,
+        );
+        const pipelineData = pipelineProfile?.data;
+        if (pipelineProfile?.name) {
+          pipelineName = pipelineProfile.name;
+        } else if (pipelineData?.name) {
+          pipelineName = pipelineData.name;
+        }
+        if (pipelineData?.provider) {
+          const providerProfile = await window.api?.pipelineV2ProfilesLoad?.(
+            "api",
+            String(pipelineData.provider),
+          );
+          providerName = providerProfile?.name || String(pipelineData.provider);
+        }
+        if (pipelineData?.chunk_policy) {
+          const chunkProfile = await window.api?.pipelineV2ProfilesLoad?.(
+            "chunk",
+            String(pipelineData.chunk_policy),
+          );
+          const rawChunkType =
+            chunkProfile?.data?.chunk_type ?? chunkProfile?.data?.type;
+          const normalizedChunkType = normalizeChunkType(rawChunkType);
+          if (normalizedChunkType) chunkType = normalizedChunkType;
+        }
+      } catch (e) {
+        console.error("[Dashboard] Failed to resolve pipeline meta:", e);
+      }
+
+      const recordId = Date.now().toString();
+      currentRecordIdRef.current = recordId;
+      logsBufferRef.current = [];
+      triggersBufferRef.current = [];
+      llamaLogsBufferRef.current = [];
+      v2StatsRef.current = createEmptyV2HistoryStats();
+
+      const newRecord: TranslationRecord = {
+        id: recordId,
+        fileName: inputPath.split(/[/\\]/).pop() || inputPath,
+        filePath: inputPath,
+        startTime: new Date().toISOString(),
+        status: "running",
+        totalBlocks: 0,
+        completedBlocks: 0,
+        totalLines: 0,
+        triggers: [],
+        logs: [],
+        engineVersion: "v2",
+        config: {
+          engineMode: "v2",
+          v2PipelineId: effectivePipelineId,
+          outputDir: resolvedOutputDir || undefined,
+          cacheDir: resolvedCacheDir || undefined,
+          resume: Boolean(resolvedResume),
+        },
+        v2Config: {
+          pipelineId: effectivePipelineId,
+          pipelineName,
+          providerName,
+          chunkType,
+        },
+        v2Stats: v2StatsRef.current,
+      };
+      addRecord(newRecord);
+
+      const profilesDir = (await window.api?.pipelineV2ProfilesPath?.()) || "";
+      const outputDir = resolvedOutputDir.trim();
+      const cacheDir = resolvedCacheDir.trim();
+
+      try {
+        const rulesPreLocal = resolveRuleListForRun("pre", customConfig);
+        const rulesPostLocal = resolveRuleListForRun("post", customConfig);
+
+        const result = await window.api?.pipelineV2Run?.({
+          filePath: inputPath,
+          pipelineId: effectivePipelineId,
+          profilesDir,
+          outputDir: outputDir || undefined,
+          glossaryPath: resolvedGlossaryPath || undefined,
+          resume: Boolean(resolvedResume),
+          cacheDir: cacheDir || undefined,
+          sourceLang: localStorage.getItem("config_source_lang") || "ja",
+          enableQuality:
+            localStorage.getItem("config_enable_quality") === "true"
+              ? true
+              : localStorage.getItem("config_enable_quality") === "false"
+                ? false
+                : undefined,
+          textProtect:
+            localStorage.getItem("config_text_protect") === "false"
+              ? false
+              : true,
+          saveCache:
+            localStorage.getItem("config_save_cache") === "false"
+              ? false
+              : true,
+          runId: runId, // 通过 IPC 发送由 Dashboard 管理的 runId
+          rulesPre: rulesPreLocal.length > 0 ? rulesPreLocal : undefined,
+          rulesPost: rulesPostLocal.length > 0 ? rulesPostLocal : undefined,
+        });
+
+        // 捕获预检或主进程级别返回的错误（如果后端发了 process-exit 这里其实会被状态机捕获，但这层防护更稳妥）
+        if (result && !result.ok) {
+          setIsRunning(false);
+          currentRunEngineModeRef.current = null;
+          setRunNotice({
+            type: "error",
+            message: t.dashboard.runFailed,
+          });
+        }
+      } catch (err) {
+        setIsRunning(false);
+        currentRunEngineModeRef.current = null;
+      }
+    };
+
     // --- State for Confirmation Modal ---
     const [confirmModal, setConfirmModal] = useState<{
       isOpen: boolean;
@@ -1938,14 +2548,10 @@ export const Dashboard = forwardRef<any, DashboardProps>(
 
     const handleStartQueue = async () => {
       if (queue.length === 0) return;
-
-      // Check first file (or current index if we support jumping)
-      // Currently we always start from index 0 when clicking Play?
-      // Logic: setCurrentQueueIndex(0); startTranslation(queue[0].path)
       const targetIndex = 0;
       const inputPath = queue[targetIndex].path;
-
-      await checkAndStart(inputPath, targetIndex);
+      const startMode = resolveEngineModeForQueueIndex(targetIndex);
+      await checkAndStartRef.current(inputPath, targetIndex, startMode);
     };
 
     useEffect(() => {
@@ -1955,6 +2561,84 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         handleStartQueue();
       }
     }, [active, isRunning, queue, handleStartQueue]);
+
+    const checkAndStartV2 = async (inputPath: string, index: number) => {
+      const queueItem = queueRef.current[index];
+      const itemConfig = queueItem?.config;
+      const customConfig =
+        itemConfig && !itemConfig.useGlobalDefaults
+          ? itemConfig
+          : undefined;
+      const effectivePipelineId = resolveQueueItemPipelineId(
+        queueItem,
+        v2PipelineId,
+      );
+      if (!effectivePipelineId) {
+        showAlert({
+          title: t.dashboard.selectPipelineTitle,
+          description: t.dashboard.selectPipelineDesc,
+          variant: "warning",
+        });
+        return;
+      }
+
+      const outputDir =
+        customConfig?.outputDir !== undefined
+          ? customConfig.outputDir
+          : localStorage.getItem("config_output_dir") || "";
+      const config = {
+        engineMode: "v2",
+        outputDir: outputDir || undefined,
+      };
+
+      const checkResult = await window.api?.checkOutputFileExists(
+        inputPath,
+        config,
+      );
+
+      if (checkResult?.exists && checkResult.path) {
+        setConfirmModal({
+          isOpen: true,
+          file: inputPath.split(/[/\\]/).pop() || inputPath,
+          path: checkResult.path,
+          onResume: () => {
+            setConfirmModal(null);
+            setCurrentQueueIndex(index);
+            startV2Translation(inputPath, true);
+          },
+          onOverwrite: () => {
+            setConfirmModal(null);
+            setCurrentQueueIndex(index);
+            startV2Translation(inputPath, false);
+          },
+          onSkip:
+            index < queue.length - 1
+              ? () => {
+                  setConfirmModal(null);
+                  const nextIndex = index + 1;
+                  const nextMode = resolveEngineModeForQueueIndex(nextIndex);
+                  checkAndStartRef.current(
+                    queue[nextIndex].path,
+                    nextIndex,
+                    nextMode,
+                  );
+                }
+              : undefined,
+          onStopAll: () => {
+            setConfirmModal(null);
+            handleStop();
+          },
+          onCancel: () => {
+            setConfirmModal(null);
+            setIsRunning(false);
+            setCurrentQueueIndex(-1);
+          },
+        });
+      } else {
+        setCurrentQueueIndex(index);
+        startV2Translation(inputPath);
+      }
+    };
 
     const checkAndStart = async (inputPath: string, index: number) => {
       // ... (Duplicate config logic? Or refactor?)
@@ -1968,13 +2652,13 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       const effectiveModelPath = (
         isRemoteMode
           ? customConfig?.remoteModel ||
-          localStorage.getItem("config_remote_model") ||
-          remoteModelPath ||
-          ""
+            localStorage.getItem("config_remote_model") ||
+            remoteModelPath ||
+            ""
           : customConfig?.model ||
-          modelPath ||
-          localStorage.getItem("config_model") ||
-          ""
+            modelPath ||
+            localStorage.getItem("config_model") ||
+            ""
       ).trim();
 
       const config = {
@@ -2033,10 +2717,16 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           onSkip:
             index < queue.length - 1
               ? () => {
-                setConfirmModal(null);
-                resetEphemeralGlossarySelection();
-                checkAndStart(queue[index + 1].path, index + 1);
-              }
+                  setConfirmModal(null);
+                  resetEphemeralGlossarySelection();
+                  const nextIndex = index + 1;
+                  const nextMode = resolveEngineModeForQueueIndex(nextIndex);
+                  checkAndStartRef.current(
+                    queue[nextIndex].path,
+                    nextIndex,
+                    nextMode,
+                  );
+                }
               : undefined,
           onStopAll: () => {
             setConfirmModal(null);
@@ -2058,15 +2748,34 @@ export const Dashboard = forwardRef<any, DashboardProps>(
 
     // Keep checkAndStartRef in sync for use in stale-closure contexts
     useEffect(() => {
-      checkAndStartRef.current = checkAndStart;
+      checkAndStartRef.current = (
+        inputPath: string,
+        index: number,
+        modeOverride?: "v1" | "v2",
+      ) => {
+        const selectedMode =
+          modeOverride ?? resolveEngineModeForQueueIndex(index);
+        if (selectedMode === "v2") {
+          return checkAndStartV2(inputPath, index);
+        }
+        return checkAndStart(inputPath, index);
+      };
     });
 
     const handleStop = () => {
-      console.log("[Dashboard] User requested stop");
-      window.api?.stopTranslation();
+      const runningMode = currentRunEngineModeRef.current || engineModeRef.current;
+      console.log(
+        `[Dashboard] User requested stop (mode=${runningMode})`,
+      );
+      if (runningMode === "v2") {
+        window.api?.pipelineV2Stop?.();
+      } else {
+        window.api?.stopTranslation();
+      }
       // 立即更新 UI 状态(后端也会发送 process-exit 事件)
       setIsRunning(false);
       setCurrentQueueIndex(-1);
+      currentRunEngineModeRef.current = null;
     };
 
     const requestStop = () => {
@@ -2089,6 +2798,17 @@ export const Dashboard = forwardRef<any, DashboardProps>(
     const getOutputDir = (path: string) => {
       const lastSep = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
       return lastSep >= 0 ? path.slice(0, lastSep) : "";
+    };
+
+    const resolveCachePath = (outputPath: string, cacheDir?: string) => {
+      if (!outputPath) return "";
+      const dir = (cacheDir || "").trim();
+      if (!dir) return `${outputPath}.cache.json`;
+      const fileName = outputPath.split(/[/\\]/).pop() || outputPath;
+      const sep = dir.includes("\\") && !dir.includes("/") ? "\\" : "/";
+      const prefix =
+        dir.endsWith("\\") || dir.endsWith("/") ? dir : `${dir}${sep}`;
+      return `${prefix}${fileName}.cache.json`;
     };
 
     const handleOpenOutput = async (mode: "file" | "folder") => {
@@ -2147,7 +2867,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       // Regex: /\b(line_mismatch|high_similarity|kana_residue|glossary_missed)\b/g
 
       text = text.replace(
-        /(\s*)[(\[]?\b(line_mismatch|high_similarity|kana_residue|glossary_missed|hangeul_residue)\b[)\]]?(\s*)/g,
+        /(\s*)(?:\(|\[)?\b(line_mismatch|high_similarity|kana_residue|glossary_missed|hangeul_residue)\b(?:\)|\])?(\s*)/g,
         "",
       );
 
@@ -2377,7 +3097,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       );
     };
 
-    const needsModel = activeModelsCount === 0;
+    const needsModel = engineMode === "v1" && activeModelsCount === 0;
+    const needsV2Pipeline = engineMode === "v2" && !v2PipelineId;
     const canStart = queue.length > 0 && !isRunning;
     const statusText = isRunning
       ? `${t.dashboard.processing} ${currentQueueIndex + 1}/${queue.length}`
@@ -2406,7 +3127,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
     const runNoticeConfig = runNotice
       ? {
           success: {
-            className: "bg-emerald-500/10 border-emerald-500/30 text-emerald-600",
+            className:
+              "bg-emerald-500/10 border-emerald-500/30 text-emerald-600",
             icon: CheckCircle2,
           },
           warning: {
@@ -2422,7 +3144,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
     const queueNoticeConfig = queueNotice
       ? {
           success: {
-            className: "bg-emerald-500/10 border-emerald-500/30 text-emerald-600",
+            className:
+              "bg-emerald-500/10 border-emerald-500/30 text-emerald-600",
             icon: CheckCircle2,
           },
           warning: {
@@ -2436,12 +3159,20 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         }[queueNotice.type]
       : null;
     const failedCount = queue.filter((item) => item.status === "failed").length;
-    const completedCount = queue.filter((item) => item.status === "completed").length;
+    const completedCount = queue.filter(
+      (item) => item.status === "completed",
+    ).length;
     const queueSummary = t.dashboard.queueSummary
       .replace("{failed}", String(failedCount))
       .replace("{completed}", String(completedCount));
     const activeConfirmModal = confirmModal;
-
+    const handleEngineModeShortcutClick = useCallback(
+      (nextMode: "v1" | "v2", event: MouseEvent<HTMLElement>) => {
+        if (shouldIgnoreEngineModeToggle(event.target)) return;
+        setEngineMode(nextMode);
+      },
+      [],
+    );
     return (
       <div
         ref={containerRef}
@@ -2492,28 +3223,30 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                     </Button>
                   </div>
                 </div>
-                {queueNotice && queueNoticeConfig && (() => {
-                  const NoticeIcon = queueNoticeConfig.icon;
-                  return (
-                    <div className="px-3 pb-2">
-                      <div
-                        className={`flex items-start gap-2 rounded-lg border px-2.5 py-2 text-[11px] ${queueNoticeConfig.className}`}
-                      >
-                        <NoticeIcon className="w-3.5 h-3.5 mt-0.5" />
-                        <span className="flex-1 leading-relaxed">
-                          {queueNotice.message}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setQueueNotice(null)}
-                          className="ml-auto text-current/70 hover:text-current"
+                {queueNotice &&
+                  queueNoticeConfig &&
+                  (() => {
+                    const NoticeIcon = queueNoticeConfig.icon;
+                    return (
+                      <div className="px-3 pb-2">
+                        <div
+                          className={`flex items-start gap-2 rounded-lg border px-2.5 py-2 text-[11px] ${queueNoticeConfig.className}`}
                         >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
+                          <NoticeIcon className="w-3.5 h-3.5 mt-0.5" />
+                          <span className="flex-1 leading-relaxed">
+                            {queueNotice.message}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setQueueNotice(null)}
+                            className="ml-auto text-current/70 hover:text-current"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })()}
+                    );
+                  })()}
                 <div className="px-3 pb-2">
                   <div className="flex items-center justify-between text-[10px] text-muted-foreground">
                     <span>{queueSummary}</span>
@@ -2562,14 +3295,15 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                           i === currentQueueIndex ? activeQueueItemRef : null
                         }
                         className={`flex items-center gap-2 p-2.5 rounded-lg text-xs group transition-all 
-                                                ${i === currentQueueIndex
-                            ? "bg-primary/20 text-primary shadow-sm ring-1 ring-primary/20"
-                            : completedFiles.has(
-                              item.path,
-                            )
-                              ? "bg-secondary/30 text-muted-foreground opacity-60 hover:opacity-100"
-                              : "hover:bg-secondary"
-                          }`}
+                                                ${
+                                                  i === currentQueueIndex
+                                                    ? "bg-primary/20 text-primary shadow-sm ring-1 ring-primary/20"
+                                                    : completedFiles.has(
+                                                          item.path,
+                                                        )
+                                                      ? "bg-secondary/30 text-muted-foreground opacity-60 hover:opacity-100"
+                                                      : "hover:bg-secondary"
+                                                }`}
                         onDragOver={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
@@ -2631,8 +3365,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                             {(completedFiles.has(item.path) ||
                               (currentQueueIndex > 0 &&
                                 i < currentQueueIndex)) && (
-                                <div className="absolute -bottom-0.5 -right-0.5 w-2 h-2 bg-green-500 rounded-full ring-1 ring-background" />
-                              )}
+                              <div className="absolute -bottom-0.5 -right-0.5 w-2 h-2 bg-green-500 rounded-full ring-1 ring-background" />
+                            )}
                           </div>
                         )}
                         <div className="flex-1 min-w-0 flex flex-col gap-0.5">
@@ -2703,21 +3437,36 @@ export const Dashboard = forwardRef<any, DashboardProps>(
 
           {/* CENTER: Stats & Progress */}
           <div className="flex-1 flex flex-col gap-4 min-w-0 min-h-0">
-            {/* Hardware Monitor */}
-            <HardwareMonitorBar data={monitorData} lang={lang} />
+            {/* Hardware Monitor (V1 only — irrelevant for remote API) */}
+            {engineMode !== "v2" && (
+              <HardwareMonitorBar data={monitorData} lang={lang} />
+            )}
+
+            {/* API Monitor (V2 only) */}
+            {engineMode === "v2" && (
+              <ApiMonitorBar
+                data={apiMonitorData}
+                lang={lang}
+                isRunning={isRunning}
+              />
+            )}
 
             {hasRemoteError && (
               <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 flex items-start gap-3">
                 <AlertTriangle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
                 <div className="text-xs text-red-600 leading-relaxed">
-                  <div className="font-semibold">{t.dashboard.remoteErrorTitle}</div>
+                  <div className="font-semibold">
+                    {t.dashboard.remoteErrorTitle}
+                  </div>
                   <div className="mt-1">{remoteErrorMessage}</div>
-                  <div className="mt-1 text-red-500/80">{t.dashboard.remoteErrorHint}</div>
+                  <div className="mt-1 text-red-500/80">
+                    {t.dashboard.remoteErrorHint}
+                  </div>
                 </div>
               </div>
             )}
 
-            {/* Model Warning */}
+            {/* Model Warning (V1 only) */}
             {needsModel && (
               <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 flex items-start gap-3">
                 <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
@@ -2727,6 +3476,25 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                   </p>
                   <p className="text-xs text-amber-400 mt-1">
                     {t.dashboard.modelMissingMsg}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* API翻译方案 Warning */}
+            {needsV2Pipeline && (
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold text-amber-500 text-sm">
+                    {lang === "en"
+                      ? "No API Plan Selected"
+                      : "未选择 API 翻译方案"}
+                  </p>
+                  <p className="text-xs text-amber-400 mt-1">
+                    {lang === "en"
+                      ? "Please create and select an API translation plan in the API Manager."
+                      : "请先在「API 管理」中创建并选择一个翻译方案。"}
                   </p>
                 </div>
               </div>
@@ -2753,147 +3521,231 @@ export const Dashboard = forwardRef<any, DashboardProps>(
               </div>
             )}
 
-            {runNotice && runNoticeConfig && (() => {
-              const NoticeIcon = runNoticeConfig.icon;
-              return (
-                <div
-                  className={`rounded-xl border p-3 flex items-start gap-2 ${runNoticeConfig.className}`}
-                >
-                  <NoticeIcon className="w-4 h-4 shrink-0 mt-0.5" />
-                  <div className="text-xs leading-relaxed flex-1">
-                    <div className="font-semibold">{runNotice.message}</div>
-                    {lastOutputPath && !isRunning && (
-                      <div className="mt-1 text-[10px] text-current/70">
-                        {t.dashboard.outputPathLabel}: {outputFileName}
-                      </div>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setRunNotice(null)}
-                    className="ml-auto text-current/70 hover:text-current"
+            {runNotice &&
+              runNoticeConfig &&
+              (() => {
+                const NoticeIcon = runNoticeConfig.icon;
+                return (
+                  <div
+                    className={`rounded-xl border p-3 flex items-start gap-2 ${runNoticeConfig.className}`}
                   >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              );
-            })()}
+                    <NoticeIcon className="w-4 h-4 shrink-0 mt-0.5" />
+                    <div className="text-xs leading-relaxed flex-1">
+                      <div className="font-semibold">{runNotice.message}</div>
+                      {lastOutputPath && !isRunning && (
+                        <div className="mt-1 text-[10px] text-current/70">
+                          {t.dashboard.outputPathLabel}: {outputFileName}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setRunNotice(null)}
+                      className="ml-auto text-current/70 hover:text-current"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                );
+              })()}
 
             {/* Config Row - Compact Property Bar Style */}
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-2 shrink-0">
-              <div
-                className={`bg-card/80 hover:bg-card px-3 py-2 rounded-lg border flex items-center gap-3 transition-all cursor-pointer ${!activeModelPath && activeModelsCount > 0 ? "border-amber-500/50 ring-1 ring-amber-500/20" : "border-border/50 hover:border-border"}`}
-              >
-                <div className="w-7 h-7 shrink-0 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white">
-                  <Bot className="w-3.5 h-3.5" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
+            <div
+              className={`grid gap-2 shrink-0 ${engineMode === "v2" ? "grid-cols-1 xl:grid-cols-2" : "grid-cols-1 xl:grid-cols-3"}`}
+            >
+              {/* Card 1: 本地模式=Model / API模式=翻译方案 */}
+              {engineMode === "v2" ? (
+                <div
+                  onClick={(event) =>
+                    handleEngineModeShortcutClick("v1", event)
+                  }
+                  className={`bg-card/80 hover:bg-card px-3 py-2 rounded-lg border flex items-center gap-3 transition-all cursor-pointer ${!v2PipelineId ? "border-amber-500/50 ring-1 ring-amber-500/20" : "border-border/50 hover:border-border"}`}
+                >
+                  <UITooltip
+                    content={
+                      lang === "en"
+                        ? "Switch to Local Mode"
+                        : "切换到本地翻译模式"
+                    }
+                  >
+                    <div
+                      className="w-7 h-7 shrink-0 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white cursor-pointer hover:scale-110 transition-transform relative"
+                    >
+                      <Zap className="w-3.5 h-3.5" />
+                      <span className="absolute -top-1 -right-1 text-[7px] bg-violet-500 text-white px-0.5 rounded font-bold leading-tight">
+                        API
+                      </span>
+                    </div>
+                  </UITooltip>
+                  <div className="flex-1 min-w-0">
                     <span className="text-[9px] text-muted-foreground font-medium uppercase tracking-wider">
-                      {t.dashboard.modelLabel}
+                      {lang === "en" ? "API Translation Plan" : "API 翻译方案"}
                     </span>
-                    {!isRemoteMode && modelInfo && (
-                      <div className="flex items-center gap-1.5 text-[9px] text-muted-foreground">
-                        <span className="bg-secondary/50 px-1 py-0.5 rounded font-mono">
-                          {modelInfo.paramsB || "--"}B
-                        </span>
-                        <span className="bg-secondary/50 px-1 py-0.5 rounded font-mono">
-                          {modelInfo.quant || "--"}
-                        </span>
-                        <span
-                          className={`px-1 py-0.5 rounded font-mono ${modelInfo.estimatedVramGB > 8 ? "text-amber-500 bg-amber-500/10" : "text-emerald-500 bg-emerald-500/10"}`}
-                        >
-                          {modelInfo.estimatedVramGB || "--"}G
-                        </span>
-                      </div>
-                    )}
-                    {isRemoteMode && selectedRemoteInfo?.sizeGb && (
-                      <div className="flex items-center gap-1.5 text-[9px] text-muted-foreground">
-                        <span className="bg-secondary/50 px-1 py-0.5 rounded font-mono">
-                          {selectedRemoteInfo.sizeGb.toFixed(2)}GB
-                        </span>
-                      </div>
-                    )}
+                    <select
+                      className="w-full bg-transparent text-sm font-medium text-foreground outline-none cursor-pointer truncate -ml-0.5"
+                      data-engine-switch-ignore="true"
+                      value={v2PipelineId}
+                      onChange={(e) => setV2PipelineId(e.target.value)}
+                    >
+                      <option value="">
+                        {lang === "en" ? "Select plan..." : "请选择方案..."}
+                      </option>
+                      {v2Profiles.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                          {p.providerName ? ` (${p.providerName})` : ""}
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                  <select
-                    className="w-full bg-transparent text-sm font-medium text-foreground outline-none cursor-pointer truncate -ml-0.5"
-                    value={activeModelPath}
-                    onChange={(e) => {
-                      const nextValue = e.target.value;
+                </div>
+              ) : (
+                <div
+                  onClick={(event) =>
+                    handleEngineModeShortcutClick("v2", event)
+                  }
+                  className={`bg-card/80 hover:bg-card px-3 py-2 rounded-lg border flex items-center gap-3 transition-all cursor-pointer ${!activeModelPath && activeModelsCount > 0 ? "border-amber-500/50 ring-1 ring-amber-500/20" : "border-border/50 hover:border-border"}`}
+                >
+                  <UITooltip
+                    content={
+                      lang === "en"
+                        ? "Switch to API Mode"
+                        : "切换到 API 翻译模式"
+                    }
+                  >
+                    <div
+                      className="w-7 h-7 shrink-0 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white cursor-pointer hover:scale-110 transition-transform relative"
+                    >
+                      <Bot className="w-3.5 h-3.5" />
+                      <span className="absolute -top-1 -right-1 text-[7px] bg-blue-500 text-white px-0.5 rounded font-bold leading-tight">
+                        {lang === "en" ? "Local" : "本地"}
+                      </span>
+                    </div>
+                  </UITooltip>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] text-muted-foreground font-medium uppercase tracking-wider">
+                        {t.dashboard.modelLabel}
+                      </span>
+                      {!isRemoteMode && modelInfo && (
+                        <div className="flex items-center gap-1.5 text-[9px] text-muted-foreground">
+                          <span className="bg-secondary/50 px-1 py-0.5 rounded font-mono">
+                            {modelInfo.paramsB || "--"}B
+                          </span>
+                          <span className="bg-secondary/50 px-1 py-0.5 rounded font-mono">
+                            {modelInfo.quant || "--"}
+                          </span>
+                          <span
+                            className={`px-1 py-0.5 rounded font-mono ${modelInfo.estimatedVramGB > 8 ? "text-amber-500 bg-amber-500/10" : "text-emerald-500 bg-emerald-500/10"}`}
+                          >
+                            {modelInfo.estimatedVramGB || "--"}G
+                          </span>
+                        </div>
+                      )}
+                      {isRemoteMode && selectedRemoteInfo?.sizeGb && (
+                        <div className="flex items-center gap-1.5 text-[9px] text-muted-foreground">
+                          <span className="bg-secondary/50 px-1 py-0.5 rounded font-mono">
+                            {selectedRemoteInfo.sizeGb.toFixed(2)}GB
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    <select
+                      className="w-full bg-transparent text-sm font-medium text-foreground outline-none cursor-pointer truncate -ml-0.5"
+                      data-engine-switch-ignore="true"
+                      value={activeModelPath}
+                      onChange={(e) => {
+                        const nextValue = e.target.value;
+                        if (isRemoteMode) {
+                          setRemoteModelPath(nextValue);
+                          localStorage.setItem(
+                            "config_remote_model",
+                            nextValue,
+                          );
+                        } else {
+                          setModelPath(nextValue);
+                          localStorage.setItem("config_model", nextValue);
+                        }
+                      }}
+                    >
+                      <option value="">
+                        {activeModelsCount > 0
+                          ? t.dashboard.selectModel
+                          : t.dashboard.noModel}
+                      </option>
+                      {isRemoteMode
+                        ? remoteModels.map((model) => (
+                            <option key={model.path} value={model.path}>
+                              {model.name}
+                            </option>
+                          ))
+                        : [...models]
+                            .sort((a, b) => {
+                              const paramsA =
+                                modelsInfoMap[a]?.paramsB ?? Infinity;
+                              const paramsB =
+                                modelsInfoMap[b]?.paramsB ?? Infinity;
+                              if (paramsA !== paramsB) return paramsA - paramsB;
+                              const sizeA =
+                                modelsInfoMap[a]?.sizeGB ?? Infinity;
+                              const sizeB =
+                                modelsInfoMap[b]?.sizeGB ?? Infinity;
+                              return sizeA - sizeB;
+                            })
+                            .map((m) => (
+                              <option key={m} value={m}>
+                                {m.replace(".gguf", "")}
+                              </option>
+                            ))}
+                    </select>
+                  </div>
+                  <div
+                    data-engine-switch-ignore="true"
+                    title={t.modelView.refresh || "Refresh"}
+                    onClick={(e) => {
+                      e.stopPropagation();
                       if (isRemoteMode) {
-                        setRemoteModelPath(nextValue);
-                        localStorage.setItem("config_remote_model", nextValue);
+                        fetchRemoteModels();
                       } else {
-                        setModelPath(nextValue);
-                        localStorage.setItem("config_model", nextValue);
+                        fetchData();
                       }
                     }}
+                    className="p-1 hover:bg-muted rounded-full cursor-pointer transition-colors z-10 mr-1 group/refresh"
                   >
-                    <option value="">
-                      {activeModelsCount > 0
-                        ? t.dashboard.selectModel
-                        : t.dashboard.noModel}
-                    </option>
-                    {isRemoteMode
-                      ? remoteModels.map((model) => (
-                        <option key={model.path} value={model.path}>
-                          {model.name}
-                        </option>
-                      ))
-                      : [...models]
-                        .sort((a, b) => {
-                          const paramsA = modelsInfoMap[a]?.paramsB ?? Infinity;
-                          const paramsB = modelsInfoMap[b]?.paramsB ?? Infinity;
-                          if (paramsA !== paramsB) return paramsA - paramsB;
-                          const sizeA = modelsInfoMap[a]?.sizeGB ?? Infinity;
-                          const sizeB = modelsInfoMap[b]?.sizeGB ?? Infinity;
-                          return sizeA - sizeB;
-                        })
-                        .map((m) => (
-                          <option key={m} value={m}>
-                            {m.replace(".gguf", "")}
-                          </option>
-                        ))}
-                  </select>
+                    <RefreshCw className="w-3.5 h-3.5 text-muted-foreground group-hover/refresh:text-primary transition-colors" />
+                  </div>
                 </div>
-                <div
-                  title={t.modelView.refresh || "Refresh"}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (isRemoteMode) {
-                      fetchRemoteModels();
-                    } else {
-                      fetchData();
-                    }
-                  }}
-                  className="p-1 hover:bg-muted rounded-full cursor-pointer transition-colors z-10 mr-1 group/refresh"
-                >
-                  <RefreshCw className="w-3.5 h-3.5 text-muted-foreground group-hover/refresh:text-primary transition-colors" />
+              )}
+              {/* Card 2: Prompt Preset (V1 only) */}
+              {engineMode !== "v2" && (
+                <div className="bg-card/80 hover:bg-card px-3 py-2 rounded-lg border border-border/50 hover:border-border flex items-center gap-3 transition-all cursor-pointer">
+                  <div className="w-7 h-7 shrink-0 rounded-lg bg-gradient-to-br from-violet-500 to-violet-600 flex items-center justify-center text-white">
+                    <FileText className="w-3.5 h-3.5" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <span className="text-[9px] text-muted-foreground font-medium uppercase tracking-wider">
+                      Prompt Preset
+                    </span>
+                    <select
+                      className="w-full bg-transparent text-sm font-medium text-foreground outline-none cursor-pointer truncate -ml-0.5"
+                      data-engine-switch-ignore="true"
+                      value={promptPreset}
+                      onChange={(e) => handlePromptPresetChange(e.target.value)}
+                    >
+                      <option value="novel">
+                        {presetOptionLabel("novel")}
+                      </option>
+                      <option value="script">
+                        {presetOptionLabel("script")}
+                      </option>
+                      <option value="short">
+                        {presetOptionLabel("short")}
+                      </option>
+                    </select>
+                  </div>
                 </div>
-                <ChevronDown className="w-3 h-3 text-muted-foreground shrink-0 opacity-40" />
-              </div>
-              <div className="bg-card/80 hover:bg-card px-3 py-2 rounded-lg border border-border/50 hover:border-border flex items-center gap-3 transition-all cursor-pointer">
-                <div className="w-7 h-7 shrink-0 rounded-lg bg-gradient-to-br from-violet-500 to-violet-600 flex items-center justify-center text-white">
-                  <FileText className="w-3.5 h-3.5" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <span className="text-[9px] text-muted-foreground font-medium uppercase tracking-wider">
-                    Prompt Preset
-                  </span>
-                  <select
-                    className="w-full bg-transparent text-sm font-medium text-foreground outline-none cursor-pointer truncate -ml-0.5"
-                    value={promptPreset}
-                    onChange={(e) => handlePromptPresetChange(e.target.value)}
-                  >
-                    <option value="novel">{presetOptionLabel("novel")}</option>
-                    <option value="script">
-                      {presetOptionLabel("script")}
-                    </option>
-                    <option value="short">{presetOptionLabel("short")}</option>
-                  </select>
-                </div>
-                <ChevronDown className="w-3 h-3 text-muted-foreground shrink-0 opacity-40" />
-              </div>
+              )}
+              {/* Card 3: Glossary (always visible) */}
               <div className="bg-card/80 hover:bg-card px-3 py-2 rounded-lg border border-border/50 hover:border-border flex items-center gap-3 transition-all cursor-pointer">
                 <div className="w-7 h-7 shrink-0 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center text-white">
                   <BookOpen className="w-3.5 h-3.5" />
@@ -2904,6 +3756,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                   </span>
                   <select
                     className="w-full bg-transparent text-sm font-medium text-foreground outline-none cursor-pointer truncate -ml-0.5"
+                    data-engine-switch-ignore="true"
                     value={glossaryPath}
                     onChange={(e) => {
                       const nextValue = e.target.value;
@@ -2911,7 +3764,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                       const globalGlossary = isRemoteMode
                         ? ""
                         : localStorage.getItem("config_glossary_path") || "";
-                      glossarySelectionEphemeralRef.current = nextValue !== globalGlossary;
+                      glossarySelectionEphemeralRef.current =
+                        nextValue !== globalGlossary;
                     }}
                   >
                     <option value="">{t.none}</option>
@@ -2922,7 +3776,6 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                     ))}
                   </select>
                 </div>
-                <ChevronDown className="w-3 h-3 text-muted-foreground shrink-0 opacity-40" />
               </div>
             </div>
 
@@ -2971,19 +3824,25 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                       </span>
                     )}
                   </div>
-                  <div className="flex items-baseline justify-between mb-1.5">
-                    <span className="text-lg font-black text-foreground font-mono">
-                      {progress.current}/{progress.total}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-base font-bold text-primary">
-                        {(progress.percent || 0).toFixed(1)}%
+                  <div className="mb-3 space-y-1.5">
+                    <div
+                      className="text-xl font-black text-foreground font-mono tabular-nums tracking-tight leading-none whitespace-nowrap"
+                      title={formatProgressCount(
+                        progress.current,
+                        progress.total,
+                      )}
+                    >
+                      {formatProgressCount(progress.current, progress.total)}
+                    </div>
+                    <div className="flex justify-end">
+                      <span className="text-xl font-black text-primary font-mono tabular-nums leading-none">
+                        {formatProgressPercent(progress.percent)}
                       </span>
                     </div>
                   </div>
-                  <div className="w-full bg-secondary/50 h-1.5 rounded-full overflow-hidden">
+                  <div className="mt-4 w-full bg-secondary/50 h-2 rounded-full overflow-hidden">
                     <div
-                      className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-300"
+                      className="h-full bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500 transition-[width] duration-300 ease-out"
                       style={{ width: `${progress.percent || 0}%` }}
                     />
                   </div>
@@ -3077,8 +3936,12 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                       >
                         <option value="chars">{t.dashboard.charPerSec}</option>
                         <option value="tokens">Tokens/s</option>
-                        <option value="vram">VRAM %</option>
-                        <option value="gpu">GPU %</option>
+                        {engineMode !== "v2" && (
+                          <option value="vram">VRAM %</option>
+                        )}
+                        {engineMode !== "v2" && (
+                          <option value="gpu">GPU %</option>
+                        )}
                       </select>
                       <ChevronDown className="w-2.5 h-2.5 absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
                     </div>
@@ -3227,11 +4090,11 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                 <Button
                   size="icon"
                   onClick={handleStartQueue}
-                  disabled={!canStart || needsModel}
-                  className={`rounded-full w-9 h-9 shadow-md transition-all ${!canStart || needsModel ? "bg-muted text-muted-foreground" : "bg-gradient-to-br from-purple-600 to-indigo-600 hover:scale-105"}`}
+                  disabled={!canStart || needsModel || needsV2Pipeline}
+                  className={`rounded-full w-9 h-9 shadow-md transition-all ${!canStart || needsModel || needsV2Pipeline ? "bg-muted text-muted-foreground" : "bg-gradient-to-br from-purple-600 to-indigo-600 hover:scale-105"}`}
                 >
                   <Play
-                    className={`w-4 h-4 ${canStart && !needsModel ? "fill-white" : ""} ml-0.5`}
+                    className={`w-4 h-4 ${canStart && !needsModel && !needsV2Pipeline ? "fill-white" : ""} ml-0.5`}
                   />
                 </Button>
               </UITooltip>
@@ -3254,7 +4117,10 @@ export const Dashboard = forwardRef<any, DashboardProps>(
             <div className="flex items-center gap-2">
               {!isRunning && lastOutputPath && (
                 <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg border border-border/50 bg-secondary/40 text-[10px] text-muted-foreground">
-                  <span className="max-w-[160px] truncate" title={lastOutputPath}>
+                  <span
+                    className="max-w-[160px] truncate"
+                    title={lastOutputPath}
+                  >
                     {t.dashboard.outputPathLabel}: {outputFileName}
                   </span>
                   <Button
@@ -3277,44 +4143,50 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                   </Button>
                 </div>
               )}
-              <UITooltip content={t.dashboard.alignmentTooltip}>
-                <div
-                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer text-[10px] font-medium shadow-sm active:scale-95 ${alignmentMode
-                    ? "bg-indigo-500/15 border-indigo-500/40 text-indigo-500 dark:text-indigo-400"
-                    : "bg-secondary/50 border-border/60 text-muted-foreground hover:bg-secondary/80 hover:border-border hover:text-foreground"
+              {engineMode !== "v2" && (
+                <UITooltip content={t.dashboard.alignmentTooltip}>
+                  <div
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer text-[10px] font-medium shadow-sm active:scale-95 ${
+                      alignmentMode
+                        ? "bg-indigo-500/15 border-indigo-500/40 text-indigo-500 dark:text-indigo-400"
+                        : "bg-secondary/50 border-border/60 text-muted-foreground hover:bg-secondary/80 hover:border-border hover:text-foreground"
                     }`}
-                  onClick={() => {
-                    const nextValue = !alignmentMode;
-                    setAlignmentMode(nextValue);
-                    localStorage.setItem(
-                      "config_alignment_mode",
-                      String(nextValue),
-                    );
-                  }}
-                >
-                  <AlignLeft
-                    className={`w-3 h-3 ${alignmentMode ? "text-indigo-500" : "text-muted-foreground/70"}`}
-                  />
-                  <span>{t.dashboard.alignmentLabel}</span>
-                </div>
-              </UITooltip>
-              <UITooltip content={t.dashboard.cotTooltip}>
-                <div
-                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer text-[10px] font-medium shadow-sm active:scale-95 ${saveCot
-                    ? "bg-amber-500/15 border-amber-500/40 text-amber-500 dark:text-amber-400"
-                    : "bg-secondary/50 border-border/60 text-muted-foreground hover:bg-secondary/80 hover:border-border hover:text-foreground"
+                    onClick={() => {
+                      const nextValue = !alignmentMode;
+                      setAlignmentMode(nextValue);
+                      localStorage.setItem(
+                        "config_alignment_mode",
+                        String(nextValue),
+                      );
+                    }}
+                  >
+                    <AlignLeft
+                      className={`w-3 h-3 ${alignmentMode ? "text-indigo-500" : "text-muted-foreground/70"}`}
+                    />
+                    <span>{t.dashboard.alignmentLabel}</span>
+                  </div>
+                </UITooltip>
+              )}
+              {engineMode !== "v2" && (
+                <UITooltip content={t.dashboard.cotTooltip}>
+                  <div
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer text-[10px] font-medium shadow-sm active:scale-95 ${
+                      saveCot
+                        ? "bg-amber-500/15 border-amber-500/40 text-amber-500 dark:text-amber-400"
+                        : "bg-secondary/50 border-border/60 text-muted-foreground hover:bg-secondary/80 hover:border-border hover:text-foreground"
                     }`}
-                  onClick={() => {
-                    setSaveCot(!saveCot);
-                    localStorage.setItem("config_save_cot", String(!saveCot));
-                  }}
-                >
-                  <FileText
-                    className={`w-3 h-3 ${saveCot ? "text-amber-500" : "text-muted-foreground/70"}`}
-                  />
-                  <span>{t.dashboard.cotLabel}</span>
-                </div>
-              </UITooltip>
+                    onClick={() => {
+                      setSaveCot(!saveCot);
+                      localStorage.setItem("config_save_cot", String(!saveCot));
+                    }}
+                  >
+                    <FileText
+                      className={`w-3 h-3 ${saveCot ? "text-amber-500" : "text-muted-foreground/70"}`}
+                    />
+                    <span>{t.dashboard.cotLabel}</span>
+                  </div>
+                </UITooltip>
+              )}
               <div
                 className="flex items-center gap-2 cursor-pointer hover:bg-secondary/50 px-3 py-1.5 rounded-lg transition-colors"
                 onClick={() => setLogsCollapsed(!logsCollapsed)}
@@ -3322,9 +4194,6 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                 <Terminal className="w-3.5 h-3.5 text-muted-foreground" />
                 <span className="text-xs text-muted-foreground">
                   {t.dashboard.terminal}
-                </span>
-                <span className="text-[10px] bg-secondary px-1.5 py-0.5 rounded">
-                  {logs.length}
                 </span>
                 <ChevronDown
                   className={`w-3.5 h-3.5 text-muted-foreground transition-transform ${logsCollapsed ? "" : "rotate-180"}`}
@@ -3355,87 +4224,89 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         </div>
 
         {/* Confirmation Modal for Overwrite/Resume */}
-        {
-          activeConfirmModal && activeConfirmModal!.isOpen && (
-            <div className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-300">
-              <Card className="w-[420px] max-w-[95vw] overflow-hidden border-border bg-background shadow-2xl animate-in zoom-in-95 duration-300 p-8">
-                <div className="flex items-center gap-4 mb-6">
-                  <AlertTriangle className="w-6 h-6 text-amber-500" />
-                  <h3 className="text-xl font-bold text-foreground">
-                    {t.dashboard.fileExistTitle}
-                  </h3>
-                </div>
+        {activeConfirmModal && activeConfirmModal!.isOpen && (
+          <div className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-300">
+            <Card className="w-[420px] max-w-[95vw] overflow-hidden border-border bg-background shadow-2xl animate-in zoom-in-95 duration-300 p-8">
+              <div className="flex items-center gap-4 mb-6">
+                <AlertTriangle className="w-6 h-6 text-amber-500" />
+                <h3 className="text-xl font-bold text-foreground">
+                  {t.dashboard.fileExistTitle}
+                </h3>
+              </div>
 
-                <p className="text-sm text-muted-foreground mb-8">
-                  {t.dashboard.fileExistMsg}
-                  <span className="block mt-2 font-mono text-[11px] bg-secondary/50 text-foreground px-3 py-2 rounded border border-border break-all">
-                    {activeConfirmModal!.file}
-                  </span>
-                </p>
+              <p className="text-sm text-muted-foreground mb-8">
+                {t.dashboard.fileExistMsg}
+                <span className="block mt-2 font-mono text-[11px] bg-secondary/50 text-foreground px-3 py-2 rounded border border-border break-all">
+                  {activeConfirmModal!.file}
+                </span>
+              </p>
 
-                <div className="space-y-3">
-                  <Button
-                    onClick={activeConfirmModal!.onResume}
-                    className="w-full h-12 bg-indigo-600 hover:bg-indigo-500 dark:bg-primary dark:hover:bg-primary/90 text-white font-bold shadow-lg shadow-indigo-200 dark:shadow-primary/20"
+              <div className="space-y-3">
+                <Button
+                  onClick={activeConfirmModal!.onResume}
+                  className="w-full h-12 bg-indigo-600 hover:bg-indigo-500 dark:bg-primary dark:hover:bg-primary/90 text-white font-bold shadow-lg shadow-indigo-200 dark:shadow-primary/20"
+                >
+                  {t.dashboard.resume}
+                </Button>
+
+                <div className="flex flex-col gap-3">
+                  <div
+                    className={
+                      activeConfirmModal!.onSkip
+                        ? "grid grid-cols-2 gap-3"
+                        : "w-full"
+                    }
                   >
-                    {t.dashboard.resume}
-                  </Button>
-
-                  <div className="flex flex-col gap-3">
-                    <div
-                      className={
-                        activeConfirmModal!.onSkip ? "grid grid-cols-2 gap-3" : "w-full"
-                      }
+                    <Button
+                      onClick={activeConfirmModal!.onOverwrite}
+                      variant="outline"
+                      className="w-full h-11 border-border bg-background hover:bg-secondary text-foreground font-medium dark:bg-muted/10 dark:border-white/5 dark:hover:bg-muted/30"
                     >
+                      {t.dashboard.retranslate}
+                    </Button>
+
+                    {activeConfirmModal!.onSkip && (
                       <Button
-                        onClick={activeConfirmModal!.onOverwrite}
+                        onClick={activeConfirmModal!.onSkip}
                         variant="outline"
                         className="w-full h-11 border-border bg-background hover:bg-secondary text-foreground font-medium dark:bg-muted/10 dark:border-white/5 dark:hover:bg-muted/30"
                       >
-                        {t.dashboard.retranslate}
+                        {t.dashboard.skipFile}
                       </Button>
-
-                      {activeConfirmModal!.onSkip && (
-                        <Button
-                          onClick={activeConfirmModal!.onSkip}
-                          variant="outline"
-                          className="w-full h-11 border-border bg-background hover:bg-secondary text-foreground font-medium dark:bg-muted/10 dark:border-white/5 dark:hover:bg-muted/30"
-                        >
-                          {t.dashboard.skipFile}
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="pt-4 mt-2 border-t border-border">
-                    <Button
-                      onClick={activeConfirmModal!.onStopAll}
-                      variant="ghost"
-                      className="w-full text-muted-foreground hover:text-destructive hover:bg-destructive/10 text-sm font-medium h-10"
-                    >
-                      {t.dashboard.stopAll}
-                    </Button>
+                    )}
                   </div>
                 </div>
-              </Card>
-            </div>
-          )
-        }
 
-        {
-          configItem && (
-            <FileConfigModal
-              item={configItem!}
-              lang={lang}
-              onSave={(config) => handleSaveFileConfig(configItem!.id, config)}
-              onClose={() => setConfigItem(null)}
-              remoteRuntime={remoteRuntime}
-            />
-          )
-        }
+                <div className="pt-4 mt-2 border-t border-border">
+                  <Button
+                    onClick={activeConfirmModal!.onStopAll}
+                    variant="ghost"
+                    className="w-full text-muted-foreground hover:text-destructive hover:bg-destructive/10 text-sm font-medium h-10"
+                  >
+                    {t.dashboard.stopAll}
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {configItem && (
+          <FileConfigModal
+            item={configItem!}
+            lang={lang}
+            onSave={(config) => handleSaveFileConfig(configItem!.id, config)}
+            onClose={() => setConfigItem(null)}
+            remoteRuntime={remoteRuntime}
+            globalEngineMode={engineMode}
+            v2Profiles={v2Profiles}
+          />
+        )}
 
         <AlertModal {...alertProps} />
       </div>
     );
   },
 );
+
+Dashboard.displayName = "Dashboard";

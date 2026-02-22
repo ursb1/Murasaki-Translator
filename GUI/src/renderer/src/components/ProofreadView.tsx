@@ -59,6 +59,9 @@ interface CacheData {
   outputPath: string;
   modelName: string;
   glossaryPath: string;
+  engineMode?: string;
+  chunkType?: string;
+  pipelineId?: string;
   stats: {
     blockCount: number;
     srcLines: number;
@@ -107,6 +110,8 @@ interface ProofreadViewProps {
 }
 
 interface RetryConfig {
+  engineMode: "v1" | "v2";
+  v2PipelineId: string;
   modelPath: string;
   glossaryPath: string;
   preset: string;
@@ -133,11 +138,26 @@ interface RetryConfig {
   coverageRetries: number;
 }
 
+interface V2PipelineOption {
+  id: string;
+  name: string;
+  filename: string;
+  chunk_type?: string;
+}
+
 import { ResultChecker } from "./ResultChecker";
 import { findHighSimilarityLines } from "../lib/quality-check";
 import { AlertModal } from "./ui/AlertModal";
 import { useAlertModal } from "../hooks/useAlertModal";
 import { stripSystemMarkersForDisplay } from "../lib/displayText";
+import { resolveRuleListForRun } from "../lib/rulesConfig";
+import {
+  buildProofreadAlignedLinePairs,
+  buildProofreadLineLayoutMetrics,
+  isProofreadV2LineCache,
+  normalizeProofreadEngineMode,
+  resolveProofreadRetranslateOptions,
+} from "../lib/proofreadViewConfig";
 
 // ...
 
@@ -289,7 +309,11 @@ const extractVariantTokensWithPos = (
   while ((match = regex.exec(text)) !== null) {
     const token = match[0];
     if (!isVariantTokenValid(token)) continue;
-    results.push({ text: token, start: match.index, end: match.index + token.length });
+    results.push({
+      text: token,
+      start: match.index,
+      end: match.index + token.length,
+    });
   }
   return results;
 };
@@ -348,10 +372,14 @@ const pickConsistencyVariant = ({
   if (tokens.length === 0) return unknownLabel;
 
   const normalizedExpected = expected ? normalizeVariantToken(expected) : "";
-  const selectByPosition = (candidates: { text: string; start: number; end: number }[]) => {
+  const selectByPosition = (
+    candidates: { text: string; start: number; end: number }[],
+  ) => {
     if (!useLineAlign) {
       candidates.sort(
-        (a, b) => normalizeVariantToken(b.text).length - normalizeVariantToken(a.text).length,
+        (a, b) =>
+          normalizeVariantToken(b.text).length -
+          normalizeVariantToken(a.text).length,
       );
       return candidates[0];
     }
@@ -362,7 +390,9 @@ const pickConsistencyVariant = ({
         : null;
     if (termRatio === null) {
       candidates.sort(
-        (a, b) => normalizeVariantToken(b.text).length - normalizeVariantToken(a.text).length,
+        (a, b) =>
+          normalizeVariantToken(b.text).length -
+          normalizeVariantToken(a.text).length,
       );
       return candidates[0];
     }
@@ -437,8 +467,7 @@ export default function ProofreadView({
     new Set(),
   );
   const [consistencyGlossaryPath, setConsistencyGlossaryPath] = useState("");
-  const [consistencyMinOccurrences, setConsistencyMinOccurrences] =
-    useState(2);
+  const [consistencyMinOccurrences, setConsistencyMinOccurrences] = useState(2);
   const [consistencyResults, setConsistencyResults] = useState<
     ConsistencyIssue[]
   >([]);
@@ -455,6 +484,12 @@ export default function ProofreadView({
 
   // Retry Panel
   const [showRetryPanel, setShowRetryPanel] = useState(false);
+  const [retryEngineMode, setRetryEngineMode] = useState<"v1" | "v2">("v1");
+  const [retryV2PipelineId, setRetryV2PipelineId] = useState("");
+  const [retryV2PipelineOptions, setRetryV2PipelineOptions] = useState<
+    V2PipelineOption[]
+  >([]);
+  const [retryV2PipelineLoading, setRetryV2PipelineLoading] = useState(false);
   const [retryModelPath, setRetryModelPath] = useState("");
   const [retryGlossaryPath, setRetryGlossaryPath] = useState("");
   const [retryPreset, setRetryPreset] = useState("novel");
@@ -512,9 +547,9 @@ export default function ProofreadView({
 
   // Line Mode - strict line-by-line alignment with line numbers
   const [lineMode, setLineMode] = useState(true); // Default to line mode
-  const [selectionLock, setSelectionLock] = useState<
-    "src" | "dst" | null
-  >(null);
+  const [selectionLock, setSelectionLock] = useState<"src" | "dst" | null>(
+    null,
+  );
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [, startRetryPanelTransition] = useTransition();
 
@@ -525,6 +560,17 @@ export default function ProofreadView({
   }, []);
 
   useEffect(() => {
+    const resolvedRetryMode = normalizeProofreadEngineMode(
+      localStorage.getItem("config_engine_mode"),
+    );
+    setRetryEngineMode(resolvedRetryMode);
+    const resolvedRetryOptions = resolveProofreadRetranslateOptions({
+      engineMode: resolvedRetryMode,
+      pipelineId: localStorage.getItem("config_v2_pipeline_id"),
+      legacyPipelineRaw: localStorage.getItem("murasaki.v2.active_pipeline_id"),
+    });
+    setRetryV2PipelineId(resolvedRetryOptions.pipelineId);
+
     setRetryModelPath(localStorage.getItem("config_model") || "");
     setRetryGlossaryPath(localStorage.getItem("config_glossary_path") || "");
     setRetryPreset(localStorage.getItem("config_preset") || "novel");
@@ -607,7 +653,9 @@ export default function ProofreadView({
       const val = parseInt(savedCotCoverageThreshold, 10);
       if (Number.isFinite(val)) setRetryCotCoverageThreshold(val);
     }
-    const savedCoverageRetries = localStorage.getItem("config_coverage_retries");
+    const savedCoverageRetries = localStorage.getItem(
+      "config_coverage_retries",
+    );
     if (savedCoverageRetries) {
       const val = parseInt(savedCoverageRetries, 10);
       if (Number.isFinite(val)) setRetryCoverageRetries(val);
@@ -666,8 +714,11 @@ export default function ProofreadView({
       setRegexError(null);
       return;
     }
-    const matches: { blockIndex: number; type: "src" | "dst"; lineIndex: number }[] =
-      [];
+    const matches: {
+      blockIndex: number;
+      type: "src" | "dst";
+      lineIndex: number;
+    }[] = [];
 
     try {
       const flags = isRegex ? "gi" : "i";
@@ -778,7 +829,8 @@ export default function ProofreadView({
 
   const openRetryPanel = () => {
     startRetryPanelTransition(() => {
-      setRetryDraft(buildRetryDraft());
+      const draft = buildRetryDraft();
+      setRetryDraft(draft);
       setShowRetryPanel(true);
       setShowQualityCheck(false);
     });
@@ -791,6 +843,14 @@ export default function ProofreadView({
 
   const saveRetryPanel = () => {
     if (retryDraft) {
+      if (retryDraft.engineMode === "v2" && !retryDraft.v2PipelineId.trim()) {
+        showAlert({
+          title: pv.v2PipelineMissingTitle,
+          description: pv.v2PipelineMissingDesc,
+          variant: "destructive",
+        });
+        return;
+      }
       applyRetryConfig(retryDraft);
     }
     closeRetryPanel();
@@ -853,11 +913,25 @@ export default function ProofreadView({
     setHasUnsavedChanges(false); // Reset on load
     setCurrentPage(1);
     setEditingBlockId(null);
+    const cacheEngineModeRaw =
+      typeof data?.engineMode === "string" ? data.engineMode.trim() : "";
+    if (cacheEngineModeRaw) {
+      const normalizedCacheEngineMode =
+        normalizeProofreadEngineMode(cacheEngineModeRaw);
+      setRetryEngineMode(normalizedCacheEngineMode);
+      if (normalizedCacheEngineMode === "v2") {
+        const cachePipelineId =
+          typeof data?.pipelineId === "string" ? data.pipelineId.trim() : "";
+        if (cachePipelineId) {
+          setRetryV2PipelineId(cachePipelineId);
+        }
+      }
+    }
 
     if (data.glossaryPath) {
       try {
         console.log("Loading glossary from:", data.glossaryPath);
-        let glossaryContent = await window.api?.readFile(data.glossaryPath);
+        const glossaryContent = await window.api?.readFile(data.glossaryPath);
         if (glossaryContent) {
           const parsed = parseGlossaryContent(glossaryContent);
           const count = Object.keys(parsed).length;
@@ -953,16 +1027,19 @@ export default function ProofreadView({
       const looksLikeWindowsPath = (value: string) =>
         /^[a-zA-Z]:[\\/]/.test(value) || /^\\\\/.test(value);
       const derivedOutputPath = cachePath.replace(/\.cache\.json$/i, "");
-      let resolvedOutputPath = derivedOutputPath !== cachePath
-        ? derivedOutputPath
-        : "";
+      let resolvedOutputPath =
+        derivedOutputPath !== cachePath ? derivedOutputPath : "";
       if (!resolvedOutputPath) {
         resolvedOutputPath =
           cacheData.outputPath && cacheData.outputPath.trim()
             ? cacheData.outputPath.trim()
             : "";
       }
-      if (isWindows && resolvedOutputPath && !looksLikeWindowsPath(resolvedOutputPath)) {
+      if (
+        isWindows &&
+        resolvedOutputPath &&
+        !looksLikeWindowsPath(resolvedOutputPath)
+      ) {
         resolvedOutputPath = "";
       }
       if (resolvedOutputPath) {
@@ -1106,6 +1183,8 @@ export default function ProofreadView({
   };
 
   const buildRetryDraft = (): RetryConfig => ({
+    engineMode: retryEngineMode,
+    v2PipelineId: retryV2PipelineId,
     modelPath: retryModelPath,
     glossaryPath: retryGlossaryPath,
     preset: retryPreset,
@@ -1133,6 +1212,12 @@ export default function ProofreadView({
   });
 
   const applyRetryConfig = (next: RetryConfig) => {
+    setRetryEngineMode(next.engineMode);
+    localStorage.setItem("config_engine_mode", next.engineMode);
+
+    setRetryV2PipelineId(next.v2PipelineId);
+    localStorage.setItem("config_v2_pipeline_id", next.v2PipelineId);
+
     setRetryModelPath(next.modelPath);
     localStorage.setItem("config_model", next.modelPath);
 
@@ -1146,13 +1231,19 @@ export default function ProofreadView({
     localStorage.setItem("config_temperature", String(next.temperature));
 
     setRetryRepPenaltyBase(next.repPenaltyBase);
-    localStorage.setItem("config_rep_penalty_base", String(next.repPenaltyBase));
+    localStorage.setItem(
+      "config_rep_penalty_base",
+      String(next.repPenaltyBase),
+    );
 
     setRetryRepPenaltyMax(next.repPenaltyMax);
     localStorage.setItem("config_rep_penalty_max", String(next.repPenaltyMax));
 
     setRetryRepPenaltyStep(next.repPenaltyStep);
-    localStorage.setItem("config_rep_penalty_step", String(next.repPenaltyStep));
+    localStorage.setItem(
+      "config_rep_penalty_step",
+      String(next.repPenaltyStep),
+    );
 
     setRetryStrictMode(next.strictMode);
     localStorage.setItem("config_strict_mode", next.strictMode);
@@ -1197,7 +1288,10 @@ export default function ProofreadView({
     localStorage.setItem("config_max_retries", String(next.maxRetries));
 
     setRetryTempBoost(next.retryTempBoost);
-    localStorage.setItem("config_retry_temp_boost", String(next.retryTempBoost));
+    localStorage.setItem(
+      "config_retry_temp_boost",
+      String(next.retryTempBoost),
+    );
 
     setRetryPromptFeedback(next.retryPromptFeedback);
     localStorage.setItem(
@@ -1231,6 +1325,62 @@ export default function ProofreadView({
     setRetryDraft((prev) => ({ ...(prev || buildRetryDraft()), ...patch }));
   };
 
+  const loadRetryV2PipelineOptions = useCallback(async () => {
+    if (!window.api?.pipelineV2ProfilesList) {
+      setRetryV2PipelineOptions([]);
+      return [] as V2PipelineOption[];
+    }
+    setRetryV2PipelineLoading(true);
+    try {
+      const list = await window.api.pipelineV2ProfilesList("pipeline");
+      const normalized = (Array.isArray(list) ? list : [])
+        .filter((item) => item && typeof item.id === "string")
+        .map((item) => ({
+          id: String(item.id),
+          name: String(item.name || item.id),
+          filename: String(item.filename || ""),
+          chunk_type: item.chunk_type,
+        }));
+      setRetryV2PipelineOptions(normalized);
+      return normalized;
+    } catch (error) {
+      console.error("Failed to load V2 pipelines for proofread retry:", error);
+      setRetryV2PipelineOptions([]);
+      return [] as V2PipelineOption[];
+    } finally {
+      setRetryV2PipelineLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!showRetryPanel || retryDraft?.engineMode !== "v2") return;
+    let cancelled = false;
+    void loadRetryV2PipelineOptions().then((profiles) => {
+      if (cancelled) return;
+      setRetryDraft((prev) => {
+        if (!prev || prev.engineMode !== "v2") return prev;
+        if (prev.v2PipelineId || profiles.length === 0) return prev;
+        return { ...prev, v2PipelineId: profiles[0].id };
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    loadRetryV2PipelineOptions,
+    retryDraft?.engineMode,
+    retryDraft?.v2PipelineId,
+    showRetryPanel,
+  ]);
+
+  const resolveV2RetranslateOptions = useCallback(() => {
+    return resolveProofreadRetranslateOptions({
+      engineMode: retryEngineMode,
+      pipelineId: retryV2PipelineId,
+      legacyPipelineRaw: localStorage.getItem("murasaki.v2.active_pipeline_id"),
+    });
+  }, [retryEngineMode, retryV2PipelineId]);
+
   // Update Block
   const updateBlockDst = useCallback(
     (index: number, newDst: string) => {
@@ -1258,152 +1408,210 @@ export default function ProofreadView({
     [cacheData],
   );
 
+  const isFailedOrUntranslatedBlock = useCallback((block: CacheBlock) => {
+    const status = String(block.status || "")
+      .trim()
+      .toLowerCase();
+    if (status === "none" || status === "failed") return true;
+    if (!String(block.dst || "").trim()) return true;
+    const warningSet = new Set(
+      (block.warnings || []).map((warning) =>
+        String(warning || "")
+          .trim()
+          .toLowerCase(),
+      ),
+    );
+    return (
+      warningSet.has("line_mismatch") || warningSet.has("untranslated_fallback")
+    );
+  }, []);
+
+  const failedOrUntranslatedIndexes = useMemo(() => {
+    if (!cacheData?.blocks) return [];
+    return cacheData.blocks
+      .filter((block) => isFailedOrUntranslatedBlock(block))
+      .map((block) => block.index);
+  }, [cacheData, isFailedOrUntranslatedBlock]);
+
+  const failedOrUntranslatedCount = failedOrUntranslatedIndexes.length;
+
   // Retranslate
-  const retranslateBlock = useCallback(async (index: number) => {
-    if (!cacheData) return;
-    const block = cacheData.blocks.find((b) => b.index === index);
-    if (!block) return;
+  const retranslateBlock = useCallback(
+    async (index: number, options?: { silent?: boolean }) => {
+      if (!cacheData) return false;
+      const block = cacheData.blocks.find((b) => b.index === index);
+      if (!block) return false;
 
-    // Global Lock: Enforce single-threading for manual re-translation
-    if (retranslatingBlocks.size > 0 || loading) {
-      showAlert({
-        title: pv.waitTitle,
-        description: pv.waitDesc,
-        variant: "destructive",
-      });
-      return;
-    }
+      // Global Lock: Enforce single-threading for manual re-translation
+      if (retranslatingBlocks.size > 0 || loading) {
+        if (!options?.silent) {
+          showAlert({
+            title: pv.waitTitle,
+            description: pv.waitDesc,
+            variant: "destructive",
+          });
+        }
+        return false;
+      }
 
-    const resolvedModelPath = (
-      retryModelPath || localStorage.getItem("config_model") || ""
-    ).trim();
-    if (!resolvedModelPath) {
-      showAlert({
-        title: t.advancedFeatures,
-        description: pv.modelMissingDesc,
-        variant: "destructive",
-      });
-      return;
-    }
+      const v2Options = resolveV2RetranslateOptions();
+      if (v2Options.useV2 && !v2Options.pipelineId) {
+        if (!options?.silent) {
+          showAlert({
+            title: pv.v2PipelineMissingTitle,
+            description: pv.v2PipelineMissingDesc,
+            variant: "destructive",
+          });
+        }
+        return false;
+      }
 
-    try {
-      setLoading(true);
-      setRetranslatingBlocks((prev) => new Set(prev).add(index));
-      // Clear previous logs for this block on start
-      setBlockLogs((prev) => ({ ...prev, [index]: [] }));
-
-      const resolvedGlossaryPath = (
-        retryGlossaryPath ||
-        localStorage.getItem("config_glossary_path") ||
+      const resolvedModelPath = (
+        retryModelPath ||
+        localStorage.getItem("config_model") ||
         ""
       ).trim();
-      const parsedGpuLayers = parseInt(retryGpuLayers || "-1", 10);
-      const config = {
-        gpuLayers: Number.isFinite(parsedGpuLayers) ? parsedGpuLayers : -1,
-        ctxSize: retryCtxSize || "4096",
-        preset: retryPreset || "novel",
-        temperature: retryTemperature,
-        repPenaltyBase: retryRepPenaltyBase,
-        repPenaltyMax: retryRepPenaltyMax,
-        repPenaltyStep: retryRepPenaltyStep,
-        glossaryPath: resolvedGlossaryPath || undefined,
-        deviceMode: retryDeviceMode || "auto",
-        rulesPre: JSON.parse(localStorage.getItem("config_rules_pre") || "[]"),
-        rulesPost: JSON.parse(
-          localStorage.getItem("config_rules_post") || "[]",
-        ),
-        strictMode: retryStrictMode || "off", // Default to off for manual retry unless set
-        flashAttn: localStorage.getItem("config_flash_attn") !== "false", // Most models support it now
-        kvCacheType: localStorage.getItem("config_kv_cache_type") || "f16",
-        lineCheck: retryLineCheck,
-        lineToleranceAbs: retryLineToleranceAbs,
-        lineTolerancePct: retryLineTolerancePct,
-        anchorCheck: retryAnchorCheck,
-        anchorCheckRetries: retryAnchorCheckRetries,
-        maxRetries: retryMaxRetries,
-        retryTempBoost: retryTempBoost,
-        retryPromptFeedback: retryPromptFeedback,
-        coverageCheck: retryCoverageCheck,
-        outputHitThreshold: retryOutputHitThreshold,
-        cotCoverageThreshold: retryCotCoverageThreshold,
-        coverageRetries: retryCoverageRetries,
-        gpuDeviceId: retryGpuDeviceId,
-      };
+      if (!v2Options.useV2 && !resolvedModelPath) {
+        if (!options?.silent) {
+          showAlert({
+            title: t.advancedFeatures,
+            description: pv.modelMissingDesc,
+            variant: "destructive",
+          });
+        }
+        return false;
+      }
 
-      const result = await window.api?.retranslateBlock({
-        src: block.src,
-        index: block.index,
-        modelPath: resolvedModelPath,
-        config: config,
-      });
+      try {
+        setLoading(true);
+        setRetranslatingBlocks((prev) => new Set(prev).add(index));
+        // Clear previous logs for this block on start
+        setBlockLogs((prev) => ({ ...prev, [index]: [] }));
 
-      if (result?.success) {
-        updateBlockDst(index, result.dst);
-        showAlert({
-          title: t.config.proofread.retranslateSuccess,
-          description: t.config.proofread.retranslateSuccessDesc.replace(
-            "{index}",
-            (index + 1).toString(),
-          ),
-          variant: "success",
+        const resolvedGlossaryPath = (
+          retryGlossaryPath ||
+          localStorage.getItem("config_glossary_path") ||
+          ""
+        ).trim();
+        const parsedGpuLayers = parseInt(retryGpuLayers || "-1", 10);
+        const config = {
+          gpuLayers: Number.isFinite(parsedGpuLayers) ? parsedGpuLayers : -1,
+          ctxSize: retryCtxSize || "4096",
+          preset: retryPreset || "novel",
+          temperature: retryTemperature,
+          repPenaltyBase: retryRepPenaltyBase,
+          repPenaltyMax: retryRepPenaltyMax,
+          repPenaltyStep: retryRepPenaltyStep,
+          glossaryPath: resolvedGlossaryPath || undefined,
+          deviceMode: retryDeviceMode || "auto",
+          rulesPre: resolveRuleListForRun("pre"),
+          rulesPost: resolveRuleListForRun("post"),
+          strictMode: retryStrictMode || "off", // Default to off for manual retry unless set
+          flashAttn: localStorage.getItem("config_flash_attn") !== "false", // Most models support it now
+          kvCacheType: localStorage.getItem("config_kv_cache_type") || "f16",
+          lineCheck: retryLineCheck,
+          lineToleranceAbs: retryLineToleranceAbs,
+          lineTolerancePct: retryLineTolerancePct,
+          anchorCheck: retryAnchorCheck,
+          anchorCheckRetries: retryAnchorCheckRetries,
+          maxRetries: retryMaxRetries,
+          retryTempBoost: retryTempBoost,
+          retryPromptFeedback: retryPromptFeedback,
+          coverageCheck: retryCoverageCheck,
+          outputHitThreshold: retryOutputHitThreshold,
+          cotCoverageThreshold: retryCotCoverageThreshold,
+          coverageRetries: retryCoverageRetries,
+          gpuDeviceId: retryGpuDeviceId,
+        };
+
+        const result = await window.api?.retranslateBlock({
+          src: block.src,
+          index: block.index,
+          modelPath: resolvedModelPath || "",
+          config: config,
+          useV2: v2Options.useV2,
+          pipelineId: v2Options.pipelineId,
         });
-      } else {
-        showAlert({
-          title: pv.retranslateFailTitle,
-          description: result?.error || pv.unknownError,
-          variant: "destructive",
+
+        if (result?.success) {
+          updateBlockDst(index, result.dst);
+          if (!options?.silent) {
+            showAlert({
+              title: t.config.proofread.retranslateSuccess,
+              description: t.config.proofread.retranslateSuccessDesc.replace(
+                "{index}",
+                (index + 1).toString(),
+              ),
+              variant: "success",
+            });
+          }
+          return true;
+        } else {
+          if (!options?.silent) {
+            showAlert({
+              title: pv.retranslateFailTitle,
+              description: result?.error || pv.unknownError,
+              variant: "destructive",
+            });
+          }
+          return false;
+        }
+      } catch (error) {
+        console.error("Failed to retranslate:", error);
+        if (!options?.silent) {
+          showAlert({
+            title: pv.retranslateErrorTitle,
+            description: String(error),
+            variant: "destructive",
+          });
+        }
+        return false;
+      } finally {
+        setLoading(false);
+        setRetranslatingBlocks((prev) => {
+          const next = new Set(prev);
+          next.delete(index);
+          return next;
         });
       }
-    } catch (error) {
-      console.error("Failed to retranslate:", error);
-      showAlert({
-        title: pv.retranslateErrorTitle,
-        description: String(error),
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-      setRetranslatingBlocks((prev) => {
-        const next = new Set(prev);
-        next.delete(index);
-        return next;
-      });
-    }
-  }, [
-    cacheData,
-    loading,
-    pv,
-    retryAnchorCheck,
-    retryAnchorCheckRetries,
-    retryCoverageCheck,
-    retryCoverageRetries,
-    retryCotCoverageThreshold,
-    retryCtxSize,
-    retryGpuDeviceId,
-    retryGpuLayers,
-    retryGlossaryPath,
-    retryLineCheck,
-    retryLineToleranceAbs,
-    retryLineTolerancePct,
-    retryMaxRetries,
-    retryModelPath,
-    retryPreset,
-    retryPromptFeedback,
-    retryRepPenaltyBase,
-    retryRepPenaltyMax,
-    retryRepPenaltyStep,
-    retryStrictMode,
-    retryTempBoost,
-    retryTemperature,
-    retryDeviceMode,
-    retryOutputHitThreshold,
-    retranslatingBlocks,
-    showAlert,
-    t.advancedFeatures,
-    t.config.proofread.retranslateSuccess,
-    t.config.proofread.retranslateSuccessDesc,
-    updateBlockDst,
-  ]);
+    },
+    [
+      cacheData,
+      loading,
+      pv,
+      resolveV2RetranslateOptions,
+      retryAnchorCheck,
+      retryAnchorCheckRetries,
+      retryCoverageCheck,
+      retryCoverageRetries,
+      retryCotCoverageThreshold,
+      retryCtxSize,
+      retryGpuDeviceId,
+      retryGpuLayers,
+      retryGlossaryPath,
+      retryLineCheck,
+      retryLineToleranceAbs,
+      retryLineTolerancePct,
+      retryMaxRetries,
+      retryModelPath,
+      retryPreset,
+      retryPromptFeedback,
+      retryRepPenaltyBase,
+      retryRepPenaltyMax,
+      retryRepPenaltyStep,
+      retryStrictMode,
+      retryTempBoost,
+      retryTemperature,
+      retryDeviceMode,
+      retryOutputHitThreshold,
+      retranslatingBlocks,
+      showAlert,
+      t.advancedFeatures,
+      t.config.proofread.retranslateSuccess,
+      t.config.proofread.retranslateSuccessDesc,
+      updateBlockDst,
+    ],
+  );
 
   const requestRetranslateBlock = useCallback(
     (index: number) => {
@@ -1413,11 +1621,97 @@ export default function ProofreadView({
           "{index}",
           String(index + 1),
         ),
-        onConfirm: () => retranslateBlock(index),
+        onConfirm: async () => {
+          await retranslateBlock(index);
+        },
       });
     },
-    [pv.retranslateConfirmDesc, pv.retranslateConfirmTitle, retranslateBlock, showConfirm],
+    [
+      pv.retranslateConfirmDesc,
+      pv.retranslateConfirmTitle,
+      retranslateBlock,
+      showConfirm,
+    ],
   );
+
+  const retryFailedOrUntranslatedBlocks = useCallback(async () => {
+    if (!cacheData) return;
+    if (retranslatingBlocks.size > 0 || loading) {
+      showAlert({
+        title: pv.waitTitle,
+        description: pv.waitDesc,
+        variant: "destructive",
+      });
+      return;
+    }
+    const targets = failedOrUntranslatedIndexes;
+    if (targets.length === 0) {
+      showAlert({
+        title: pv.retranslateFailedLinesTitle,
+        description: pv.retranslateFailedLinesNone,
+        variant: "info",
+      });
+      return;
+    }
+    let successCount = 0;
+    for (const blockIndex of targets) {
+      const ok = await retranslateBlock(blockIndex, { silent: true });
+      if (ok) successCount += 1;
+    }
+    const failedCount = targets.length - successCount;
+    showAlert({
+      title: pv.retranslateFailedLinesDoneTitle,
+      description: pv.retranslateFailedLinesDoneDesc
+        .replace("{success}", String(successCount))
+        .replace("{failed}", String(failedCount))
+        .replace("{total}", String(targets.length)),
+      variant: failedCount > 0 ? "warning" : "success",
+    });
+  }, [
+    cacheData,
+    failedOrUntranslatedIndexes,
+    loading,
+    pv.retranslateFailedLinesDoneDesc,
+    pv.retranslateFailedLinesDoneTitle,
+    pv.retranslateFailedLinesNone,
+    pv.retranslateFailedLinesTitle,
+    pv.waitDesc,
+    pv.waitTitle,
+    retranslateBlock,
+    retranslatingBlocks,
+    showAlert,
+  ]);
+
+  const requestRetryFailedOrUntranslatedBlocks = useCallback(() => {
+    const targets = failedOrUntranslatedIndexes.length;
+    if (targets === 0) {
+      showAlert({
+        title: pv.retranslateFailedLinesTitle,
+        description: pv.retranslateFailedLinesNone,
+        variant: "info",
+      });
+      return;
+    }
+    showConfirm({
+      title: pv.retranslateFailedLinesConfirmTitle,
+      description: pv.retranslateFailedLinesConfirmDesc.replace(
+        "{count}",
+        String(targets),
+      ),
+      onConfirm: () => {
+        void retryFailedOrUntranslatedBlocks();
+      },
+    });
+  }, [
+    failedOrUntranslatedIndexes,
+    pv.retranslateFailedLinesConfirmDesc,
+    pv.retranslateFailedLinesConfirmTitle,
+    pv.retranslateFailedLinesNone,
+    pv.retranslateFailedLinesTitle,
+    retryFailedOrUntranslatedBlocks,
+    showAlert,
+    showConfirm,
+  ]);
 
   // --- Replace Logic ---
 
@@ -1601,10 +1895,7 @@ export default function ProofreadView({
         <>
           {parts.map((part, i) =>
             i % 2 === 1 ? (
-              <span
-                key={i}
-                className="bg-yellow-300 text-black rounded px-0.5"
-              >
+              <span key={i} className="bg-yellow-300 text-black rounded px-0.5">
                 {part}
               </span>
             ) : (
@@ -1630,7 +1921,7 @@ export default function ProofreadView({
       const simLines = findHighSimilarityLines(block.src, block.dst);
       const simSet = new Set(simLines);
 
-      // In line mode, render line-by-line with synchronized heights
+      // Build aligned rows first, and filter rows only in line-mode preview.
       const displaySrc = stripSystemMarkersForDisplay(
         trimLeadingEmptyLines(block.src),
       );
@@ -1640,26 +1931,39 @@ export default function ProofreadView({
           ? editingText
           : trimLeadingEmptyLines(block.dst);
       const dstLinesRaw = dstText.split("\n");
-
-      // Align both sides: pad shorter side with empty lines
-      const maxLines = Math.max(srcLinesRaw.length, dstLinesRaw.length);
-      const srcLines = [
-        ...srcLinesRaw,
-        ...Array(maxLines - srcLinesRaw.length).fill(""),
-      ];
-      const dstLines = [
-        ...dstLinesRaw,
-        ...Array(maxLines - dstLinesRaw.length).fill(""),
-      ];
+      const useEnhancedLinePreview =
+        lineMode && isProofreadV2LineCache(cacheData || {});
+      const linePairs = buildProofreadAlignedLinePairs({
+        srcLines: srcLinesRaw,
+        dstLines: dstLinesRaw,
+        hideBothEmpty: useEnhancedLinePreview && editingBlockId !== block.index,
+      });
+      if (useEnhancedLinePreview && linePairs.length === 0) {
+        return null;
+      }
+      const layoutMetrics = buildProofreadLineLayoutMetrics(
+        Math.max(linePairs.length, 1),
+      );
+      const isSingleLineBlock = layoutMetrics.isSingleLineBlock;
 
       return (
         <div
           key={block.index}
           id={`block-${block.index}`}
-          className={`group hover:bg-muted/30 transition-colors ${editingBlockId === block.index ? "bg-muted/30" : ""}`}
+          className={
+            useEnhancedLinePreview
+              ? `group relative overflow-hidden rounded-xl border transition-all ${editingBlockId === block.index ? "border-primary/40 bg-primary/5 shadow-[0_0_0_1px_hsl(var(--primary)/0.15)]" : "border-border/40 bg-card/70 hover:border-border/70 hover:bg-card"} ${isSingleLineBlock ? "backdrop-blur-[1px]" : ""}`
+              : `group hover:bg-muted/30 transition-colors ${isSingleLineBlock ? "bg-background/60" : ""} ${editingBlockId === block.index ? "bg-muted/30" : ""}`
+          }
         >
           {/* Block header with info and actions */}
-          <div className="flex items-center gap-2 px-3 py-1 border-b border-border/10 bg-muted/20">
+          <div
+            className={
+              useEnhancedLinePreview
+                ? `flex items-center gap-2 border-b border-border/20 bg-muted/25 ${isSingleLineBlock ? "px-2.5 py-1" : "px-3.5 py-1.5"}`
+                : `flex items-center gap-2 border-b border-border/10 bg-muted/20 ${isSingleLineBlock ? "px-2 py-0.5" : "px-3 py-1"}`
+            }
+          >
             <span className="text-[10px] text-muted-foreground/50 font-mono">
               #{block.index + 1}
             </span>
@@ -1720,37 +2024,52 @@ export default function ProofreadView({
               )}
               {/* Display layer: two independent text flows to avoid cross-column copy linkage */}
               <div
-                className="grid"
+                className={
+                  useEnhancedLinePreview ? "grid bg-background/60" : "grid"
+                }
                 style={{
                   gridTemplateColumns: gridTemplate,
-                  gridAutoRows: "minmax(20px, auto)",
+                  gridAutoRows: `minmax(${layoutMetrics.rowMinHeight}px, auto)`,
                   gridAutoFlow: "row",
                 }}
               >
-                {Array.from({ length: maxLines }).map((_, lineIdx) => {
-                  const srcLine = srcLines[lineIdx] || "";
-                  const isWarning = simSet.has(lineIdx + 1);
+                {linePairs.map((pair, rowIdx) => {
+                  const isWarning = simSet.has(pair.lineNumber);
+                  const rowToneClass = useEnhancedLinePreview
+                    ? rowIdx % 2 === 0
+                      ? "bg-background/30"
+                      : "bg-muted/20"
+                    : "";
+                  const rowDividerClass =
+                    !useEnhancedLinePreview || rowIdx === linePairs.length - 1
+                      ? ""
+                      : "border-b border-border/15";
                   const baseCellStyle: React.CSSProperties = {
-                    minHeight: "20px",
-                    paddingLeft: "44px",
-                    paddingRight: "12px",
-                    lineHeight: "20px",
+                    minHeight: `${layoutMetrics.rowMinHeight}px`,
+                    paddingLeft: `${layoutMetrics.paddingLeft}px`,
+                    paddingRight: `${layoutMetrics.paddingRight}px`,
+                    paddingTop: `${layoutMetrics.textVerticalPadding}px`,
+                    paddingBottom: `${layoutMetrics.textVerticalPadding}px`,
+                    lineHeight: `${layoutMetrics.lineHeight}px`,
                     fontFamily:
                       'var(--font-translation, "Cascadia Mono", Consolas, "Meiryo", "MS Gothic", "SimSun", "Courier New", monospace)',
-                    fontSize: "var(--font-translation-size, 13px)",
-                    wordBreak: "break-all",
+                    fontSize: `var(--font-translation-size, ${layoutMetrics.textFontSize}px)`,
+                    fontWeight: layoutMetrics.textFontWeight,
+                    wordBreak: "break-word",
+                    display: "flex",
+                    alignItems: isSingleLineBlock ? "center" : "flex-start",
                   };
                   const srcCellStyle: React.CSSProperties = {
                     ...baseCellStyle,
                     gridColumn: 1,
-                    gridRow: lineIdx + 1,
+                    gridRow: rowIdx + 1,
                     userSelect: selectionLock === "dst" ? "none" : "text",
                   };
                   return (
                     <div
-                      key={`src-${lineIdx}`}
-                      id={`block-${block.index}-src-line-${lineIdx}`}
-                      className={`relative border-r border-border/20 ${isWarning ? "bg-amber-500/20" : ""}`}
+                      key={`src-${pair.rawIndex}`}
+                      id={`block-${block.index}-src-line-${pair.rawIndex}`}
+                      className={`relative ${useEnhancedLinePreview ? "border-r border-border/25" : "border-r border-border/20"} ${rowDividerClass} ${isWarning ? "bg-amber-500/20" : rowToneClass}`}
                       style={srcCellStyle}
                       onMouseDown={() =>
                         flushSync(() => setSelectionLock("src"))
@@ -1759,47 +2078,64 @@ export default function ProofreadView({
                       <span
                         style={{
                           position: "absolute",
-                          left: "12px",
-                          width: "24px",
+                          top: isSingleLineBlock ? "50%" : "0",
+                          transform: isSingleLineBlock
+                            ? "translateY(-50%)"
+                            : "none",
+                          left: `${layoutMetrics.lineNumberLeft}px`,
+                          width: `${layoutMetrics.lineNumberWidth}px`,
                           textAlign: "right",
-                          fontSize: "10px",
+                          fontSize: `${layoutMetrics.lineNumberFontSize}px`,
                           color: "hsl(var(--muted-foreground)/0.5)",
                           userSelect: "none",
-                          lineHeight: "20px",
+                          lineHeight: `${layoutMetrics.lineHeight}px`,
                         }}
                       >
-                        {lineIdx + 1}
+                        {pair.lineNumber}
                       </span>
                       <span className="whitespace-pre-wrap text-foreground select-text">
-                        {renderHighlightedLine(srcLine)}
+                        {renderHighlightedLine(pair.srcLine)}
                       </span>
                     </div>
                   );
                 })}
-                {Array.from({ length: maxLines }).map((_, lineIdx) => {
-                  const dstLine = dstLines[lineIdx] || "";
-                  const isWarning = simSet.has(lineIdx + 1);
+                {linePairs.map((pair, rowIdx) => {
+                  const isWarning = simSet.has(pair.lineNumber);
+                  const rowToneClass = useEnhancedLinePreview
+                    ? rowIdx % 2 === 0
+                      ? "bg-background/30"
+                      : "bg-muted/20"
+                    : "";
+                  const rowDividerClass =
+                    !useEnhancedLinePreview || rowIdx === linePairs.length - 1
+                      ? ""
+                      : "border-b border-border/15";
                   const baseCellStyle: React.CSSProperties = {
-                    minHeight: "20px",
-                    paddingLeft: "44px",
-                    paddingRight: "12px",
-                    lineHeight: "20px",
+                    minHeight: `${layoutMetrics.rowMinHeight}px`,
+                    paddingLeft: `${layoutMetrics.paddingLeft}px`,
+                    paddingRight: `${layoutMetrics.paddingRight}px`,
+                    paddingTop: `${layoutMetrics.textVerticalPadding}px`,
+                    paddingBottom: `${layoutMetrics.textVerticalPadding}px`,
+                    lineHeight: `${layoutMetrics.lineHeight}px`,
                     fontFamily:
                       'var(--font-translation, "Cascadia Mono", Consolas, "Meiryo", "MS Gothic", "SimSun", "Courier New", monospace)',
-                    fontSize: "var(--font-translation-size, 13px)",
-                    wordBreak: "break-all",
+                    fontSize: `var(--font-translation-size, ${layoutMetrics.textFontSize}px)`,
+                    fontWeight: layoutMetrics.textFontWeight,
+                    wordBreak: "break-word",
+                    display: "flex",
+                    alignItems: isSingleLineBlock ? "center" : "flex-start",
                   };
                   const dstCellStyle: React.CSSProperties = {
                     ...baseCellStyle,
                     gridColumn: 2,
-                    gridRow: lineIdx + 1,
+                    gridRow: rowIdx + 1,
                     userSelect: selectionLock === "src" ? "none" : "text",
                   };
                   return (
                     <div
-                      key={`dst-${lineIdx}`}
-                      id={`block-${block.index}-dst-line-${lineIdx}`}
-                      className={`relative cursor-text ${isWarning ? "bg-amber-500/20" : ""}`}
+                      key={`dst-${pair.rawIndex}`}
+                      id={`block-${block.index}-dst-line-${pair.rawIndex}`}
+                      className={`relative cursor-text ${useEnhancedLinePreview ? "transition-colors" : ""} ${rowDividerClass} ${isWarning ? "bg-amber-500/20" : rowToneClass} ${useEnhancedLinePreview && editingBlockId !== block.index ? "hover:bg-primary/5" : ""}`}
                       style={dstCellStyle}
                       onClick={() => {
                         if (editingBlockId !== block.index) {
@@ -1814,21 +2150,25 @@ export default function ProofreadView({
                       <span
                         style={{
                           position: "absolute",
-                          left: "12px",
-                          width: "24px",
+                          top: isSingleLineBlock ? "50%" : "0",
+                          transform: isSingleLineBlock
+                            ? "translateY(-50%)"
+                            : "none",
+                          left: `${layoutMetrics.lineNumberLeft}px`,
+                          width: `${layoutMetrics.lineNumberWidth}px`,
                           textAlign: "right",
-                          fontSize: "10px",
+                          fontSize: `${layoutMetrics.lineNumberFontSize}px`,
                           color: "hsl(var(--muted-foreground)/0.5)",
                           userSelect: "none",
-                          lineHeight: "20px",
+                          lineHeight: `${layoutMetrics.lineHeight}px`,
                         }}
                       >
-                        {lineIdx + 1}
+                        {pair.lineNumber}
                       </span>
                       <span
                         className={`whitespace-pre-wrap text-foreground select-text ${editingBlockId === block.index ? "opacity-0" : ""}`}
                       >
-                        {renderHighlightedLine(dstLine)}
+                        {renderHighlightedLine(pair.dstLine)}
                       </span>
                     </div>
                   );
@@ -1841,20 +2181,29 @@ export default function ProofreadView({
                   style={{ gridTemplateColumns: gridTemplate }}
                 >
                   {/* Left: transparent placeholder to maintain layout */}
-                  <div className="border-r border-border/20" />
+                  <div
+                    className={
+                      useEnhancedLinePreview
+                        ? "border-r border-border/25"
+                        : "border-r border-border/20"
+                    }
+                  />
                   {/* Right: textarea */}
                   <div className="relative">
                     <textarea
                       autoFocus
                       className="w-full h-full outline-none resize-none border-none m-0 bg-transparent text-foreground"
                       style={{
-                        paddingLeft: "44px",
-                        paddingRight: "12px",
-                        lineHeight: "20px",
+                        paddingLeft: `${layoutMetrics.paddingLeft}px`,
+                        paddingRight: `${layoutMetrics.paddingRight}px`,
+                        paddingTop: `${layoutMetrics.textVerticalPadding}px`,
+                        paddingBottom: `${layoutMetrics.textVerticalPadding}px`,
+                        lineHeight: `${layoutMetrics.lineHeight}px`,
                         fontFamily:
                           'var(--font-translation, "Cascadia Mono", Consolas, "Meiryo", "MS Gothic", "SimSun", "Courier New", monospace)',
-                        fontSize: "var(--font-translation-size, 13px)",
-                        wordBreak: "break-all",
+                        fontSize: `var(--font-translation-size, ${layoutMetrics.textFontSize}px)`,
+                        fontWeight: layoutMetrics.textFontWeight,
+                        wordBreak: "break-word",
                         whiteSpace: "pre-wrap",
                       }}
                       value={editingText}
@@ -1896,8 +2245,11 @@ export default function ProofreadView({
               )}
             </div>
           ) : (
-            // Block Mode: Original layout
-            <div className="grid relative" style={{ gridTemplateColumns: gridTemplate }}>
+            // Chunk Mode: Original layout
+            <div
+              className="grid relative"
+              style={{ gridTemplateColumns: gridTemplate }}
+            >
               <div className="px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap text-foreground select-text overflow-x-auto border-r border-border/20">
                 <HighlightText
                   text={displaySrc}
@@ -1981,6 +2333,8 @@ export default function ProofreadView({
     editingBlockId,
     editingText,
     lineMode,
+    cacheData?.engineMode,
+    cacheData?.chunkType,
     selectionLock,
     loading,
     retranslatingBlocks,
@@ -2019,7 +2373,9 @@ export default function ProofreadView({
     try {
       const result = await window.api?.selectFile({
         title: pv.retrySelectGlossaryTitle,
-        filters: [{ name: pv.retryGlossaryFilterName, extensions: ["json", "txt"] }],
+        filters: [
+          { name: pv.retryGlossaryFilterName, extensions: ["json", "txt"] },
+        ],
       } as any);
       if (result) setConsistencyGlossaryPath(result);
     } catch (e) {
@@ -2131,10 +2487,14 @@ export default function ProofreadView({
                 ? normalizeVariantToken(expected)
                 : "";
               const normalizedVariant = normalizeVariantToken(variantText);
-              if (normalizedExpected && normalizedVariant === normalizedExpected) {
+              if (
+                normalizedExpected &&
+                normalizedVariant === normalizedExpected
+              ) {
                 stat.matched += 1;
               }
-              if (!normalizedVariant || variantText === pv.consistencyUnknown) continue;
+              if (!normalizedVariant || variantText === pv.consistencyUnknown)
+                continue;
               const displayVariant =
                 normalizedExpected && normalizedVariant === normalizedExpected
                   ? expected
@@ -2250,7 +2610,18 @@ export default function ProofreadView({
           // Priority: Explicit cachePath > Output Path + .cache.json > Input Path + .cache.json
           let cachePath = h.cachePath;
           if (!cachePath && h.outputPath) {
-            cachePath = h.outputPath + ".cache.json";
+            const cacheDir = (h as any)?.config?.cacheDir;
+            const dir = String(cacheDir || "").trim();
+            if (dir) {
+              const fileName =
+                h.outputPath.split(/[/\\]/).pop() || h.outputPath;
+              const sep = dir.includes("\\") && !dir.includes("/") ? "\\" : "/";
+              const prefix =
+                dir.endsWith("\\") || dir.endsWith("/") ? dir : `${dir}${sep}`;
+              cachePath = `${prefix}${fileName}.cache.json`;
+            } else {
+              cachePath = h.outputPath + ".cache.json";
+            }
           }
           if (!cachePath && h.filePath) {
             cachePath = h.filePath + ".cache.json";
@@ -2314,10 +2685,7 @@ export default function ProofreadView({
         title: pv.loadProofreadFailTitle,
         description: pv.loadProofreadFailDesc
           .replace("{path}", path)
-          .replace(
-            "{error}",
-            e instanceof Error ? e.message : String(e),
-          ),
+          .replace("{error}", e instanceof Error ? e.message : String(e)),
         variant: "destructive",
       });
     } finally {
@@ -2571,8 +2939,11 @@ export default function ProofreadView({
     );
   }
 
+  const useEnhancedLinePreview =
+    lineMode && isProofreadV2LineCache(cacheData || {});
+
   return (
-      <div className="flex h-full bg-background">
+    <div className="flex h-full bg-background">
       {/* Main Content Column */}
       <div className="flex-1 flex flex-col min-w-0 relative z-0">
         {/* --- Toolbar --- */}
@@ -2642,7 +3013,9 @@ export default function ProofreadView({
                 type="text"
                 placeholder={pv.searchPlaceholder}
                 className={`w-full h-8 pl-7 pr-3 py-1.5 text-sm bg-secondary/50 border rounded-md focus:bg-background transition-colors outline-none font-mono ${
-                  regexError ? "border-amber-500/60 bg-amber-500/5" : "border-border"
+                  regexError
+                    ? "border-amber-500/60 bg-amber-500/5"
+                    : "border-border"
                 }`}
                 value={searchKeyword}
                 onChange={(e) => setSearchKeyword(e.target.value)}
@@ -2725,13 +3098,7 @@ export default function ProofreadView({
                 <Filter className="w-3.5 h-3.5" />
               </button>
             </Tooltip>
-            <Tooltip
-              content={
-                lineMode
-                  ? pv.lineModeHint
-                  : pv.blockModeHint
-              }
-            >
+            <Tooltip content={lineMode ? pv.lineModeHint : pv.blockModeHint}>
               <button
                 onClick={() => setLineMode(!lineMode)}
                 className={`h-8 w-8 inline-flex items-center justify-center rounded text-xs ${lineMode ? "bg-primary/20 text-primary" : "text-muted-foreground hover:bg-muted"}`}
@@ -2752,6 +3119,25 @@ export default function ProofreadView({
               <RefreshCw className="w-3.5 h-3.5 mr-1" />
               {pv.retryPanelButton}
             </Button>
+            {lineMode && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={requestRetryFailedOrUntranslatedBlocks}
+                className="h-8 text-xs px-3"
+                disabled={
+                  loading ||
+                  retranslatingBlocks.size > 0 ||
+                  failedOrUntranslatedCount === 0
+                }
+              >
+                <RefreshCw className="w-3.5 h-3.5 mr-1" />
+                {pv.retranslateFailedLinesButton.replace(
+                  "{count}",
+                  String(failedOrUntranslatedCount),
+                )}
+              </Button>
+            )}
 
             {/* Quality Check - Text Button */}
             <Button
@@ -2840,7 +3226,9 @@ export default function ProofreadView({
                 variant="outline"
                 onClick={replaceOne}
                 disabled={
-                  !searchKeyword || matchList.length === 0 || Boolean(regexError)
+                  !searchKeyword ||
+                  matchList.length === 0 ||
+                  Boolean(regexError)
                 }
               >
                 <Replace className="w-3.5 h-3.5 mr-1" />
@@ -2851,7 +3239,9 @@ export default function ProofreadView({
                 variant="outline"
                 onClick={replaceAll}
                 disabled={
-                  !searchKeyword || matchList.length === 0 || Boolean(regexError)
+                  !searchKeyword ||
+                  matchList.length === 0 ||
+                  Boolean(regexError)
                 }
               >
                 <ReplaceAll className="w-3.5 h-3.5 mr-1" />
@@ -2868,17 +3258,33 @@ export default function ProofreadView({
         >
           {/* Header Row */}
           <div
-            className="sticky top-0 z-20 grid bg-muted/80 backdrop-blur border-b text-xs font-medium text-muted-foreground"
+            className={`sticky top-0 z-20 grid ${
+              useEnhancedLinePreview
+                ? "border-b border-border/60 bg-background/95 backdrop-blur-sm text-[11px] font-semibold tracking-wide text-muted-foreground"
+                : "bg-muted/80 backdrop-blur border-b text-xs font-medium text-muted-foreground"
+            }`}
             style={{ gridTemplateColumns: gridTemplate }}
           >
-            <div className="px-4 py-2 border-r border-border/50">
+            <div
+              className={`px-4 ${useEnhancedLinePreview ? "py-2.5 border-r border-border/40 uppercase" : "py-2 border-r border-border/50"}`}
+            >
               {pv.sourceTitle}
             </div>
-            <div className="px-4 py-2">{pv.targetTitle}</div>
+            <div
+              className={`px-4 ${useEnhancedLinePreview ? "py-2.5 uppercase" : "py-2"}`}
+            >
+              {pv.targetTitle}
+            </div>
           </div>
 
           {/* Blocks */}
-          <div className="divide-y divide-border/30">
+          <div
+            className={
+              useEnhancedLinePreview
+                ? "px-3 py-3 space-y-3"
+                : "divide-y divide-border/30"
+            }
+          >
             {renderedBlocks}
           </div>
 
@@ -2911,7 +3317,6 @@ export default function ProofreadView({
         </div>
       </div>
 
-
       {/* --- Retry Settings Modal --- */}
       {showRetryPanel && retryDraft && (
         <div className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center p-4">
@@ -2926,9 +3331,7 @@ export default function ProofreadView({
                   <RefreshCw className="w-4 h-4 text-primary" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-medium">
-                    {pv.retryPanelTitle}
-                  </h3>
+                  <h3 className="text-sm font-medium">{pv.retryPanelTitle}</h3>
                   <p className="text-xs text-muted-foreground">
                     {pv.retryPanelDesc}
                   </p>
@@ -2949,29 +3352,99 @@ export default function ProofreadView({
                   {pv.retrySectionModel}
                 </div>
                 <div className="grid gap-4">
-                  <div className="space-y-2">
-                    <label className="text-xs text-muted-foreground">
-                      {pv.retryModelPath}
-                    </label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        className="w-full border p-2 rounded text-sm bg-secondary"
-                        value={retryForm.modelPath}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-xs text-muted-foreground">
+                        {pv.retryEngineMode}
+                      </label>
+                      <select
+                        className="w-full border border-border p-2 rounded bg-secondary text-foreground text-xs"
+                        value={retryForm.engineMode}
                         onChange={(e) =>
-                          updateRetryDraft({ modelPath: e.target.value })
+                          updateRetryDraft({
+                            engineMode: normalizeProofreadEngineMode(
+                              e.target.value,
+                            ),
+                          })
                         }
-                      />
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-9 px-3 text-xs shrink-0"
-                        onClick={selectRetryModel}
                       >
-                        {pv.retrySelectModel}
-                      </Button>
+                        <option value="v1">{pv.retryEngineModeLocal}</option>
+                        <option value="v2">{pv.retryEngineModeApi}</option>
+                      </select>
                     </div>
+                    {retryForm.engineMode === "v2" && (
+                      <div className="space-y-2">
+                        <label className="text-xs text-muted-foreground">
+                          {pv.retryV2Pipeline}
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <select
+                            className="w-full border border-border p-2 rounded bg-secondary text-foreground text-xs"
+                            value={retryForm.v2PipelineId}
+                            onChange={(e) =>
+                              updateRetryDraft({ v2PipelineId: e.target.value })
+                            }
+                            disabled={retryV2PipelineLoading}
+                          >
+                            <option value="">
+                              {retryV2PipelineLoading
+                                ? pv.retryV2PipelineLoading
+                                : pv.retryV2PipelinePlaceholder}
+                            </option>
+                            {retryV2PipelineOptions.map((pipeline) => (
+                              <option key={pipeline.id} value={pipeline.id}>
+                                {pipeline.name}
+                              </option>
+                            ))}
+                          </select>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-9 px-3 text-xs shrink-0"
+                            onClick={() => {
+                              void loadRetryV2PipelineOptions();
+                            }}
+                            disabled={retryV2PipelineLoading}
+                          >
+                            <RefreshCw
+                              className={`w-3.5 h-3.5 ${retryV2PipelineLoading ? "animate-spin" : ""}`}
+                            />
+                          </Button>
+                        </div>
+                        {!retryV2PipelineLoading &&
+                          retryV2PipelineOptions.length === 0 && (
+                            <p className="text-[11px] text-muted-foreground">
+                              {pv.retryV2NoPipeline}
+                            </p>
+                          )}
+                      </div>
+                    )}
                   </div>
+                  {retryForm.engineMode === "v1" && (
+                    <div className="space-y-2">
+                      <label className="text-xs text-muted-foreground">
+                        {pv.retryModelPath}
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          className="w-full border p-2 rounded text-sm bg-secondary"
+                          value={retryForm.modelPath}
+                          onChange={(e) =>
+                            updateRetryDraft({ modelPath: e.target.value })
+                          }
+                        />
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-9 px-3 text-xs shrink-0"
+                          onClick={selectRetryModel}
+                        >
+                          {pv.retrySelectModel}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                   <div className="space-y-2">
                     <label className="text-xs text-muted-foreground">
                       {pv.retryGlossaryPath}
@@ -3009,388 +3482,405 @@ export default function ProofreadView({
                       </Button>
                     )}
                   </div>
-                </div>
-              </div>
-
-              <div className="space-y-4 border-t pt-5">
-                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  {pv.retrySectionInference}
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label className="text-xs text-muted-foreground">
-                      {t.config.promptPreset}
-                    </label>
-                    <select
-                      className="w-full border border-border p-2 rounded bg-secondary text-foreground text-xs"
-                      value={retryForm.preset}
-                      onChange={(e) =>
-                        updateRetryDraft({ preset: e.target.value })
-                      }
-                    >
-                      <option value="novel">
-                        {t.dashboard.promptPresetLabels.novel}
-                      </option>
-                      <option value="script">
-                        {t.dashboard.promptPresetLabels.script}
-                      </option>
-                      <option value="short">
-                        {t.dashboard.promptPresetLabels.short}
-                      </option>
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs text-muted-foreground">
-                      {t.config.device.mode}
-                    </label>
-                    <select
-                      className="w-full border border-border p-2 rounded bg-secondary text-foreground text-xs"
-                      value={retryForm.deviceMode}
-                      onChange={(e) =>
-                        updateRetryDraft({
-                          deviceMode: e.target.value as "auto" | "cpu",
-                        })
-                      }
-                    >
-                      <option value="auto">{t.config.device.modes.auto}</option>
-                      <option value="cpu">{t.config.device.modes.cpu}</option>
-                    </select>
-                  </div>
-                  {retryForm.deviceMode === "auto" && (
-                    <div className="space-y-2 col-span-2">
-                      <label className="text-xs text-muted-foreground">
-                        {t.config.device.gpuId}
-                      </label>
-                      <input
-                        type="text"
-                        className="w-full border p-2 rounded text-sm bg-secondary"
-                        value={retryForm.gpuDeviceId}
-                        onChange={(e) =>
-                          updateRetryDraft({ gpuDeviceId: e.target.value })
-                        }
-                      />
-                      <p className="text-[10px] text-muted-foreground">
-                        {t.config.device.gpuIdDesc}
-                      </p>
-                    </div>
+                  {retryForm.engineMode === "v2" && (
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      {pv.retryV2Hint}
+                    </p>
                   )}
-                  <div className="space-y-2">
-                    <label className="text-xs text-muted-foreground">
-                      {t.config.gpuLayers}
-                    </label>
-                    <select
-                      className="w-full border border-border p-2 rounded bg-secondary text-foreground text-xs"
-                      value={retryForm.gpuLayers}
-                      onChange={(e) =>
-                        updateRetryDraft({ gpuLayers: e.target.value })
-                      }
-                      disabled={retryForm.deviceMode === "cpu"}
-                    >
-                      <option value="-1">-1</option>
-                      <option value="0">0</option>
-                      <option value="16">16</option>
-                      <option value="24">24</option>
-                      <option value="32">32</option>
-                      <option value="48">48</option>
-                      <option value="64">64</option>
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs text-muted-foreground">
-                      {t.config.ctxSize}
-                    </label>
-                    <input
-                      type="number"
-                      className="w-full border p-2 rounded text-sm bg-secondary text-center"
-                      value={retryForm.ctxSize}
-                      onChange={(e) =>
-                        updateRetryDraft({ ctxSize: e.target.value })
-                      }
-                    />
-                  </div>
                 </div>
               </div>
 
-              <div className="space-y-4 border-t pt-5">
-                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  {pv.retrySectionSampling}
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label className="text-xs text-muted-foreground">
-                      {pv.retryTemperature}
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      className="w-full border p-2 rounded text-sm bg-secondary text-center"
-                      value={retryForm.temperature}
-                      onChange={(e) =>
-                        updateRetryDraft({
-                          temperature: parseFloat(e.target.value) || 0.7,
-                        })
-                      }
-                    />
+              {retryForm.engineMode === "v1" && (
+                <>
+                  <div className="space-y-4 border-t pt-5">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      {pv.retrySectionInference}
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-xs text-muted-foreground">
+                          {t.config.promptPreset}
+                        </label>
+                        <select
+                          className="w-full border border-border p-2 rounded bg-secondary text-foreground text-xs"
+                          value={retryForm.preset}
+                          onChange={(e) =>
+                            updateRetryDraft({ preset: e.target.value })
+                          }
+                        >
+                          <option value="novel">
+                            {t.dashboard.promptPresetLabels.novel}
+                          </option>
+                          <option value="script">
+                            {t.dashboard.promptPresetLabels.script}
+                          </option>
+                          <option value="short">
+                            {t.dashboard.promptPresetLabels.short}
+                          </option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-xs text-muted-foreground">
+                          {t.config.device.mode}
+                        </label>
+                        <select
+                          className="w-full border border-border p-2 rounded bg-secondary text-foreground text-xs"
+                          value={retryForm.deviceMode}
+                          onChange={(e) =>
+                            updateRetryDraft({
+                              deviceMode: e.target.value as "auto" | "cpu",
+                            })
+                          }
+                        >
+                          <option value="auto">
+                            {t.config.device.modes.auto}
+                          </option>
+                          <option value="cpu">
+                            {t.config.device.modes.cpu}
+                          </option>
+                        </select>
+                      </div>
+                      {retryForm.deviceMode === "auto" && (
+                        <div className="space-y-2 col-span-2">
+                          <label className="text-xs text-muted-foreground">
+                            {t.config.device.gpuId}
+                          </label>
+                          <input
+                            type="text"
+                            className="w-full border p-2 rounded text-sm bg-secondary"
+                            value={retryForm.gpuDeviceId}
+                            onChange={(e) =>
+                              updateRetryDraft({ gpuDeviceId: e.target.value })
+                            }
+                          />
+                          <p className="text-[10px] text-muted-foreground">
+                            {t.config.device.gpuIdDesc}
+                          </p>
+                        </div>
+                      )}
+                      <div className="space-y-2">
+                        <label className="text-xs text-muted-foreground">
+                          {t.config.gpuLayers}
+                        </label>
+                        <select
+                          className="w-full border border-border p-2 rounded bg-secondary text-foreground text-xs"
+                          value={retryForm.gpuLayers}
+                          onChange={(e) =>
+                            updateRetryDraft({ gpuLayers: e.target.value })
+                          }
+                          disabled={retryForm.deviceMode === "cpu"}
+                        >
+                          <option value="-1">-1</option>
+                          <option value="0">0</option>
+                          <option value="16">16</option>
+                          <option value="24">24</option>
+                          <option value="32">32</option>
+                          <option value="48">48</option>
+                          <option value="64">64</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-xs text-muted-foreground">
+                          {t.config.ctxSize}
+                        </label>
+                        <input
+                          type="number"
+                          className="w-full border p-2 rounded text-sm bg-secondary text-center"
+                          value={retryForm.ctxSize}
+                          onChange={(e) =>
+                            updateRetryDraft({ ctxSize: e.target.value })
+                          }
+                        />
+                      </div>
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-xs text-muted-foreground">
-                      {pv.retryStrictMode}
-                    </label>
-                    <select
-                      className="w-full border border-border p-2 rounded bg-secondary text-foreground text-xs"
-                      value={retryForm.strictMode}
-                      onChange={(e) =>
-                        updateRetryDraft({ strictMode: e.target.value })
-                      }
-                    >
-                      <option value="off">{av.strictModeOff}</option>
-                      <option value="subs">{av.strictModeSubs}</option>
-                      <option value="all">{av.strictModeAll}</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-xs text-muted-foreground">
-                      {pv.retryRepPenaltyBase}
-                    </label>
-                    <input
-                      type="number"
-                      step="0.05"
-                      className="w-full border p-2 rounded text-sm bg-secondary text-center"
-                      value={retryForm.repPenaltyBase}
-                      onChange={(e) =>
-                        updateRetryDraft({
-                          repPenaltyBase: parseFloat(e.target.value) || 1.0,
-                        })
-                      }
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs text-muted-foreground">
-                      {pv.retryRepPenaltyMax}
-                    </label>
-                    <input
-                      type="number"
-                      step="0.05"
-                      className="w-full border p-2 rounded text-sm bg-secondary text-center"
-                      value={retryForm.repPenaltyMax}
-                      onChange={(e) =>
-                        updateRetryDraft({
-                          repPenaltyMax: parseFloat(e.target.value) || 1.5,
-                        })
-                      }
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs text-muted-foreground">
-                      {pv.retryRepPenaltyStep}
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      className="w-full border p-2 rounded text-sm bg-secondary text-center"
-                      value={retryForm.repPenaltyStep}
-                      onChange={(e) =>
-                        updateRetryDraft({
-                          repPenaltyStep: parseFloat(e.target.value) || 0.1,
-                        })
-                      }
-                    />
-                  </div>
-                </div>
-              </div>
 
-              <div className="space-y-4 border-t pt-5">
-                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  {pv.retrySectionStructural}
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">{pv.retryLineCheck}</span>
-                  <Switch
-                    checked={retryForm.lineCheck}
-                    onCheckedChange={(v) => updateRetryDraft({ lineCheck: v })}
-                  />
-                </div>
-                {retryForm.lineCheck && (
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <label className="text-xs text-muted-foreground">
-                        {pv.retryLineToleranceAbs}
-                      </label>
-                      <input
-                        type="number"
-                        className="w-full border p-2 rounded text-sm bg-secondary text-center"
-                        value={retryForm.lineToleranceAbs}
-                        onChange={(e) =>
-                          updateRetryDraft({
-                            lineToleranceAbs: parseInt(e.target.value, 10) || 0,
-                          })
+                  <div className="space-y-4 border-t pt-5">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      {pv.retrySectionSampling}
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-xs text-muted-foreground">
+                          {pv.retryTemperature}
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="w-full border p-2 rounded text-sm bg-secondary text-center"
+                          value={retryForm.temperature}
+                          onChange={(e) =>
+                            updateRetryDraft({
+                              temperature: parseFloat(e.target.value) || 0.7,
+                            })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-xs text-muted-foreground">
+                          {pv.retryStrictMode}
+                        </label>
+                        <select
+                          className="w-full border border-border p-2 rounded bg-secondary text-foreground text-xs"
+                          value={retryForm.strictMode}
+                          onChange={(e) =>
+                            updateRetryDraft({ strictMode: e.target.value })
+                          }
+                        >
+                          <option value="off">{av.strictModeOff}</option>
+                          <option value="subs">{av.strictModeSubs}</option>
+                          <option value="all">{av.strictModeAll}</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-xs text-muted-foreground">
+                          {pv.retryRepPenaltyBase}
+                        </label>
+                        <input
+                          type="number"
+                          step="0.05"
+                          className="w-full border p-2 rounded text-sm bg-secondary text-center"
+                          value={retryForm.repPenaltyBase}
+                          onChange={(e) =>
+                            updateRetryDraft({
+                              repPenaltyBase: parseFloat(e.target.value) || 1.0,
+                            })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs text-muted-foreground">
+                          {pv.retryRepPenaltyMax}
+                        </label>
+                        <input
+                          type="number"
+                          step="0.05"
+                          className="w-full border p-2 rounded text-sm bg-secondary text-center"
+                          value={retryForm.repPenaltyMax}
+                          onChange={(e) =>
+                            updateRetryDraft({
+                              repPenaltyMax: parseFloat(e.target.value) || 1.5,
+                            })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs text-muted-foreground">
+                          {pv.retryRepPenaltyStep}
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="w-full border p-2 rounded text-sm bg-secondary text-center"
+                          value={retryForm.repPenaltyStep}
+                          onChange={(e) =>
+                            updateRetryDraft({
+                              repPenaltyStep: parseFloat(e.target.value) || 0.1,
+                            })
+                          }
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 border-t pt-5">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      {pv.retrySectionStructural}
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm">{pv.retryLineCheck}</span>
+                      <Switch
+                        checked={retryForm.lineCheck}
+                        onCheckedChange={(v) =>
+                          updateRetryDraft({ lineCheck: v })
                         }
                       />
                     </div>
-                    <div className="space-y-1">
-                      <label className="text-xs text-muted-foreground">
-                        {pv.retryLineTolerancePct}
-                      </label>
-                      <input
-                        type="number"
-                        className="w-full border p-2 rounded text-sm bg-secondary text-center"
-                        value={retryForm.lineTolerancePct}
-                        onChange={(e) =>
-                          updateRetryDraft({
-                            lineTolerancePct: parseInt(e.target.value, 10) || 0,
-                          })
+                    {retryForm.lineCheck && (
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-xs text-muted-foreground">
+                            {pv.retryLineToleranceAbs}
+                          </label>
+                          <input
+                            type="number"
+                            className="w-full border p-2 rounded text-sm bg-secondary text-center"
+                            value={retryForm.lineToleranceAbs}
+                            onChange={(e) =>
+                              updateRetryDraft({
+                                lineToleranceAbs:
+                                  parseInt(e.target.value, 10) || 0,
+                              })
+                            }
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs text-muted-foreground">
+                            {pv.retryLineTolerancePct}
+                          </label>
+                          <input
+                            type="number"
+                            className="w-full border p-2 rounded text-sm bg-secondary text-center"
+                            value={retryForm.lineTolerancePct}
+                            onChange={(e) =>
+                              updateRetryDraft({
+                                lineTolerancePct:
+                                  parseInt(e.target.value, 10) || 0,
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between pt-2">
+                      <span className="text-sm">{pv.retryAnchorCheck}</span>
+                      <Switch
+                        checked={retryForm.anchorCheck}
+                        onCheckedChange={(v) =>
+                          updateRetryDraft({ anchorCheck: v })
                         }
                       />
                     </div>
+                    {retryForm.anchorCheck && (
+                      <div className="space-y-1">
+                        <label className="text-xs text-muted-foreground">
+                          {pv.retryAnchorRetries}
+                        </label>
+                        <input
+                          type="number"
+                          className="w-full border p-2 rounded text-sm bg-secondary text-center"
+                          value={retryForm.anchorCheckRetries}
+                          onChange={(e) =>
+                            updateRetryDraft({
+                              anchorCheckRetries:
+                                parseInt(e.target.value, 10) || 1,
+                            })
+                          }
+                        />
+                      </div>
+                    )}
                   </div>
-                )}
-                <div className="flex items-center justify-between pt-2">
-                  <span className="text-sm">{pv.retryAnchorCheck}</span>
-                  <Switch
-                    checked={retryForm.anchorCheck}
-                    onCheckedChange={(v) =>
-                      updateRetryDraft({ anchorCheck: v })
-                    }
-                  />
-                </div>
-                {retryForm.anchorCheck && (
-                  <div className="space-y-1">
-                    <label className="text-xs text-muted-foreground">
-                      {pv.retryAnchorRetries}
-                    </label>
-                    <input
-                      type="number"
-                      className="w-full border p-2 rounded text-sm bg-secondary text-center"
-                      value={retryForm.anchorCheckRetries}
-                      onChange={(e) =>
-                        updateRetryDraft({
-                          anchorCheckRetries:
-                            parseInt(e.target.value, 10) || 1,
-                        })
-                      }
-                    />
-                  </div>
-                )}
-              </div>
 
-              <div className="space-y-4 border-t pt-5">
-                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  {pv.retrySectionDynamic}
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-xs text-muted-foreground">
-                      {pv.retryMaxRetries}
-                    </label>
-                    <input
-                      type="number"
-                      className="w-full border p-2 rounded text-sm bg-secondary text-center"
-                      value={retryForm.maxRetries}
-                      onChange={(e) =>
-                        updateRetryDraft({
-                          maxRetries: parseInt(e.target.value, 10) || 1,
-                        })
-                      }
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs text-muted-foreground">
-                      {pv.retryTempBoost}
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      className="w-full border p-2 rounded text-sm bg-secondary text-center"
-                      value={retryForm.retryTempBoost}
-                      onChange={(e) =>
-                        updateRetryDraft({
-                          retryTempBoost: parseFloat(e.target.value) || 0.0,
-                        })
-                      }
-                    />
-                  </div>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">{pv.retryPromptFeedback}</span>
-                  <Switch
-                    checked={retryForm.retryPromptFeedback}
-                    onCheckedChange={(v) =>
-                      updateRetryDraft({ retryPromptFeedback: v })
-                    }
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-4 border-t pt-5">
-                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  {pv.retrySectionCoverage}
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">{pv.retryCoverageCheck}</span>
-                  <Switch
-                    checked={retryForm.coverageCheck}
-                    onCheckedChange={(v) =>
-                      updateRetryDraft({ coverageCheck: v })
-                    }
-                  />
-                </div>
-                {retryForm.coverageCheck && (
-                  <div className="space-y-3">
+                  <div className="space-y-4 border-t pt-5">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      {pv.retrySectionDynamic}
+                    </div>
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
                         <label className="text-xs text-muted-foreground">
-                          {pv.retryOutputHitThreshold}
+                          {pv.retryMaxRetries}
                         </label>
                         <input
                           type="number"
                           className="w-full border p-2 rounded text-sm bg-secondary text-center"
-                          value={retryForm.outputHitThreshold}
+                          value={retryForm.maxRetries}
                           onChange={(e) =>
                             updateRetryDraft({
-                              outputHitThreshold:
-                                parseInt(e.target.value, 10) || 0,
+                              maxRetries: parseInt(e.target.value, 10) || 1,
                             })
                           }
                         />
                       </div>
                       <div className="space-y-1">
                         <label className="text-xs text-muted-foreground">
-                          {pv.retryCotCoverageThreshold}
+                          {pv.retryTempBoost}
                         </label>
                         <input
                           type="number"
+                          step="0.01"
                           className="w-full border p-2 rounded text-sm bg-secondary text-center"
-                          value={retryForm.cotCoverageThreshold}
+                          value={retryForm.retryTempBoost}
                           onChange={(e) =>
                             updateRetryDraft({
-                              cotCoverageThreshold:
-                                parseInt(e.target.value, 10) || 0,
+                              retryTempBoost: parseFloat(e.target.value) || 0.0,
                             })
                           }
                         />
                       </div>
                     </div>
-                    <div className="space-y-1">
-                      <label className="text-xs text-muted-foreground">
-                        {pv.retryCoverageRetries}
-                      </label>
-                      <input
-                        type="number"
-                        className="w-full border p-2 rounded text-sm bg-secondary text-center"
-                        value={retryForm.coverageRetries}
-                        onChange={(e) =>
-                          updateRetryDraft({
-                            coverageRetries:
-                              parseInt(e.target.value, 10) || 1,
-                          })
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm">{pv.retryPromptFeedback}</span>
+                      <Switch
+                        checked={retryForm.retryPromptFeedback}
+                        onCheckedChange={(v) =>
+                          updateRetryDraft({ retryPromptFeedback: v })
                         }
                       />
                     </div>
                   </div>
-                )}
-              </div>
+
+                  <div className="space-y-4 border-t pt-5">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      {pv.retrySectionCoverage}
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm">{pv.retryCoverageCheck}</span>
+                      <Switch
+                        checked={retryForm.coverageCheck}
+                        onCheckedChange={(v) =>
+                          updateRetryDraft({ coverageCheck: v })
+                        }
+                      />
+                    </div>
+                    {retryForm.coverageCheck && (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-xs text-muted-foreground">
+                              {pv.retryOutputHitThreshold}
+                            </label>
+                            <input
+                              type="number"
+                              className="w-full border p-2 rounded text-sm bg-secondary text-center"
+                              value={retryForm.outputHitThreshold}
+                              onChange={(e) =>
+                                updateRetryDraft({
+                                  outputHitThreshold:
+                                    parseInt(e.target.value, 10) || 0,
+                                })
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs text-muted-foreground">
+                              {pv.retryCotCoverageThreshold}
+                            </label>
+                            <input
+                              type="number"
+                              className="w-full border p-2 rounded text-sm bg-secondary text-center"
+                              value={retryForm.cotCoverageThreshold}
+                              onChange={(e) =>
+                                updateRetryDraft({
+                                  cotCoverageThreshold:
+                                    parseInt(e.target.value, 10) || 0,
+                                })
+                              }
+                            />
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs text-muted-foreground">
+                            {pv.retryCoverageRetries}
+                          </label>
+                          <input
+                            type="number"
+                            className="w-full border p-2 rounded text-sm bg-secondary text-center"
+                            value={retryForm.coverageRetries}
+                            onChange={(e) =>
+                              updateRetryDraft({
+                                coverageRetries:
+                                  parseInt(e.target.value, 10) || 1,
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
             <div className="p-4 border-t bg-background/95 flex items-center justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={closeRetryPanel}>
@@ -3537,7 +4027,9 @@ export default function ProofreadView({
                     <input
                       type="text"
                       value={consistencyGlossaryPath}
-                      onChange={(e) => setConsistencyGlossaryPath(e.target.value)}
+                      onChange={(e) =>
+                        setConsistencyGlossaryPath(e.target.value)
+                      }
                       placeholder={pv.consistencyGlossaryPlaceholder}
                       className="flex-1 border rounded-md px-3 py-2 text-xs bg-background"
                     />
@@ -3623,7 +4115,8 @@ export default function ProofreadView({
                                   {pv.consistencyOccurrences}: {issue.total}
                                 </div>
                                 <div>
-                                  {pv.consistencyVariants}: {issue.variants.length}
+                                  {pv.consistencyVariants}:{" "}
+                                  {issue.variants.length}
                                 </div>
                               </div>
                             </div>
@@ -3642,7 +4135,8 @@ export default function ProofreadView({
                                 onClick={() =>
                                   setConsistencyExpanded((prev) => {
                                     const next = new Set(prev);
-                                    if (next.has(issue.term)) next.delete(issue.term);
+                                    if (next.has(issue.term))
+                                      next.delete(issue.term);
                                     else next.add(issue.term);
                                     return next;
                                   })
@@ -3675,7 +4169,8 @@ export default function ProofreadView({
                                         className="text-[10px] text-muted-foreground mb-1 last:mb-0"
                                       >
                                         <div className="truncate">
-                                          {example.file} · #{example.blockIndex + 1}
+                                          {example.file} · #
+                                          {example.blockIndex + 1}
                                         </div>
                                         <div className="font-mono text-[10px] truncate">
                                           {example.srcLine}
@@ -3736,9 +4231,7 @@ export default function ProofreadView({
                       String(showLogModal + 1),
                     )}
                   </h3>
-                  <p className="text-xs text-zinc-500">
-                    {pv.logSubtitle}
-                  </p>
+                  <p className="text-xs text-zinc-500">{pv.logSubtitle}</p>
                 </div>
               </div>
               <Button

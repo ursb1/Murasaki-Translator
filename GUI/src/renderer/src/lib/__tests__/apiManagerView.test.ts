@@ -1,0 +1,983 @@
+﻿import { describe, it, expect } from "vitest";
+import { translations } from "../i18n";
+
+const requiredPaths: Array<string[]> = [
+  ["apiManager", "modeApi"],
+  ["apiManager", "modeAdvanced"],
+  ["apiManager", "heroBadge"],
+  ["apiManager", "kindFlowHint"],
+  ["apiManager", "kindHelper", "api"],
+  ["apiManager", "kindHelper", "pipeline"],
+  ["apiManager", "kindHelper", "prompt"],
+  ["apiManager", "kindHelper", "parser"],
+  ["apiManager", "kindHelper", "policy"],
+  ["apiManager", "kindHelper", "chunk"],
+  ["apiManager", "strategyKindTitle"],
+  ["apiManager", "statsApi"],
+  ["apiManager", "statsApiHint"],
+  ["apiManager", "statsPipeline"],
+  ["apiManager", "statsPipelineHint"],
+  ["apiManager", "statsGroup"],
+  ["apiManager", "statsGroupHint"],
+  ["apiManager", "openProfilesDir"],
+  ["apiManager", "openProfilesDirFail"],
+  ["apiManager", "newProfileDesc"],
+  ["apiManager", "newProfileLabels", "pipeline"],
+  ["apiManager", "newProfileLabels", "prompt"],
+  ["apiManager", "newProfileLabels", "strategy"],
+  ["apiManager", "newProfileLabels", "policy"],
+  ["apiManager", "newProfileLabels", "chunk"],
+  ["apiManager", "newProfileLabels", "parser"],
+  ["apiManager", "newProfileDescs", "pipeline"],
+  ["apiManager", "newProfileDescs", "prompt"],
+  ["apiManager", "newProfileDescs", "strategy"],
+  ["apiManager", "newProfileDescs", "policy"],
+  ["apiManager", "newProfileDescs", "chunk"],
+  ["apiManager", "newProfileDescs", "parser"],
+  ["apiManager", "backToPresets"],
+  ["apiManager", "presetTitle"],
+  ["apiManager", "presetDesc"],
+  ["apiManager", "presetToggleShow"],
+  ["apiManager", "presetToggleHide"],
+  ["apiManager", "presetApplyHint"],
+  ["apiManager", "presetNeedsConfig"],
+  ["apiManager", "presetQuickAction"],
+  ["apiManager", "presetActive"],
+  ["apiManager", "presetMenuTitle"],
+  ["apiManager", "presetMenuDesc"],
+  ["apiManager", "presetMoreTitle"],
+  ["apiManager", "customCardTitle"],
+  ["apiManager", "customCardDesc"],
+  ["apiManager", "customCardAction"],
+  ["apiManager", "groupTitle"],
+  ["apiManager", "groupDesc"],
+  ["apiManager", "groupToggleShow"],
+  ["apiManager", "groupToggleHide"],
+  ["apiManager", "groupCollapsedHint"],
+  ["apiManager", "groupCount"],
+  ["apiManager", "groupEmptyList"],
+  ["apiManager", "groupAll"],
+  ["apiManager", "groupCustom"],
+  ["apiManager", "groupEmpty"],
+  ["apiManager", "kindSections", "primary"],
+  ["apiManager", "kindSections", "optional"],
+  ["apiManager", "kindSectionsHint"],
+  ["apiManager", "scheme", "title"],
+  ["apiManager", "scheme", "desc"],
+  ["apiManager", "scheme", "fields", "provider"],
+  ["apiManager", "scheme", "fields", "prompt"],
+  ["apiManager", "scheme", "fields", "strategy"],
+  ["apiManager", "scheme", "fields", "parser"],
+  ["apiManager", "scheme", "placeholders", "strategy"],
+  ["apiManager", "scheme", "actions", "editStrategy"],
+  ["apiManager", "kindPrimaryHint"],
+  ["apiManager", "kindOptionalShow"],
+  ["apiManager", "kindOptionalHide"],
+  ["apiManager", "listTitle"],
+  ["apiManager", "listDesc"],
+  ["apiManager", "listEmpty"],
+  ["apiManager", "listHint"],
+  ["apiManager", "apiGridMyApisTitle"],
+  ["apiManager", "apiGridAddTitle"],
+  ["apiManager", "apiGridEmptyTitle"],
+  ["apiManager", "apiGridEmptyDesc"],
+  ["apiManager", "searchPlaceholder"],
+  ["apiManager", "emptySelectionTitle"],
+  ["apiManager", "emptySelectionDesc"],
+  ["apiManager", "promptGridDesc"],
+  ["apiManager", "parserGridDesc"],
+  ["apiManager", "strategyGridDesc"],
+  ["apiManager", "parserRecommendBadge"],
+  ["apiManager", "parserRecommendTitle"],
+  ["apiManager", "parserRecommendDesc"],
+  ["apiManager", "parserCardTags", "default"],
+  ["apiManager", "parserCardTags", "system"],
+  ["apiManager", "profileCardAction"],
+  ["apiManager", "profileCardEdit"],
+  ["apiManager", "pipelineOverviewTitle"],
+  ["apiManager", "pipelineOverviewShowGuide"],
+  ["apiManager", "pipelineOverviewManageTitle"],
+  ["apiManager", "pipelineOverviewManageDesc"],
+  ["apiManager", "pipelineOverviewHideGuide"],
+  ["apiManager", "untitledProfile"],
+  ["apiManager", "actionDuplicate"],
+  ["apiManager", "actionDelete"],
+  ["apiManager", "backToList"],
+  ["apiManager", "backToPipelines"],
+  ["apiManager", "deleteConfirm"],
+  ["apiManager", "deleteFail"],
+  ["apiManager", "defaultPresetDeleteFail"],
+  ["apiManager", "unsavedChangesTitle"],
+  ["apiManager", "unsavedChangesDesc"],
+  ["apiManager", "jsonParseErrorTitle"],
+  ["apiManager", "jsonParseErrorDesc"],
+  ["apiManager", "referenceUpdateTitle"],
+  ["apiManager", "referenceUpdateDesc"],
+  ["apiManager", "referenceUpdateMissingTitle"],
+  ["apiManager", "referenceUpdateMissingDesc"],
+  ["apiManager", "pipelineCardEdit"],
+  ["apiManager", "pipelineCardActive"],
+  ["apiManager", "sectionVisualTitle"],
+  ["apiManager", "sectionYamlTitle"],
+  ["apiManager", "editorYamlHint"],
+  ["apiManager", "editorHint"],
+  ["apiManager", "editorYamlBadge"],
+  ["apiManager", "editorTabs", "visual"],
+  ["apiManager", "editorTabs", "yaml"],
+  ["apiManager", "idToggleShow"],
+  ["apiManager", "idToggleHide"],
+  ["apiManager", "formTitle"],
+  ["apiManager", "formDesc"],
+  ["apiManager", "formSectionMain"],
+  ["apiManager", "formSectionAdvanced"],
+  ["apiManager", "apiSetupTitle"],
+  ["apiManager", "apiSetupDesc"],
+  ["apiManager", "apiSetupProgress"],
+  ["apiManager", "apiSetupItems", "id"],
+  ["apiManager", "apiSetupItems", "baseUrl"],
+  ["apiManager", "apiSetupItems", "model"],
+  ["apiManager", "apiSetupItems", "members"],
+  ["apiManager", "apiSetupItems", "endpoints"],
+  ["apiManager", "apiSetupHintOpenAI"],
+  ["apiManager", "apiSetupHintPool"],
+  ["apiManager", "apiSamplingTitle"],
+  ["apiManager", "apiSamplingDesc"],
+  ["apiManager", "apiSamplingHint"],
+  ["apiManager", "apiSamplingFields", "temperature"],
+  ["apiManager", "apiSamplingFields", "topP"],
+  ["apiManager", "apiSamplingFields", "maxTokens"],
+  ["apiManager", "apiSamplingFields", "presencePenalty"],
+  ["apiManager", "apiSamplingFields", "frequencyPenalty"],
+  ["apiManager", "apiSamplingFields", "seed"],
+  ["apiManager", "apiSamplingFields", "stop"],
+  ["apiManager", "apiSamplingPlaceholders", "temperature"],
+  ["apiManager", "apiSamplingPlaceholders", "topP"],
+  ["apiManager", "apiSamplingPlaceholders", "maxTokens"],
+  ["apiManager", "apiSamplingPlaceholders", "presencePenalty"],
+  ["apiManager", "apiSamplingPlaceholders", "frequencyPenalty"],
+  ["apiManager", "apiSamplingPlaceholders", "seed"],
+  ["apiManager", "apiSamplingPlaceholders", "stop"],
+  ["apiManager", "apiAdvancedTabs", "sampling"],
+  ["apiManager", "apiAdvancedTabs", "headers"],
+  ["apiManager", "apiAdvancedTabs", "extras"],
+  ["apiManager", "apiQuickFillTitle"],
+  ["apiManager", "apiQuickFillDesc"],
+  ["apiManager", "formAdvancedDesc"],
+  ["apiManager", "formAdvancedShow"],
+  ["apiManager", "formAdvancedHide"],
+  ["apiManager", "formFields", "nameLabel"],
+  ["apiManager", "formFields", "idLabel"],
+  ["apiManager", "formFields", "baseUrlLabel"],
+  ["apiManager", "formFields", "apiKeyLabel"],
+  ["apiManager", "formFields", "modelLabel"],
+  ["apiManager", "formFields", "timeoutLabel"],
+  ["apiManager", "formFields", "concurrencyLabel"],
+  ["apiManager", "formFields", "rpmLabel"],
+  ["apiManager", "formFields", "apiTypeLabel"],
+  ["apiManager", "formFields", "groupLabel"],
+  ["apiManager", "formFields", "membersLabel"],
+  ["apiManager", "formFields", "strategyLabel"],
+  ["apiManager", "formFields", "headersLabel"],
+  ["apiManager", "formFields", "paramsLabel"],
+  ["apiManager", "formPlaceholders", "group"],
+  ["apiManager", "formPlaceholders", "members"],
+  ["apiManager", "formPlaceholders", "headers"],
+  ["apiManager", "formPlaceholders", "params"],
+  ["apiManager", "formPlaceholders", "concurrency"],
+  ["apiManager", "formPlaceholders", "rpm"],
+  ["apiManager", "formHints", "group"],
+  ["apiManager", "formHints", "members"],
+  ["apiManager", "formHints", "strategy"],
+  ["apiManager", "formHints", "headers"],
+  ["apiManager", "formHints", "params"],
+  ["apiManager", "formHints", "concurrency"],
+  ["apiManager", "formHints", "rpm"],
+  ["apiManager", "modelListUnsupported"],
+  ["apiManager", "modelHintCombined"],
+  ["apiManager", "poolEndpointsTitle"],
+  ["apiManager", "poolEndpointsDesc"],
+  ["apiManager", "poolEndpointLabel"],
+  ["apiManager", "poolEndpointAdd"],
+  ["apiManager", "poolEndpointRemove"],
+  ["apiManager", "poolEndpointApiKeyHint"],
+  ["apiManager", "poolEndpointModelLabel"],
+  ["apiManager", "poolEndpointModelPlaceholder"],
+  ["apiManager", "poolEndpointModelHint"],
+  ["apiManager", "poolEndpointWeightLabel"],
+  ["apiManager", "poolEndpointWeightPlaceholder"],
+  ["apiManager", "poolEndpointWeightHint"],
+  ["apiManager", "kvEditor", "keyLabel"],
+  ["apiManager", "kvEditor", "valueLabel"],
+  ["apiManager", "kvEditor", "keyPlaceholder"],
+  ["apiManager", "kvEditor", "valuePlaceholder"],
+  ["apiManager", "kvEditor", "add"],
+  ["apiManager", "kvEditor", "remove"],
+  ["apiManager", "kvEditor", "hint"],
+  ["apiManager", "kvEditor", "smartPaste"],
+  ["apiManager", "kvEditor", "smartPasteEmpty"],
+  ["apiManager", "kvEditor", "smartPasteJson"],
+  ["apiManager", "kvEditor", "smartPasteLines"],
+  ["apiManager", "kvEditor", "smartPasteFail"],
+  ["apiManager", "formHints", "baseUrlSuffix"],
+  ["apiManager", "promptFields", "idLabel"],
+  ["apiManager", "promptFields", "nameLabel"],
+  ["apiManager", "promptFields", "systemTemplateLabel"],
+  ["apiManager", "promptFields", "userTemplateLabel"],
+  ["apiManager", "promptFields", "beforeLinesLabel"],
+  ["apiManager", "promptFields", "afterLinesLabel"],
+  ["apiManager", "promptFields", "sourceLinesLabel"],
+  ["apiManager", "promptFields", "joinerLabel"],
+  ["apiManager", "promptFields", "sourceFormatLabel"],
+  ["apiManager", "promptPlaceholders", "id"],
+  ["apiManager", "promptPlaceholders", "name"],
+  ["apiManager", "promptPlaceholders", "systemTemplate"],
+  ["apiManager", "promptPlaceholders", "userTemplate"],
+  ["apiManager", "promptPlaceholders", "beforeLines"],
+  ["apiManager", "promptPlaceholders", "afterLines"],
+  ["apiManager", "promptPlaceholders", "sourceLines"],
+  ["apiManager", "promptPlaceholders", "joiner"],
+  ["apiManager", "promptHints", "variables"],
+  ["apiManager", "promptHints", "context"],
+  ["apiManager", "promptHints", "sourceFormat"],
+  ["apiManager", "promptOptions", "sourceFormat", "auto"],
+  ["apiManager", "promptOptions", "sourceFormat", "jsonl"],
+  ["apiManager", "promptOptions", "sourceFormat", "plain"],
+  ["apiManager", "promptOptions", "sourceFormat", "custom"],
+  ["apiManager", "promptOptions", "sourceFormat", "jsonObject"],
+  ["apiManager", "promptOptions", "sourceFormat", "jsonArray"],
+  ["apiManager", "promptOptions", "sourceFormat", "taggedLine"],
+  ["apiManager", "promptSections", "templateTitle"],
+  ["apiManager", "promptSections", "templateDesc"],
+  ["apiManager", "promptSections", "contextTitle"],
+  ["apiManager", "promptSections", "contextDesc"],
+  ["apiManager", "promptPreviewTitle"],
+  ["apiManager", "promptPreviewDesc"],
+  ["apiManager", "promptPreviewShowContext"],
+  ["apiManager", "promptPreviewHideContext"],
+  ["apiManager", "promptPreviewSourceLabel"],
+  ["apiManager", "promptPreviewSourcePlaceholder"],
+  ["apiManager", "promptPreviewGlossaryLabel"],
+  ["apiManager", "promptPreviewGlossaryPlaceholder"],
+  ["apiManager", "promptPreviewLineIndexLabel"],
+  ["apiManager", "promptPreviewLineIndexPlaceholder"],
+  ["apiManager", "promptPreviewContextBeforeLabel"],
+  ["apiManager", "promptPreviewContextBeforePlaceholder"],
+  ["apiManager", "promptPreviewContextAfterLabel"],
+  ["apiManager", "promptPreviewContextAfterPlaceholder"],
+  ["apiManager", "promptPreviewSystemLabel"],
+  ["apiManager", "promptPreviewUserLabel"],
+  ["apiManager", "promptPreviewEmpty"],
+  ["apiManager", "strategyOptions", "round_robin"],
+  ["apiManager", "strategyOptions", "random"],
+  ["apiManager", "translationModeOptions", "line"],
+  ["apiManager", "translationModeOptions", "block"],
+  ["apiManager", "apiTypeOptions", "openai"],
+  ["apiManager", "apiTypeOptions", "pool"],
+  ["apiManager", "apiTypeOptions", "poolRoundRobin"],
+  ["apiManager", "apiTypeOptions", "poolRandom"],
+  ["apiManager", "apiTypeHints", "openai"],
+  ["apiManager", "apiTypeHints", "pool"],
+  ["apiManager", "formInvalidJsonTitle"],
+  ["apiManager", "formInvalidJsonDesc"],
+  ["apiManager", "testConnection"],
+  ["apiManager", "testConnectionRunning"],
+  ["apiManager", "testConnectionOk"],
+  ["apiManager", "testConnectionFail"],
+  ["apiManager", "testConnectionFailFallback"],
+  ["apiManager", "testConnectionTimeout"],
+  ["apiManager", "testConnectionHint"],
+  ["apiManager", "testConnectionPoolHint"],
+  ["apiManager", "concurrencyAutoTest"],
+  ["apiManager", "concurrencyAutoTestRunning"],
+  ["apiManager", "concurrencyAutoTestOk"],
+  ["apiManager", "concurrencyAutoTestFail"],
+  ["apiManager", "concurrencyAutoTestHint"],
+  ["apiManager", "concurrencyAutoTestPoolHint"],
+  ["apiManager", "concurrencyAutoTestAuth"],
+  ["apiManager", "concurrencyAutoTestRateLimited"],
+  ["apiManager", "concurrencyAutoTestNotFound"],
+  ["apiManager", "concurrencyAutoTestBadRequest"],
+  ["apiManager", "concurrencyAutoTestTimeout"],
+  ["apiManager", "concurrencyAutoTestServerError"],
+  ["apiManager", "concurrencyAutoTestNetwork"],
+  ["apiManager", "templates", "title"],
+  ["apiManager", "templates", "desc"],
+  ["apiManager", "templates", "badge"],
+  ["apiManager", "templates", "apply"],
+  ["apiManager", "templates", "empty"],
+  ["apiManager", "templatesOpen"],
+  ["apiManager", "templatesSearchPlaceholder"],
+  ["apiManager", "templatesSearchEmpty"],
+  ["apiManager", "templatesClose"],
+  ["apiManager", "templatesFooterHint"],
+  ["apiManager", "templatesMoreTitle"],
+  ["apiManager", "templatesMoreDesc"],
+  ["apiManager", "templatesToggleShow"],
+  ["apiManager", "templatesToggleHide"],
+  ["apiManager", "templatesManageShow"],
+  ["apiManager", "templatesManageHide"],
+  ["apiManager", "templatesManageDesc"],
+  ["apiManager", "templatesRemove"],
+  ["apiManager", "templateSaveTitle"],
+  ["apiManager", "templateSaveNameLabel"],
+  ["apiManager", "templateSaveNamePlaceholder"],
+  ["apiManager", "templateSaveDescLabel"],
+  ["apiManager", "templateSaveDescPlaceholder"],
+  ["apiManager", "templateSaveAction"],
+  ["apiManager", "templateSaveHint"],
+  ["apiManager", "customTag"],
+  ["apiManager", "templateGroups", "line"],
+  ["apiManager", "templateGroups", "json"],
+  ["apiManager", "templateGroups", "tagged"],
+  ["apiManager", "templateGroups", "regex"],
+  ["apiManager", "templateGroups", "general"],
+  ["apiManager", "templateItems", "prompt_plain_line", "title"],
+  ["apiManager", "templateItems", "prompt_plain_line", "desc"],
+  ["apiManager", "templateItems", "prompt_block_plain", "title"],
+  ["apiManager", "templateItems", "prompt_block_plain", "desc"],
+  ["apiManager", "templateItems", "prompt_jsonl_line", "title"],
+  ["apiManager", "templateItems", "prompt_jsonl_line", "desc"],
+  ["apiManager", "templateItems", "prompt_glossary_focus", "title"],
+  ["apiManager", "templateItems", "prompt_glossary_focus", "desc"],
+  ["apiManager", "templateItems", "parser_plain", "title"],
+  ["apiManager", "templateItems", "parser_plain", "desc"],
+  ["apiManager", "templateItems", "parser_any_default", "title"],
+  ["apiManager", "templateItems", "parser_any_default", "desc"],
+  ["apiManager", "templateItems", "parser_jsonl_object", "title"],
+  ["apiManager", "templateItems", "parser_jsonl_object", "desc"],
+  ["apiManager", "templateItems", "parser_regex_custom", "title"],
+  ["apiManager", "templateItems", "parser_regex_custom", "desc"],
+  ["apiManager", "previewTitle"],
+  ["apiManager", "previewDesc"],
+  ["apiManager", "previewEmpty"],
+  ["apiManager", "previewInvalid"],
+  ["apiManager", "previewEmptyValue"],
+  ["apiManager", "previewFields", "type"],
+  ["apiManager", "previewFields", "baseUrl"],
+  ["apiManager", "previewFields", "model"],
+  ["apiManager", "previewFields", "timeout"],
+  ["apiManager", "previewFields", "group"],
+  ["apiManager", "previewFields", "strategy"],
+  ["apiManager", "previewFields", "members"],
+  ["apiManager", "previewFields", "headers"],
+  ["apiManager", "previewFields", "params"],
+  ["apiManager", "previewFields", "provider"],
+  ["apiManager", "previewFields", "prompt"],
+  ["apiManager", "previewFields", "parser"],
+  ["apiManager", "previewFields", "translationMode"],
+  ["apiManager", "previewFields", "linePolicy"],
+  ["apiManager", "previewFields", "chunkPolicy"],
+  ["apiManager", "previewFields", "applyLinePolicy"],
+  ["apiManager", "previewFields", "settings"],
+  ["apiManager", "previewFields", "systemTemplate"],
+  ["apiManager", "previewFields", "userTemplate"],
+  ["apiManager", "previewFields", "context"],
+  ["apiManager", "previewFields", "parserType"],
+  ["apiManager", "previewFields", "policyType"],
+  ["apiManager", "previewFields", "chunkType"],
+  ["apiManager", "previewFields", "options"],
+  ["apiManager", "parserFormTitle"],
+  ["apiManager", "parserFormDesc"],
+  ["apiManager", "parserFields", "idLabel"],
+  ["apiManager", "parserFields", "nameLabel"],
+  ["apiManager", "parserModeLabel"],
+  ["apiManager", "parserModeOptions", "single"],
+  ["apiManager", "parserModeOptions", "cascade"],
+  ["apiManager", "parserModeHint"],
+  ["apiManager", "parserRulesTitle"],
+  ["apiManager", "parserRulesDesc"],
+  ["apiManager", "parserRuleTitle"],
+  ["apiManager", "parserRuleTypeLabel"],
+  ["apiManager", "parserRuleTypeOptions", "plain"],
+  ["apiManager", "parserRuleTypeOptions", "line_strict"],
+  ["apiManager", "parserRuleTypeOptions", "json_object"],
+  ["apiManager", "parserRuleTypeOptions", "json_array"],
+  ["apiManager", "parserRuleTypeOptions", "jsonl"],
+  ["apiManager", "parserRuleTypeOptions", "tagged_line"],
+  ["apiManager", "parserRuleTypeOptions", "regex"],
+  ["apiManager", "parserRulePathLabel"],
+  ["apiManager", "parserRulePathPlaceholder"],
+  ["apiManager", "parserRulePatternLabel"],
+  ["apiManager", "parserRulePatternPlaceholder"],
+  ["apiManager", "parserRuleSortLabel"],
+  ["apiManager", "parserRuleMultiLineLabel"],
+  ["apiManager", "parserRuleMultiLineOptions", "join"],
+  ["apiManager", "parserRuleMultiLineOptions", "first"],
+  ["apiManager", "parserRuleMultiLineOptions", "error"],
+  ["apiManager", "parserRuleRegexGroupLabel"],
+  ["apiManager", "parserRuleRegexGroupPlaceholder"],
+  ["apiManager", "parserRuleRegexFlagsLabel"],
+  ["apiManager", "parserRuleRegexFlags", "multiline"],
+  ["apiManager", "parserRuleRegexFlags", "dotall"],
+  ["apiManager", "parserRuleRegexFlags", "ignorecase"],
+  ["apiManager", "parserRuleScriptLabel"],
+  ["apiManager", "parserRuleScriptPlaceholder"],
+  ["apiManager", "parserRuleFunctionLabel"],
+  ["apiManager", "parserRuleFunctionPlaceholder"],
+  ["apiManager", "parserRulePythonHint"],
+  ["apiManager", "parserRuleExtraLabel"],
+  ["apiManager", "parserRuleExtraPlaceholder"],
+  ["apiManager", "parserRuleExtraShow"],
+  ["apiManager", "parserRuleExtraHide"],
+  ["apiManager", "parserRuleExtraHint"],
+  ["apiManager", "parserRuleAdd"],
+  ["apiManager", "parserRuleRemove"],
+  ["apiManager", "parserRuleMoveUp"],
+  ["apiManager", "parserRuleMoveDown"],
+  ["apiManager", "parserRuleEmpty"],
+  ["apiManager", "parserPreviewTitle"],
+  ["apiManager", "parserPreviewDesc"],
+  ["apiManager", "parserPreviewInputLabel"],
+  ["apiManager", "parserPreviewOutputLabel"],
+  ["apiManager", "parserPreviewRun"],
+  ["apiManager", "parserPreviewClear"],
+  ["apiManager", "parserPreviewPlaceholder"],
+  ["apiManager", "parserPreviewEmpty"],
+  ["apiManager", "parserPreviewInvalidProfile"],
+  ["apiManager", "parserPreviewParseError"],
+  ["apiManager", "parserPreviewLineCount"],
+  ["apiManager", "parserPreviewLinesTitle"],
+  ["apiManager", "parserPreviewLineIndex"],
+  ["apiManager", "validationPanelTitle"],
+  ["apiManager", "validationPanelDesc"],
+  ["apiManager", "validationPanelEmpty"],
+  ["apiManager", "validationPanelInvalid"],
+  ["apiManager", "validationPanelOk"],
+  ["apiManager", "validationPanelErrors"],
+  ["apiManager", "validationPanelWarnings"],
+  ["apiManager", "validationError"],
+  ["apiManager", "validationWarn"],
+  ["apiManager", "validationMissingScript"],
+  ["apiManager", "validationPythonScriptRisk"],
+  ["apiManager", "composer", "title"],
+  ["apiManager", "composer", "desc"],
+  ["apiManager", "composer", "badge"],
+  ["apiManager", "composer", "mapTitle"],
+  ["apiManager", "composer", "mapHint"],
+  ["apiManager", "composer", "graphHint"],
+  ["apiManager", "composer", "graphActions", "autoLayout"],
+  ["apiManager", "composer", "graphActions", "fitView"],
+  ["apiManager", "composer", "modeDesc"],
+  ["apiManager", "composer", "modeOptions", "line"],
+  ["apiManager", "composer", "modeOptions", "block"],
+  ["apiManager", "composer", "modeHints", "line"],
+  ["apiManager", "composer", "modeHints", "block"],
+  ["apiManager", "composer", "nodes", "provider"],
+  ["apiManager", "composer", "nodes", "prompt"],
+  ["apiManager", "composer", "nodes", "parser"],
+  ["apiManager", "composer", "nodes", "linePolicy"],
+  ["apiManager", "composer", "nodes", "chunkPolicy"],
+  ["apiManager", "composer", "nodes", "output"],
+  ["apiManager", "composer", "nodes", "outputValue"],
+  ["apiManager", "composer", "nodes", "empty"],
+  ["apiManager", "composer", "nodes", "skipped"],
+  ["apiManager", "composer", "fields", "idLabel"],
+  ["apiManager", "composer", "fields", "nameLabel"],
+  ["apiManager", "composer", "fields", "providerLabel"],
+  ["apiManager", "composer", "fields", "promptLabel"],
+  ["apiManager", "composer", "fields", "parserLabel"],
+  ["apiManager", "composer", "fields", "translationModeLabel"],
+  ["apiManager", "composer", "fields", "linePolicyLabel"],
+  ["apiManager", "composer", "fields", "chunkPolicyLabel"],
+  ["apiManager", "composer", "fields", "applyLinePolicyLabel"],
+  ["apiManager", "composer", "fields", "temperatureLabel"],
+  ["apiManager", "composer", "fields", "maxRetriesLabel"],
+  ["apiManager", "composer", "fields", "concurrencyLabel"],
+  ["apiManager", "composer", "fields", "maxTokensLabel"],
+  ["apiManager", "composer", "fields", "topPLabel"],
+  ["apiManager", "composer", "fields", "presencePenaltyLabel"],
+  ["apiManager", "composer", "fields", "frequencyPenaltyLabel"],
+  ["apiManager", "composer", "fields", "seedLabel"],
+  ["apiManager", "composer", "fields", "stopLabel"],
+  ["apiManager", "composer", "fields", "extraParamsLabel"],
+  ["apiManager", "composer", "placeholders", "id"],
+  ["apiManager", "composer", "placeholders", "name"],
+  ["apiManager", "composer", "placeholders", "provider"],
+  ["apiManager", "composer", "placeholders", "prompt"],
+  ["apiManager", "composer", "placeholders", "parser"],
+  ["apiManager", "composer", "placeholders", "linePolicy"],
+  ["apiManager", "composer", "placeholders", "chunkPolicy"],
+  ["apiManager", "composer", "placeholders", "chunkPolicyLine"],
+  ["apiManager", "composer", "placeholders", "chunkPolicyBlock"],
+  ["apiManager", "composer", "placeholders", "temperature"],
+  ["apiManager", "composer", "placeholders", "maxRetries"],
+  ["apiManager", "composer", "placeholders", "concurrency"],
+  ["apiManager", "composer", "placeholders", "maxTokens"],
+  ["apiManager", "composer", "placeholders", "topP"],
+  ["apiManager", "composer", "placeholders", "presencePenalty"],
+  ["apiManager", "composer", "placeholders", "frequencyPenalty"],
+  ["apiManager", "composer", "placeholders", "seed"],
+  ["apiManager", "composer", "placeholders", "stop"],
+  ["apiManager", "composer", "placeholders", "extraParams"],
+  ["apiManager", "composer", "hints", "linePolicy"],
+  ["apiManager", "composer", "hints", "applyLinePolicy"],
+  ["apiManager", "composer", "hints", "chunkPolicyLine"],
+  ["apiManager", "composer", "hints", "chunkPolicyBlock"],
+  ["apiManager", "composer", "hints", "concurrency"],
+  ["apiManager", "composer", "hints", "timeout"],
+  ["apiManager", "composer", "sections", "samplingTitle"],
+  ["apiManager", "composer", "sections", "samplingDesc"],
+  ["apiManager", "composer", "sections", "advancedTitle"],
+  ["apiManager", "composer", "sections", "advancedDesc"],
+  ["apiManager", "composer", "sync"],
+  ["apiManager", "composer", "apply"],
+  ["apiManager", "composer", "missing"],
+  ["apiManager", "composer", "hint"],
+  ["apiManager", "presets", "openai", "label"],
+  ["apiManager", "presets", "openai", "desc"],
+  ["apiManager", "presets", "deepseek", "label"],
+  ["apiManager", "presets", "deepseek", "desc"],
+  ["apiManager", "presets", "anthropic", "label"],
+  ["apiManager", "presets", "anthropic", "desc"],
+  ["apiManager", "presets", "silicon", "label"],
+  ["apiManager", "presets", "silicon", "desc"],
+  ["apiManager", "presets", "openrouter", "label"],
+  ["apiManager", "presets", "openrouter", "desc"],
+  ["apiManager", "presets", "google", "label"],
+  ["apiManager", "presets", "google", "desc"],
+  ["apiManager", "presets", "google", "channels", "gemini", "label"],
+  ["apiManager", "presets", "google", "channels", "gemini", "desc"],
+  ["apiManager", "presets", "google", "channels", "vertex", "label"],
+  ["apiManager", "presets", "google", "channels", "vertex", "desc"],
+  ["apiManager", "presets", "grok", "label"],
+  ["apiManager", "presets", "grok", "desc"],
+  ["apiManager", "presets", "mistral", "label"],
+  ["apiManager", "presets", "mistral", "desc"],
+  ["apiManager", "presets", "alibaba", "label"],
+  ["apiManager", "presets", "alibaba", "desc"],
+  ["apiManager", "presets", "moonshot", "label"],
+  ["apiManager", "presets", "moonshot", "desc"],
+  ["apiManager", "presets", "zhipu", "label"],
+  ["apiManager", "presets", "zhipu", "desc"],
+  ["apiManager", "syncFromYaml"],
+  ["apiManager", "validationLinePolicyRequiresLineChunk"],
+  ["apiManager", "validationLineChunkNoPolicy"],
+  ["apiManager", "validationPromptMissingSource"],
+  ["apiManager", "validationParserTaggedMismatch"],
+  ["apiManager", "validationParserJsonMismatch"],
+  ["apiManager", "validationParserJsonlMismatch"],
+  ["apiManager", "validationInvalidConcurrency"],
+  ["apiManager", "validationInvalidMaxRetries"],
+  ["apiManager", "validationInvalidRpm"],
+  ["apiManager", "validationPoolMembersUnsupported"],
+  ["apiManager", "validationInvalidTimeout"],
+  ["apiManager", "validationInvalidTargetChars"],
+  ["apiManager", "validationInvalidMaxChars"],
+  ["apiManager", "validationInvalidBalanceThreshold"],
+  ["apiManager", "validationInvalidBalanceCount"],
+  ["apiManager", "validationInvalidSimilarityThreshold"],
+  ["apiManager", "validationProfileExists"],
+  ["apiManager", "composer", "hints", "modeMismatchLine"],
+  ["apiManager", "composer", "hints", "modeMismatchBlock"],
+  ["apiManager", "groups", "openai", "title"],
+  ["apiManager", "groups", "openai", "selectPlaceholder"],
+  ["apiManager", "flowTitle"],
+  ["apiManager", "flowAction"],
+  ["apiManager", "policySections", "errorTitle"],
+  ["apiManager", "policySections", "errorDesc"],
+  ["apiManager", "policyChecksDesc", "emptyLine"],
+  ["apiManager", "policyChecksDesc", "similarity"],
+  ["apiManager", "policyChecksDesc", "kanaTrace"],
+  ["apiManager", "chunkSections", "rulesTitle"],
+  ["apiManager", "chunkSections", "rulesDesc"],
+  ["apiManager", "chunkSections", "balanceTitle"],
+  ["apiManager", "chunkSections", "balanceDesc"],
+  ["apiManager", "policyOptions", "sourceLangAuto"],
+  ["apiManager", "policyOptions", "sourceLangJa"],
+  ["apiManager", "policyOptions", "sourceLangCustom"],
+  ["apiManager", "policyOptions", "onMismatchRetry"],
+];
+
+const getValue = (obj: any, path: string[]) =>
+  path.reduce((acc, key) => (acc ? acc[key] : undefined), obj);
+
+describe("apiManager view i18n", () => {
+  it("includes required api manager view strings", () => {
+    const missing: string[] = [];
+    for (const lang of Object.values(translations)) {
+      for (const path of requiredPaths) {
+        const value = getValue(lang, path);
+        if (!value || typeof value !== "string") {
+          missing.push(path.join("."));
+        }
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+
+  it("keeps supported chunk strategy labels", () => {
+    const removedKeys = ["chunk_line_keep"];
+    for (const lang of Object.values(translations)) {
+      const profileNames = lang.apiManager.profileNames as Record<
+        string,
+        string
+      >;
+      expect(profileNames.chunk_legacy_doc).toBeTruthy();
+      expect(profileNames.chunk_line_strict).toBeTruthy();
+      expect(profileNames.chunk_line_loose).toBeTruthy();
+      for (const key of removedKeys) {
+        expect(profileNames[key]).toBeUndefined();
+      }
+    }
+  });
+
+  it("uses updated sampling defaults", () => {
+    for (const lang of Object.values(translations)) {
+      const placeholders = lang.apiManager.apiSamplingPlaceholders;
+      expect(placeholders.topP).toBe("0.95");
+      expect(placeholders.maxTokens).toBe("4096");
+    }
+  });
+
+  it("uses neutral strategy placeholder for new pipelines", () => {
+    expect(translations.zh.apiManager.scheme.placeholders.strategy).toBe(
+      "选择分段策略",
+    );
+    expect(translations.en.apiManager.scheme.placeholders.strategy).toBe(
+      "Select segmentation strategy",
+    );
+    expect(translations.jp.apiManager.scheme.placeholders.strategy).toBe(
+      "分割戦略を選択",
+    );
+  });
+
+  it("keeps english composer penalty labels in english", () => {
+    expect(
+      translations.en.apiManager.composer.fields.presencePenaltyLabel,
+    ).toBe("Presence Penalty");
+    expect(
+      translations.en.apiManager.composer.fields.frequencyPenaltyLabel,
+    ).toBe("Frequency Penalty");
+  });
+
+  it("removes references to default api/pipeline ids", () => {
+    const serialized = JSON.stringify(translations);
+    expect(serialized).not.toContain("openai_default");
+    expect(serialized).not.toContain("pipeline_default");
+  });
+
+  it("keeps template library limited to prompt/parser defaults", () => {
+    const expected = [
+      "parser_any_default",
+      "parser_jsonl_object",
+      "parser_plain",
+      "parser_regex_custom",
+      "prompt_block_plain",
+      "prompt_glossary_focus",
+      "prompt_jsonl_line",
+      "prompt_plain_line",
+    ].sort();
+    for (const lang of Object.values(translations)) {
+      const keys = Object.keys(lang.apiManager.templateItems || {}).sort();
+      expect(keys).toEqual(expected);
+    }
+  });
+});
+
+describe("apiManager view i18n namespace boundaries", () => {
+  it("only reads first-level keys that exist in apiManager", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const filePath = path.resolve(
+      __dirname,
+      "..",
+      "..",
+      "components",
+      "ApiManagerView.tsx",
+    );
+    const content = fs.readFileSync(filePath, "utf-8");
+    const used = new Set(
+      Array.from(content.matchAll(/\btexts\.([A-Za-z0-9_]+)/g)).map(
+        (m) => m[1],
+      ),
+    );
+    const apiManagerKeys = new Set(Object.keys(translations.zh.apiManager));
+    const missing = Array.from(used)
+      .filter((key) => !apiManagerKeys.has(key))
+      .sort();
+    expect(missing).toEqual([]);
+  });
+});
+
+describe("apiManager view storage keys", () => {
+  it("persists parser recommend collapse state", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const filePath = path.resolve(
+      __dirname,
+      "..",
+      "..",
+      "components",
+      "ApiManagerView.tsx",
+    );
+    const content = fs.readFileSync(filePath, "utf-8");
+    expect(content).toContain("murasaki.v2.parser_recommend_visible");
+  });
+
+  it("persists profile order state", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const filePath = path.resolve(
+      __dirname,
+      "..",
+      "..",
+      "components",
+      "ApiManagerView.tsx",
+    );
+    const content = fs.readFileSync(filePath, "utf-8");
+    expect(content).toContain("murasaki.v2.profile_order");
+  });
+
+  it("persists pipeline guide collapse state", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const filePath = path.resolve(
+      __dirname,
+      "..",
+      "..",
+      "components",
+      "ApiManagerView.tsx",
+    );
+    const content = fs.readFileSync(filePath, "utf-8");
+    expect(content).toContain("murasaki.v2.pipeline_guide_visible");
+  });
+});
+
+describe("apiManager view unsaved confirm copy", () => {
+  it("uses apiManager unsaved change strings in the confirm modal", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const filePath = path.resolve(
+      __dirname,
+      "..",
+      "..",
+      "components",
+      "ApiManagerView.tsx",
+    );
+    const content = fs.readFileSync(filePath, "utf-8");
+    expect(content).toContain("t.apiManager.unsavedChangesTitle");
+    expect(content).toContain("t.apiManager.unsavedChangesDesc");
+  });
+});
+
+describe("apiManager view unsaved guard", () => {
+  it("requires explicit user edits before showing unsaved prompt", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const filePath = path.resolve(
+      __dirname,
+      "..",
+      "..",
+      "components",
+      "ApiManagerView.tsx",
+    );
+    const content = fs.readFileSync(filePath, "utf-8");
+    expect(content).toContain("hasUserEdits");
+    expect(content).toContain("if (!hasUserEdits) return false");
+  });
+});
+
+describe("apiManager view save navigation", () => {
+  it("returns to kind home after save", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const filePath = path.resolve(
+      __dirname,
+      "..",
+      "..",
+      "components",
+      "ApiManagerView.tsx",
+    );
+    const content = fs.readFileSync(filePath, "utf-8");
+    expect(content).toContain("const returnToKindHome");
+    expect(content).toContain("returnToKindHome(kind)");
+  });
+});
+
+describe("apiManager view profile index", () => {
+  it("dedupes profile ids when loading index", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const filePath = path.resolve(
+      __dirname,
+      "..",
+      "..",
+      "components",
+      "ApiManagerView.tsx",
+    );
+    const content = fs.readFileSync(filePath, "utf-8");
+    expect(content).toContain("const metaEntries = new Map");
+    expect(content).toContain("metaEntries.has");
+    expect(content).toContain("nextIndex[targetKind] = ids");
+  });
+});
+
+describe("apiManager view segmentation strategy", () => {
+  it("builds scheme strategy options from visible profiles with default fallback", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const filePath = path.resolve(
+      __dirname,
+      "..",
+      "..",
+      "components",
+      "ApiManagerView.tsx",
+    );
+    const content = fs.readFileSync(filePath, "utf-8");
+    expect(content).toContain("DEFAULT_LINE_CHUNK_ID");
+    expect(content).toContain("resolveDefaultLineChunk");
+    expect(content).toContain("resolveDefaultBlockChunk");
+    expect(content).toContain("visibleProfileIndex.policy");
+    expect(content).toContain("visibleProfileIndex.chunk");
+    expect(content).toContain("lineCandidates");
+    expect(content).toContain("visibleLineChunks");
+    expect(content).toContain("visibleBlockChunks");
+    expect(content).toContain("lineChunksForOptions");
+    expect(content).toContain("blockChunksForOptions");
+  });
+});
+
+describe("apiManager view defaults", () => {
+  it("avoids prefilled pipeline runtime defaults", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const filePath = path.resolve(
+      __dirname,
+      "..",
+      "..",
+      "components",
+      "ApiManagerView.tsx",
+    );
+    const content = fs.readFileSync(filePath, "utf-8");
+    const match = content.match(/const DEFAULT_PIPELINE_COMPOSER:[\s\S]*?};/);
+    expect(match).toBeTruthy();
+    const block = match?.[0] || "";
+    expect(block).toContain('temperature: ""');
+    expect(block).toContain('concurrency: ""');
+    expect(block).toContain('modelOverride: ""');
+    expect(block).toContain('headers: ""');
+    expect(block).toContain('extraParams: ""');
+  });
+});
+
+describe("apiManager view card styles", () => {
+  it("matches prompt card background for api preset vendors", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const filePath = path.resolve(
+      __dirname,
+      "..",
+      "..",
+      "components",
+      "ApiManagerView.tsx",
+    );
+    const content = fs.readFileSync(filePath, "utf-8");
+    expect(content).toContain(
+      "min-h-[80px] flex flex-row items-center p-4 bg-card border-border/60",
+    );
+  });
+
+  it("matches prompt card background for custom api entry", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const filePath = path.resolve(
+      __dirname,
+      "..",
+      "..",
+      "components",
+      "ApiManagerView.tsx",
+    );
+    const content = fs.readFileSync(filePath, "utf-8");
+    expect(content).toContain(
+      "border-dashed flex flex-row items-center p-4 min-h-[80px] h-full bg-card border-border/60 hover:bg-muted/30",
+    );
+  });
+
+  it("keeps cascade parser background neutral", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const filePath = path.resolve(
+      __dirname,
+      "..",
+      "..",
+      "components",
+      "ApiManagerView.tsx",
+    );
+    const content = fs.readFileSync(filePath, "utf-8");
+    expect(content).toContain('isCascade && !isSelected && "border-border/70"');
+  });
+});
+
+describe("apiManager view chunk type handling", () => {
+  it("preserves existing chunk_type when updating chunk form", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const filePath = path.resolve(
+      __dirname,
+      "..",
+      "..",
+      "components",
+      "ApiManagerView.tsx",
+    );
+    const content = fs.readFileSync(filePath, "utf-8");
+    expect(content).toContain("const previousChunkTypeRaw");
+    expect(content).toContain("const resolvedChunkType");
+    expect(content).toContain("chunk_type: resolvedChunkType");
+  });
+
+  it("allows line chunk type in validation", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const filePath = path.resolve(
+      __dirname,
+      "..",
+      "..",
+      "components",
+      "ApiManagerView.tsx",
+    );
+    const content = fs.readFileSync(filePath, "utf-8");
+    expect(content).toContain(
+      "const normalizedChunkType = normalizeChunkType(rawChunkType);",
+    );
+  });
+});
+
+describe("apiManager view translation mode resolver", () => {
+  it("uses correct parameter order when deriving translation mode", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const filePath = path.resolve(
+      __dirname,
+      "..",
+      "..",
+      "components",
+      "ApiManagerView.tsx",
+    );
+    const content = fs.readFileSync(filePath, "utf-8");
+    const match = content.match(
+      new RegExp(
+        'resolvePipelineTranslationMode\\(\\s*pipelineComposer\\.translationMode,\\s*pipelineComposer\\.chunkPolicy,\\s*pipelineComposer\\.linePolicy,\\s*pipelineComposer\\.applyLinePolicy,\\s*pipelineComposer\\.applyLinePolicy \\? "line" : "block"',
+      ),
+    );
+    expect(match).toBeTruthy();
+  });
+});
+
+describe("apiManager view pipeline sandbox i18n source", () => {
+  it("reads pipeline sandbox copy from ruleEditor branch with zh fallback", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const filePath = path.resolve(
+      __dirname,
+      "..",
+      "..",
+      "components",
+      "ApiManagerView.tsx",
+    );
+    const content = fs.readFileSync(filePath, "utf-8");
+    expect(content).toContain("t.ruleEditor?.pipelineSandbox");
+    expect(content).toContain("translations.zh.ruleEditor?.pipelineSandbox");
+    expect(content).toContain("const sandboxTexts = pipelineSandboxTexts");
+    expect(content).not.toContain("texts.pipelineSandbox");
+  });
+});

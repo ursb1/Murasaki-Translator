@@ -43,6 +43,7 @@ export interface TriggerEvent {
     | "rep_penalty_increase"
     | "line_mismatch"
     | "anchor_missing"
+    | "provider_error"
     | "parse_fallback"
     | "kana_residue"
     | "hangeul_residue"
@@ -56,6 +57,8 @@ export interface TriggerEvent {
     | "warning_quality";
   /** Block number where the event occurred (0 if not applicable) */
   block: number;
+  /** Source line number where the event occurred (if available) */
+  line?: number;
   /** Human-readable message describing the event */
   message: string;
 }
@@ -84,6 +87,8 @@ export interface TranslationRecord {
   filePath: string;
   /** Output file path (if available) */
   outputPath?: string;
+  /** Cache file path for proofreading (if available) */
+  cachePath?: string;
   /** Model name used for translation */
   modelName?: string;
   /** ISO timestamp when translation started */
@@ -113,7 +118,7 @@ export interface TranslationRecord {
   /** 远程连接信息（仅远程模式） */
   remoteInfo?: {
     serverUrl: string;
-    source: string;  // "manual" | "local-daemon"
+    source: string; // "manual" | "local-daemon"
     taskId?: string;
     model?: string;
     serverVersion?: string;
@@ -126,6 +131,28 @@ export interface TranslationRecord {
   logs: string[];
   /** llama 引擎日志（可选） */
   llamaLogs?: string[];
+
+  // === V2 Pipeline 专有字段 ===
+  /** 引擎版本：v1 本地推理 / v2 API Pipeline */
+  engineVersion?: "v1" | "v2";
+  /** V2 Pipeline 配置信息 */
+  v2Config?: {
+    pipelineId: string;
+    pipelineName: string;
+    providerName?: string;
+    promptName?: string;
+    parserName?: string;
+    chunkType?: "line" | "block" | "legacy";
+  };
+  /** V2 API 统计（仅 V2 模式） */
+  v2Stats?: {
+    totalRequests: number;
+    totalRetries: number;
+    totalErrors: number;
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    errorStatusCodes?: Record<string, number>;
+  };
 }
 
 // ============================================================================
@@ -199,7 +226,9 @@ export const getRecordDetail = (id: string): RecordDetail | null => {
       const record = records.find((r) => r.id === id);
       if (
         record &&
-        (record.logs?.length || record.triggers?.length || record.llamaLogs?.length)
+        (record.logs?.length ||
+          record.triggers?.length ||
+          record.llamaLogs?.length)
       ) {
         const detail = {
           logs: record.logs || [],
@@ -253,7 +282,11 @@ export const saveHistory = (records: TranslationRecord[]) => {
 export const addRecord = (record: TranslationRecord) => {
   const history = getHistory();
   // Save detail separately
-  if (record.logs?.length || record.triggers?.length || record.llamaLogs?.length) {
+  if (
+    record.logs?.length ||
+    record.triggers?.length ||
+    record.llamaLogs?.length
+  ) {
     saveRecordDetail(record.id, {
       logs: record.logs || [],
       triggers: record.triggers || [],
@@ -278,9 +311,16 @@ export const updateRecord = (
   const index = history.findIndex((r) => r.id === id);
   if (index >= 0) {
     // Handle detail data separately
-    if (updates.logs?.length || updates.triggers?.length || updates.llamaLogs?.length) {
-      const existingDetail =
-        getRecordDetail(id) || { logs: [], triggers: [], llamaLogs: [] };
+    if (
+      updates.logs?.length ||
+      updates.triggers?.length ||
+      updates.llamaLogs?.length
+    ) {
+      const existingDetail = getRecordDetail(id) || {
+        logs: [],
+        triggers: [],
+        llamaLogs: [],
+      };
       saveRecordDetail(id, {
         logs: updates.logs || existingDetail.logs,
         triggers: updates.triggers || existingDetail.triggers,
@@ -362,7 +402,11 @@ function RecordDetailContent({
   onOpenFolder,
 }: RecordDetailContentProps) {
   // Get full record with details
-  const detail = getDetail(record.id) || { logs: [], triggers: [], llamaLogs: [] };
+  const detail = getDetail(record.id) || {
+    logs: [],
+    triggers: [],
+    llamaLogs: [],
+  };
   const fullRecord = {
     ...record,
     logs: detail.logs,
@@ -394,83 +438,283 @@ function RecordDetailContent({
     );
   }
 
+  const isV2 = fullRecord.engineVersion === "v2";
+  const v2s = fullRecord.v2Stats;
+  const v2c = fullRecord.v2Config;
+
   return (
     <CardContent className="pt-0 border-t">
       <div className="space-y-4 pt-4">
-        {/* Stats */}
-        <div className="grid grid-cols-7 gap-3 text-sm">
-          <div>
-            <p className="text-muted-foreground text-xs">
-              {t.historyView.stats.blocks}
-            </p>
-            <p className="font-medium">
-              {fullRecord.completedBlocks}/{fullRecord.totalBlocks}
-            </p>
-          </div>
-          <div>
-            <p className="text-muted-foreground text-xs">
-              {t.historyView.stats.lines}
-            </p>
-            <p className="font-medium">
-              {fullRecord.sourceLines || 0}/{fullRecord.totalLines || 0}
-            </p>
-          </div>
-          <div>
-            <p className="text-muted-foreground text-xs">
-              {t.historyView.stats.chars}
-            </p>
-            <p className="font-medium">
-              {(fullRecord.sourceChars || 0).toLocaleString()}/
-              {(fullRecord.totalChars || 0).toLocaleString()}
-            </p>
-          </div>
-          <div>
-            <p className="text-muted-foreground text-xs">
-              {t.historyView.stats.speed}
-            </p>
-            <p className="font-medium">
-              {avgSpeedDisplay} {speedUnit}
-            </p>
-          </div>
-          <div>
-            <p className="text-muted-foreground text-xs">
-              {t.historyView.stats.concurrency}
-            </p>
-            <p className="font-medium">{config.concurrency ?? 1}</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground text-xs">
-              {t.historyView.stats.temperature}
-            </p>
-            <p className="font-medium">{formatMaybe(config.temperature, "-")}</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground text-xs">
-              {t.historyView.stats.retries}
-            </p>
-            <p className="font-medium">
-              {
-                fullRecord.triggers.filter(
-                  (tr) =>
-                    tr.type === "empty_retry" ||
-                    tr.type === "line_mismatch" ||
-                    tr.type === "anchor_missing" ||
-                    tr.type === "rep_penalty_increase" ||
-                    tr.type === "glossary_missed",
-                ).length
-              }
-            </p>
-          </div>
-        </div>
+        {/* ========== V2 API 统计面板 ========== */}
+        {isV2 ? (
+          <>
+            {/* Pipeline 信息 */}
+            {v2c && (
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm bg-muted/30 px-3 py-2 rounded-md">
+                <span className="text-muted-foreground">
+                  {lang === "en" ? "Pipeline:" : "方案:"}{" "}
+                  <span className="font-medium text-foreground ml-1">
+                    {v2c.pipelineName || v2c.pipelineId}
+                  </span>
+                </span>
+                {v2c.providerName && (
+                  <span className="text-muted-foreground">
+                    {lang === "en" ? "Provider:" : "接口:"}{" "}
+                    <span className="font-medium text-foreground ml-1">
+                      {v2c.providerName}
+                    </span>
+                  </span>
+                )}
+                {v2c.chunkType && (
+                  <span className="text-muted-foreground">
+                    {lang === "en" ? "Mode:" : "模式:"}{" "}
+                    <span className="font-medium text-foreground ml-1">
+                      {v2c.chunkType === "line"
+                        ? lang === "en"
+                          ? "Line"
+                          : "行翻译"
+                        : lang === "en"
+                          ? "Block"
+                          : "块翻译"}
+                    </span>
+                  </span>
+                )}
+              </div>
+            )}
 
-        {/* Model Info */}
-        {fullRecord.modelName && (
-          <p className="text-xs text-muted-foreground">
-            {t.historyView.labels.model}{" "}
-            <span className="font-medium text-foreground">
-              {fullRecord.modelName}
-            </span>
-          </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {/* 翻译统计 */}
+              <div className="space-y-3 bg-muted/20 p-3 rounded-lg border border-border/50">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  {lang === "en" ? "Translation Progress" : "翻译进度"}
+                </p>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <p className="text-muted-foreground text-xs">
+                      {t.historyView.stats.blocks}
+                    </p>
+                    <p className="font-medium">
+                      {fullRecord.completedBlocks}/{fullRecord.totalBlocks}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground text-xs">
+                      {t.historyView.stats.lines}
+                    </p>
+                    <p className="font-medium">
+                      {fullRecord.sourceLines || 0}/{fullRecord.totalLines || 0}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground text-xs">
+                      {t.historyView.stats.chars}
+                    </p>
+                    <p className="font-medium">
+                      {(fullRecord.sourceChars || 0).toLocaleString()}/
+                      {(fullRecord.totalChars || 0).toLocaleString()}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground text-xs">
+                      {t.historyView.stats.speed}
+                    </p>
+                    <p className="font-medium">
+                      {avgSpeedDisplay} {speedUnit}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* API 请求统计 */}
+              {v2s && (
+                <div className="space-y-3 bg-muted/20 p-3 rounded-lg border border-border/50">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                    {lang === "en" ? "Request Telemetry" : "请求遥测"}
+                  </p>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <p className="text-muted-foreground text-xs">
+                        {lang === "en" ? "Requests" : "发包数"}
+                      </p>
+                      <p className="font-medium">
+                        {v2s.totalRequests.toLocaleString()}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground text-xs">
+                        {t.historyView.stats.retries}
+                      </p>
+                      <p className="font-medium">
+                        {v2s.totalRetries.toLocaleString()}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground text-xs">
+                        {lang === "en" ? "Errors" : "报错数"}
+                      </p>
+                      <p
+                        className={`font-medium ${v2s.totalErrors > 0 ? "text-destructive" : ""}`}
+                      >
+                        {v2s.totalErrors}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground text-xs">
+                        {lang === "en" ? "Success Rate" : "请求成功率"}
+                      </p>
+                      <p className="font-medium">
+                        {v2s.totalRequests > 0
+                          ? (
+                              (1 - v2s.totalErrors / v2s.totalRequests) *
+                              100
+                            ).toFixed(1)
+                          : "0"}
+                        %
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Token 用量 */}
+              {v2s &&
+                (v2s.totalInputTokens > 0 || v2s.totalOutputTokens > 0) && (
+                  <div className="space-y-3 bg-muted/20 p-3 rounded-lg border border-border/50">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                      {lang === "en" ? "Token Usage" : "Token 消耗"}
+                    </p>
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <p className="text-muted-foreground text-xs">
+                          {lang === "en" ? "Input Tokens" : "输入 Token"}
+                        </p>
+                        <p className="font-medium">
+                          {v2s.totalInputTokens.toLocaleString()}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground text-xs">
+                          {lang === "en" ? "Output Tokens" : "输出 Token"}
+                        </p>
+                        <p className="font-medium">
+                          {v2s.totalOutputTokens.toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+            </div>
+
+            {/* 错误状态码分布 */}
+            {v2s?.errorStatusCodes &&
+              Object.keys(v2s.errorStatusCodes).length > 0 && (
+                <div className="pt-2">
+                  <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    {lang === "en"
+                      ? "Error Status Codes"
+                      : "拦截到的异常状态码"}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(v2s.errorStatusCodes)
+                      .sort(([, a], [, b]) => b - a)
+                      .map(([code, count]) => (
+                        <span
+                          key={code}
+                          className="inline-flex items-center gap-1 text-xs bg-destructive/10 text-destructive border border-destructive/20 rounded-md px-2.5 py-1"
+                        >
+                          HTTP {code}:{" "}
+                          <span className="font-semibold">
+                            {count}
+                            {lang === "en" ? "x" : " 次"}
+                          </span>
+                        </span>
+                      ))}
+                  </div>
+                </div>
+              )}
+          </>
+        ) : (
+          /* ========== V1 原有统计面板 ========== */
+          <>
+            {/* Stats */}
+            <div className="grid grid-cols-7 gap-3 text-sm">
+              <div>
+                <p className="text-muted-foreground text-xs">
+                  {t.historyView.stats.blocks}
+                </p>
+                <p className="font-medium">
+                  {fullRecord.completedBlocks}/{fullRecord.totalBlocks}
+                </p>
+              </div>
+              <div>
+                <p className="text-muted-foreground text-xs">
+                  {t.historyView.stats.lines}
+                </p>
+                <p className="font-medium">
+                  {fullRecord.sourceLines || 0}/{fullRecord.totalLines || 0}
+                </p>
+              </div>
+              <div>
+                <p className="text-muted-foreground text-xs">
+                  {t.historyView.stats.chars}
+                </p>
+                <p className="font-medium">
+                  {(fullRecord.sourceChars || 0).toLocaleString()}/
+                  {(fullRecord.totalChars || 0).toLocaleString()}
+                </p>
+              </div>
+              <div>
+                <p className="text-muted-foreground text-xs">
+                  {t.historyView.stats.speed}
+                </p>
+                <p className="font-medium">
+                  {avgSpeedDisplay} {speedUnit}
+                </p>
+              </div>
+              <div>
+                <p className="text-muted-foreground text-xs">
+                  {t.historyView.stats.concurrency}
+                </p>
+                <p className="font-medium">{config.concurrency ?? 1}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground text-xs">
+                  {t.historyView.stats.temperature}
+                </p>
+                <p className="font-medium">
+                  {formatMaybe(config.temperature, "-")}
+                </p>
+              </div>
+              <div>
+                <p className="text-muted-foreground text-xs">
+                  {t.historyView.stats.retries}
+                </p>
+                <p className="font-medium">
+                  {
+                    fullRecord.triggers.filter(
+                      (tr) =>
+                        tr.type === "empty_retry" ||
+                        tr.type === "line_mismatch" ||
+                        tr.type === "anchor_missing" ||
+                        tr.type === "rep_penalty_increase" ||
+                        tr.type === "glossary_missed",
+                    ).length
+                  }
+                </p>
+              </div>
+            </div>
+
+            {/* Model Info */}
+            {fullRecord.modelName && (
+              <p className="text-xs text-muted-foreground">
+                {t.historyView.labels.model}{" "}
+                <span className="font-medium text-foreground">
+                  {fullRecord.modelName}
+                </span>
+              </p>
+            )}
+          </>
         )}
 
         {/* Triggers - Collapsible */}
@@ -486,7 +730,9 @@ function RecordDetailContent({
                   className="flex items-center gap-2 text-xs bg-secondary/50 rounded px-2 py-1"
                 >
                   <span className="text-muted-foreground">
-                    [Block {tr.block}]
+                    {typeof tr.line === "number" && tr.line > 0
+                      ? `[${t.historyView.stats.lines} ${tr.line}]`
+                      : `[${t.historyView.stats.blocks} ${tr.block}]`}
                   </span>
                   <span className="font-medium">
                     {getTriggerTypeLabel(tr.type)}
@@ -616,21 +862,21 @@ function RecordDetailContent({
                 <Button
                   variant="ghost"
                   size="sm"
-                className="h-6 px-2"
-                onClick={() => {
-                  const folderPath = fullRecord.outputPath!.substring(
-                    0,
-                    Math.max(
-                      fullRecord.outputPath!.lastIndexOf("\\"),
-                      fullRecord.outputPath!.lastIndexOf("/"),
-                    ),
-                  );
-                  onOpenFolder(folderPath);
-                }}
-              >
-                <FolderOpen className="w-3 h-3" />
-              </Button>
-            </Tooltip>
+                  className="h-6 px-2"
+                  onClick={() => {
+                    const folderPath = fullRecord.outputPath!.substring(
+                      0,
+                      Math.max(
+                        fullRecord.outputPath!.lastIndexOf("\\"),
+                        fullRecord.outputPath!.lastIndexOf("/"),
+                      ),
+                    );
+                    onOpenFolder(folderPath);
+                  }}
+                >
+                  <FolderOpen className="w-3 h-3" />
+                </Button>
+              </Tooltip>
             </div>
           )}
         </div>
@@ -793,7 +1039,6 @@ export function HistoryView({ lang, onNavigate }: HistoryViewProps) {
     setNumber("config_rep_penalty_step", config.repPenaltyStep);
     setNumber("config_max_retries", config.maxRetries);
     setString("config_strict_mode", config.strictMode);
-
 
     setBool("config_balance_enable", config.balanceEnable);
     setNumber("config_balance_threshold", config.balanceThreshold);
@@ -976,8 +1221,12 @@ export function HistoryView({ lang, onNavigate }: HistoryViewProps) {
         ),
       );
       fullRecord.triggers.forEach((tr, i) => {
+        const location =
+          typeof tr.line === "number" && tr.line > 0
+            ? `${t.historyView.stats.lines} ${tr.line}`
+            : `${t.historyView.stats.blocks} ${tr.block}`;
         lines.push(
-          `${i + 1}. [Block ${tr.block}] ${getTriggerTypeLabel(tr.type)} - ${tr.message}`,
+          `${i + 1}. [${location}] ${getTriggerTypeLabel(tr.type)} - ${tr.message}`,
         );
       });
       lines.push(``);
@@ -1114,7 +1363,13 @@ export function HistoryView({ lang, onNavigate }: HistoryViewProps) {
                           {formatDate(record.startTime)} ·{" "}
                           {formatDuration(record.duration)}
                           {record.remoteInfo?.serverUrl && (
-                            <span className="ml-1 opacity-60">· {record.remoteInfo.serverUrl.replace(/^https?:\/\//, "")}</span>
+                            <span className="ml-1 opacity-60">
+                              ·{" "}
+                              {record.remoteInfo.serverUrl.replace(
+                                /^https?:\/\//,
+                                "",
+                              )}
+                            </span>
                           )}
                         </p>
                       </div>

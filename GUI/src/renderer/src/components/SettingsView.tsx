@@ -35,7 +35,14 @@ import { AlertModal } from "./ui/AlertModal";
 import { translations, Language } from "../lib/i18n";
 import { APP_CONFIG, DEFAULT_POST_RULES } from "../lib/config";
 import { cn } from "../lib/utils";
-import { buildConfigSnapshot, parseConfigSnapshot } from "../lib/configSnapshot";
+import {
+  buildConfigSnapshot,
+  parseConfigSnapshot,
+} from "../lib/configSnapshot";
+import {
+  buildV2DebugSnapshot,
+  redactSensitiveConfigData,
+} from "../lib/debugExport";
 import { LogViewerModal } from "./LogViewerModal";
 import { EnvFixerModal } from "./EnvFixerModal";
 
@@ -425,13 +432,13 @@ export function SettingsView({ lang }: { lang: Language }) {
       | "Middleware"
       | "Permissions"
     > = [
-      "Python",
-      "CUDA",
-      "Vulkan",
-      "LlamaBackend",
-      "Middleware",
-      "Permissions",
-    ];
+        "Python",
+        "CUDA",
+        "Vulkan",
+        "LlamaBackend",
+        "Middleware",
+        "Permissions",
+      ];
 
     const promises = components.map((comp) => checkEnvironmentComponent(comp));
     await Promise.all(promises);
@@ -740,9 +747,10 @@ export function SettingsView({ lang }: { lang: Language }) {
       return "";
     }
     const sep = folder.includes("\\") ? "\\" : "/";
-    const normalized = folder.endsWith("\\") || folder.endsWith("/")
-      ? folder.slice(0, -1)
-      : folder;
+    const normalized =
+      folder.endsWith("\\") || folder.endsWith("/")
+        ? folder.slice(0, -1)
+        : folder;
     return `${normalized}${sep}${fileName}`;
   };
 
@@ -863,7 +871,7 @@ export function SettingsView({ lang }: { lang: Language }) {
     onConfirm: () => void | Promise<void>;
     closeOnConfirm?: boolean;
     confirmLoading?: boolean;
-  }>({ open: false, title: "", description: "", onConfirm: () => {} });
+  }>({ open: false, title: "", description: "", onConfirm: () => { } });
 
   // Modal States for new log/env viewers
   const [showServerLogModal, setShowServerLogModal] = useState(false);
@@ -901,9 +909,7 @@ export function SettingsView({ lang }: { lang: Language }) {
           const label =
             rule.pattern === "ensure_double_newline"
               ? t.ruleEditor.presetRuleLabels.doubleNewlineNovel
-              : rule.pattern === "smart_quotes"
-                ? t.ruleEditor.presetRuleLabels.smartQuotes
-                : rule.label;
+              : t.ruleEditor.presetRuleLabels.smartQuotes;
           return { ...rule, label };
         });
         localStorage.setItem(
@@ -936,6 +942,7 @@ export function SettingsView({ lang }: { lang: Language }) {
         configData[key] = localStorage.getItem(key);
       }
     }
+    const sanitizedConfigData = redactSensitiveConfigData(configData);
 
     // Parse history
     let historyData: unknown = [];
@@ -977,10 +984,17 @@ export function SettingsView({ lang }: { lang: Language }) {
       mainProcessLogs = { error: String(e) };
     }
 
+    let v2DebugData: unknown = null;
+    try {
+      v2DebugData = await buildV2DebugSnapshot(window.api, localStorage);
+    } catch (e) {
+      v2DebugData = { error: String(e) };
+    }
+
     const debugData = {
       // Export metadata
       exportTime: new Date().toISOString(),
-      exportVersion: "1.2",
+      exportVersion: "1.3",
 
       // App info
       app: {
@@ -1017,27 +1031,30 @@ export function SettingsView({ lang }: { lang: Language }) {
       },
 
       // All configuration
-      config: configData,
+      config: sanitizedConfigData,
+
+      // Pipeline V2 local storage and profile snapshots (sensitive fields redacted)
+      v2: v2DebugData,
 
       // History summary
       historySummary: {
         recordCount: historyCount,
         lastRecords: Array.isArray(historyData)
           ? historyData
-              .slice(-5)
-              .map(
-                (r: {
-                  fileName?: string;
-                  status?: string;
-                  startTime?: string;
-                  triggers?: unknown[];
-                }) => ({
-                  fileName: r.fileName,
-                  status: r.status,
-                  startTime: r.startTime,
-                  triggerCount: r.triggers?.length || 0,
-                }),
-              )
+            .slice(-5)
+            .map(
+              (r: {
+                fileName?: string;
+                status?: string;
+                startTime?: string;
+                triggers?: unknown[];
+              }) => ({
+                fileName: r.fileName,
+                status: r.status,
+                startTime: r.startTime,
+                triggerCount: r.triggers?.length || 0,
+              }),
+            )
           : [],
       },
 
@@ -1105,53 +1122,53 @@ export function SettingsView({ lang }: { lang: Language }) {
   const renderEnvFixerContent = () => {
     const components: Array<{
       name:
-        | "Python"
-        | "CUDA"
-        | "Vulkan"
-        | "LlamaBackend"
-        | "Middleware"
-        | "Permissions";
+      | "Python"
+      | "CUDA"
+      | "Vulkan"
+      | "LlamaBackend"
+      | "Middleware"
+      | "Permissions";
       label: string;
       icon: any;
       description: string;
     }> = [
-      {
-        name: "Python",
-        label: envFixerText.components.python.label,
-        icon: Terminal,
-        description: envFixerText.components.python.desc,
-      },
-      {
-        name: "CUDA",
-        label: envFixerText.components.cuda.label,
-        icon: Zap,
-        description: envFixerText.components.cuda.desc,
-      },
-      {
-        name: "Vulkan",
-        label: envFixerText.components.vulkan.label,
-        icon: Box,
-        description: envFixerText.components.vulkan.desc,
-      },
-      {
-        name: "LlamaBackend",
-        label: envFixerText.components.llama.label,
-        icon: Server,
-        description: envFixerText.components.llama.desc,
-      },
-      {
-        name: "Middleware",
-        label: envFixerText.components.middleware.label,
-        icon: Layers,
-        description: envFixerText.components.middleware.desc,
-      },
-      {
-        name: "Permissions",
-        label: envFixerText.components.permissions.label,
-        icon: ShieldCheck,
-        description: envFixerText.components.permissions.desc,
-      },
-    ];
+        {
+          name: "Python",
+          label: envFixerText.components.python.label,
+          icon: Terminal,
+          description: envFixerText.components.python.desc,
+        },
+        {
+          name: "CUDA",
+          label: envFixerText.components.cuda.label,
+          icon: Zap,
+          description: envFixerText.components.cuda.desc,
+        },
+        {
+          name: "Vulkan",
+          label: envFixerText.components.vulkan.label,
+          icon: Box,
+          description: envFixerText.components.vulkan.desc,
+        },
+        {
+          name: "LlamaBackend",
+          label: envFixerText.components.llama.label,
+          icon: Server,
+          description: envFixerText.components.llama.desc,
+        },
+        {
+          name: "Middleware",
+          label: envFixerText.components.middleware.label,
+          icon: Layers,
+          description: envFixerText.components.middleware.desc,
+        },
+        {
+          name: "Permissions",
+          label: envFixerText.components.permissions.label,
+          icon: ShieldCheck,
+          description: envFixerText.components.permissions.desc,
+        },
+      ];
 
     const statusColors = {
       ok: "text-green-500 bg-green-500/10",
@@ -1190,9 +1207,8 @@ export function SettingsView({ lang }: { lang: Language }) {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <div
-                        className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                          result ? statusColors[result.status] : "bg-muted"
-                        }`}
+                        className={`w-8 h-8 rounded-lg flex items-center justify-center ${result ? statusColors[result.status] : "bg-muted"
+                          }`}
                       >
                         <CompIcon className="w-4 h-4" />
                       </div>
@@ -1288,9 +1304,7 @@ export function SettingsView({ lang }: { lang: Language }) {
           <div className="flex items-start gap-2 text-xs text-muted-foreground bg-muted/50 p-3 rounded">
             <Info className="w-3 h-3 mt-0.5 shrink-0 text-blue-500" />
             <div className="space-y-1">
-              <p>
-                {diagText.fixHint}
-              </p>
+              <p>{diagText.fixHint}</p>
               <p>{diagText.refreshHint}</p>
             </div>
           </div>
@@ -1485,9 +1499,9 @@ export function SettingsView({ lang }: { lang: Language }) {
                         <p className="text-sm font-semibold flex items-center gap-1.5">
                           {diagnostics.vulkan.version
                             ? diagText.versionLabel.replace(
-                                "{version}",
-                                String(diagnostics.vulkan.version),
-                              )
+                              "{version}",
+                              String(diagnostics.vulkan.version),
+                            )
                             : diagText.vulkanAvailable}
                           <CheckCircle2 className="w-3 h-3 text-green-500" />
                         </p>

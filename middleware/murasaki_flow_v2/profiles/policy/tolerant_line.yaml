@@ -1,0 +1,11 @@
+id: line_tolerant
+name: 默认行配置
+type: tolerant
+options:
+  on_mismatch: retry
+  trim: true
+  similarity_threshold: 0.8
+  checks:
+    - empty_line
+    - similarity
+    - kana_trace

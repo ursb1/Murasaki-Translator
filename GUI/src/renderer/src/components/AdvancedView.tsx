@@ -21,12 +21,15 @@ import { translations, Language } from "../lib/i18n";
 import { AlertModal } from "./ui/AlertModal";
 import { useAlertModal } from "../hooks/useAlertModal";
 import { emitToast } from "../lib/toast";
+import { ServiceView } from "./ServiceView";
+import type { UseRemoteRuntimeResult } from "../hooks/useRemoteRuntime";
 
 interface AdvancedViewProps {
   lang: Language;
+  remoteRuntime?: UseRemoteRuntimeResult;
 }
 
-export function AdvancedView({ lang }: AdvancedViewProps) {
+export function AdvancedView({ lang, remoteRuntime }: AdvancedViewProps) {
   const t = translations[lang];
   const av = t.advancedView;
   const [saved, setSaved] = useState(false);
@@ -322,6 +325,13 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
             <RefreshCw className="w-5 h-5 animate-spin text-muted-foreground" />
           )}
         </h2>
+        <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
+          {lang === "en"
+            ? "Advanced settings for the local translation engine. For API translation, go to API Manager."
+            : lang === "jp"
+              ? "ローカル翻訳エンジンの詳細設定です。API翻訳の設定は「API マネージャー」へ。"
+              : "本页面为本地翻译引擎的高级功能设置。如需配置 API 翻译相关功能，请前往「API 管理器」。"}
+        </p>
       </div>
 
       {/* Scrollable Content Area */}
@@ -394,9 +404,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                             value={gpuLayers}
                             onChange={(e) => setGpuLayers(e.target.value)}
                           >
-                            <option value="-1">
-                              {av.gpuLayersAll}
-                            </option>
+                            <option value="-1">{av.gpuLayersAll}</option>
                             <option value="0">0 (CPU Only)</option>
                             <option value="16">16</option>
                             <option value="24">24</option>
@@ -531,23 +539,21 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                   <div className="flex items-center justify-between mt-4 mb-2">
                     <div className="flex flex-col">
                       <span
-                        className={`text-3xl font-bold font-mono tracking-tight transition-colors duration-500 ${
-                          (() => {
-                            const ctxInt = parseInt(ctxSize);
-                            let cotRatio = 3.5;
-                            if (ctxInt >= 8192) cotRatio = 3.2;
-                            else if (ctxInt > 1024) {
-                              const slope = (3.2 - 3.5) / (8192 - 1024);
-                              cotRatio = 3.5 + slope * (ctxInt - 1024);
-                            }
-                            const theoretical = Math.round(
-                              ((ctxInt * 0.9 - 500) / cotRatio) * 1.3,
-                            );
-                            if (theoretical > 4096) return "text-red-500";
-                            if (theoretical >= 3072) return "text-amber-500";
-                            return "text-black dark:text-foreground";
-                          })()
-                        }`}
+                        className={`text-3xl font-bold font-mono tracking-tight transition-colors duration-500 ${(() => {
+                          const ctxInt = parseInt(ctxSize);
+                          let cotRatio = 3.5;
+                          if (ctxInt >= 8192) cotRatio = 3.2;
+                          else if (ctxInt > 1024) {
+                            const slope = (3.2 - 3.5) / (8192 - 1024);
+                            cotRatio = 3.5 + slope * (ctxInt - 1024);
+                          }
+                          const theoretical = Math.round(
+                            ((ctxInt * 0.9 - 500) / cotRatio) * 1.3,
+                          );
+                          if (theoretical > 4096) return "text-red-500";
+                          if (theoretical >= 3072) return "text-amber-500";
+                          return "text-black dark:text-foreground";
+                        })()}`}
                       >
                         {ctxSize}
                       </span>
@@ -772,13 +778,13 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                             </strong>{" "}
                             {isHardLimited
                               ? av.contextWarningHardDesc.replace(
-                                "{theoretical}",
-                                String(theoretical),
-                              )
+                                  "{theoretical}",
+                                  String(theoretical),
+                                )
                               : av.contextWarningSoftDesc.replace(
-                                "{effective}",
-                                String(effective),
-                              )}
+                                  "{effective}",
+                                  String(effective),
+                                )}
                           </span>
                         </p>
                       )
@@ -984,7 +990,8 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                           className={`relative overflow-hidden rounded-xl border p-3 flex flex-col justify-between h-full transition-all duration-300 ${
                             parseInt(ctxSize) * concurrency > 16384 * 16 * 0.75
                               ? "bg-red-500/5 border-red-500/20"
-                              : parseInt(ctxSize) * concurrency > 16384 * 16 * 0.45
+                              : parseInt(ctxSize) * concurrency >
+                                  16384 * 16 * 0.45
                                 ? "bg-amber-500/5 border-amber-500/20"
                                 : "bg-secondary/30 border-border/40 hover:border-primary/30"
                           }`}
@@ -996,7 +1003,8 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                             <div className="flex items-baseline gap-1.5 mt-1">
                               <span
                                 className={`text-xl font-mono font-bold tracking-tight ${
-                                  parseInt(ctxSize) * concurrency > 16384 * 16 * 0.75
+                                  parseInt(ctxSize) * concurrency >
+                                  16384 * 16 * 0.75
                                     ? "text-red-600"
                                     : parseInt(ctxSize) * concurrency >
                                         16384 * 16 * 0.45
@@ -1004,7 +1012,9 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                                       : "text-primary"
                                 }`}
                               >
-                                {(parseInt(ctxSize) * concurrency).toLocaleString()}
+                                {(
+                                  parseInt(ctxSize) * concurrency
+                                ).toLocaleString()}
                               </span>
                               <span className="text-[10px] text-muted-foreground/60">
                                 token-slots
@@ -1014,7 +1024,8 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                           <div className="w-full h-1 mt-3 bg-foreground/5 rounded-full overflow-hidden">
                             <div
                               className={`h-full rounded-full transition-all duration-500 ${
-                                parseInt(ctxSize) * concurrency > 16384 * 16 * 0.75
+                                parseInt(ctxSize) * concurrency >
+                                16384 * 16 * 0.75
                                   ? "bg-red-500 w-full animate-pulse"
                                   : parseInt(ctxSize) * concurrency >
                                       16384 * 16 * 0.45
@@ -1031,7 +1042,8 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                               Per Slot: {parseInt(ctxSize).toLocaleString()}
                             </span>
                             <span>
-                              {parseInt(ctxSize) * concurrency > 16384 * 16 * 0.75
+                              {parseInt(ctxSize) * concurrency >
+                              16384 * 16 * 0.75
                                 ? "High Throughput"
                                 : parseInt(ctxSize) * concurrency >
                                     16384 * 16 * 0.45
@@ -1458,6 +1470,13 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
             </Card>
           </div>
 
+          {/* --- Remote Service (嵌入) --- */}
+          {remoteRuntime && (
+            <div className="space-y-4 pt-4">
+              <ServiceView lang={lang} remoteRuntime={remoteRuntime} />
+            </div>
+          )}
+
           {/* --- Quality Control Section (高级质量控制) --- */}
           <div className="space-y-4 pt-4">
             <h3 className="text-lg font-semibold flex items-center gap-2 border-b pb-2">
@@ -1694,9 +1713,7 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                           max={10}
                           className="w-full border p-1.5 rounded text-sm bg-secondary text-center"
                           value={anchorCheckRetries}
-                          onChange={(
-                            e: React.ChangeEvent<HTMLInputElement>,
-                          ) =>
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
                             setAnchorCheckRetries(
                               Math.max(1, parseInt(e.target.value) || 1),
                             )
@@ -1914,11 +1931,9 @@ export function AdvancedView({ lang }: AdvancedViewProps) {
                           {av.promptFeedbackDesc}
                         </p>
                       </div>
-
                     </div>
                   )}
                 </div>
-
               </CardContent>
             </Card>
           </div>
