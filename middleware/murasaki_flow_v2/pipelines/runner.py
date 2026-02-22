@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
+import hashlib
 import json
 import os
 import threading
@@ -35,6 +36,10 @@ from murasaki_flow_v2.utils.log_protocol import (
 )
 
 MAX_CONCURRENCY = 256
+
+
+class PipelineStopRequested(RuntimeError):
+    """Raised when an external stop request asks runner to end gracefully."""
 
 
 class PipelineRunner:
@@ -142,6 +147,36 @@ class PipelineRunner:
         return (min(indices), max(indices) + 1)
 
     @staticmethod
+    def _build_block_fallback_text(
+        source_lines: List[str],
+        block: TextBlock,
+        *,
+        line_index: Optional[int] = None,
+        target_line_ids: Optional[List[int]] = None,
+    ) -> str:
+        if source_lines:
+            if target_line_ids:
+                safe_ids = [
+                    i
+                    for i in target_line_ids
+                    if isinstance(i, int) and 0 <= i < len(source_lines)
+                ]
+                if safe_ids:
+                    return "\n".join(source_lines[i] for i in safe_ids)
+
+            blk_start, blk_end = PipelineRunner._block_line_range(block)
+            if blk_end > blk_start:
+                safe_start = max(0, blk_start)
+                safe_end = min(len(source_lines), blk_end)
+                if safe_end > safe_start:
+                    return "\n".join(source_lines[safe_start:safe_end])
+
+            if line_index is not None and 0 <= line_index < len(source_lines):
+                return source_lines[line_index]
+
+        return str(getattr(block, "prompt_text", "") or "")
+
+    @staticmethod
     def _resolve_warning_block(blocks: List[TextBlock], line_number: int) -> int:
         """Map global 1-based line number to 1-based block index."""
         if line_number <= 0:
@@ -176,9 +211,22 @@ class PipelineRunner:
     @staticmethod
     def _normalize_txt_blocks(blocks: List[TextBlock]) -> None:
         for block in blocks:
-            text = block.prompt_text
-            if text.endswith("\n"):
-                block.prompt_text = text[:-1]
+            text = str(getattr(block, "prompt_text", "") or "")
+            block.prompt_text = text.rstrip("\r\n")
+
+    @staticmethod
+    def _should_filter_blank_line_blocks(doc: object, chunk_type: str) -> bool:
+        return isinstance(doc, TxtDocument) and chunk_type == "line"
+
+    @staticmethod
+    def _collect_blank_line_block_indices(blocks: List[TextBlock]) -> Set[int]:
+        blank_indices: Set[int] = set()
+        for idx, block in enumerate(blocks):
+            text = str(getattr(block, "prompt_text", "") or "")
+            if text.strip():
+                continue
+            blank_indices.add(idx)
+        return blank_indices
 
     @staticmethod
     def _sanitize_post_rules_for_input(
@@ -235,13 +283,50 @@ class PipelineRunner:
         blocks: List[TextBlock],
         *,
         separator: str,
+        skip_blank_indices: Optional[Set[int]] = None,
     ) -> None:
         normalized_separator = "\n\n" if separator == "\n\n" else "\n"
+        skip_lookup = skip_blank_indices or set()
+        output_lines: List[str] = []
+        for idx, block in enumerate(blocks):
+            if normalized_separator == "\n\n" and idx in skip_lookup:
+                continue
+            text = str(getattr(block, "prompt_text", "") or "").rstrip("\r\n")
+            output_lines.append(text)
         with open(output_path, "w", encoding="utf-8") as f:
-            for block in blocks:
-                text = str(getattr(block, "prompt_text", "") or "")
-                f.write(text)
+            if not output_lines:
+                return
+            f.write(normalized_separator.join(output_lines))
+            f.write(normalized_separator)
+
+    @staticmethod
+    def _write_interrupted_preview(
+        output_path: str,
+        translated_blocks: List[Optional[TextBlock]],
+        *,
+        separator: str = "\n",
+        skip_indices: Optional[Set[int]] = None,
+    ) -> Optional[str]:
+        if not output_path:
+            return None
+        preview_path = f"{output_path}.interrupted.txt"
+        normalized_separator = "\n\n" if separator == "\n\n" else "\n"
+        skip_lookup = skip_indices or set()
+        output_lines: List[str] = []
+        for idx, block in enumerate(translated_blocks):
+            if idx in skip_lookup or block is None:
+                continue
+            text = str(getattr(block, "prompt_text", "") or "").rstrip("\r\n")
+            output_lines.append(text)
+        if not output_lines:
+            return None
+        try:
+            with open(preview_path, "w", encoding="utf-8") as f:
+                f.write(normalized_separator.join(output_lines))
                 f.write(normalized_separator)
+        except Exception:
+            return None
+        return preview_path
 
     @staticmethod
     def _resolve_output_path(
@@ -318,6 +403,10 @@ class PipelineRunner:
                             continue
                         if header.get(key) != value:
                             return {}, False
+            elif expected:
+                # With expected fingerprint constraints we must reject legacy
+                # temp files without fingerprint header to avoid mixed resumes.
+                return {}, False
 
         for raw in lines[start_idx:]:
             try:
@@ -354,6 +443,60 @@ class PipelineRunner:
         return entries, matched
 
     @staticmethod
+    def _stable_hash(payload: Any) -> str:
+        try:
+            raw = json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            )
+        except Exception:
+            raw = json.dumps(str(payload), ensure_ascii=False)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _build_resume_fingerprint(
+        self,
+        *,
+        input_path: str,
+        pipeline_id: str,
+        chunk_type: str,
+        pipeline: Dict[str, Any],
+        provider_profile: Dict[str, Any],
+        prompt_profile: Dict[str, Any],
+        parser_profile: Dict[str, Any],
+        line_policy_profile: Optional[Dict[str, Any]],
+        chunk_policy_profile: Dict[str, Any],
+        settings: Dict[str, Any],
+        processing_cfg: Dict[str, Any],
+        pre_rules: List[Dict[str, Any]],
+        post_rules: List[Dict[str, Any]],
+        source_format: str,
+    ) -> Dict[str, Any]:
+        config_payload = {
+            "pipeline": pipeline or {},
+            "provider_profile": provider_profile or {},
+            "prompt_profile": prompt_profile or {},
+            "parser_profile": parser_profile or {},
+            "line_policy_profile": line_policy_profile or {},
+            "chunk_policy_profile": chunk_policy_profile or {},
+            "settings": settings or {},
+            "processing": processing_cfg or {},
+            "rules_pre": pre_rules or [],
+            "rules_post": post_rules or [],
+            "source_format": source_format,
+        }
+        return {
+            "type": "fingerprint",
+            "version": 2,
+            "input": input_path,
+            "pipeline": pipeline_id,
+            "chunk_type": chunk_type,
+            "config_hash": self._stable_hash(config_payload),
+        }
+
+    @staticmethod
     def _load_resume_cache(
         output_path: str,
         cache_dir: Optional[str] = None,
@@ -365,6 +508,68 @@ class PipelineRunner:
         entries: Dict[int, Dict[str, str]] = {}
         for block in cache.blocks:
             entries[block.index] = {"src": block.src, "dst": block.dst}
+        return entries
+
+    def _load_resume_output(
+        self,
+        output_path: str,
+        blocks: List[TextBlock],
+        chunk_policy: Any,
+        *,
+        chunk_type: str,
+        skip_indices: Optional[Set[int]] = None,
+    ) -> Dict[int, Dict[str, str]]:
+        # 仅在 line 模式启用，避免 block 模式误映射导致的错位恢复。
+        if chunk_type != "line":
+            return {}
+        if not output_path or not os.path.exists(output_path):
+            return {}
+        try:
+            output_doc = DocumentFactory.get_document(output_path)
+            self._ensure_line_chunk_keeps_empty(output_doc, chunk_policy)
+            output_items = output_doc.load()
+            output_blocks = chunk_policy.chunk(output_items)
+        except Exception:
+            return {}
+        if not output_blocks:
+            return {}
+
+        source_count = len(blocks)
+        if source_count <= 0:
+            return {}
+        skip_lookup = skip_indices or set()
+        candidate_indices = [
+            idx for idx in range(source_count) if idx not in skip_lookup
+        ]
+        entries: Dict[int, Dict[str, str]] = {}
+        used_indices: Set[int] = set()
+        sequential_pos = 0
+
+        for output_block in output_blocks:
+            dst_text = str(getattr(output_block, "prompt_text", "") or "")
+            mapped_idx: Optional[int] = None
+            for meta in getattr(output_block, "metadata", None) or []:
+                if not isinstance(meta, int):
+                    continue
+                if meta < 0 or meta >= source_count:
+                    continue
+                if meta in skip_lookup or meta in used_indices:
+                    continue
+                mapped_idx = meta
+                break
+            if mapped_idx is None:
+                while sequential_pos < len(candidate_indices):
+                    candidate = candidate_indices[sequential_pos]
+                    sequential_pos += 1
+                    if candidate in used_indices:
+                        continue
+                    mapped_idx = candidate
+                    break
+            if mapped_idx is None:
+                break
+            src_text = str(getattr(blocks[mapped_idx], "prompt_text", "") or "")
+            entries[mapped_idx] = {"src": src_text, "dst": dst_text}
+            used_indices.add(mapped_idx)
         return entries
 
     @staticmethod
@@ -506,7 +711,13 @@ class PipelineRunner:
         resume: bool = False,
         save_cache: bool = True,
         cache_dir: Optional[str] = None,
+        stop_flag_path: Optional[str] = None,
     ) -> str:
+        resolved_stop_flag = str(stop_flag_path or "").strip()
+
+        def stop_requested() -> bool:
+            return bool(resolved_stop_flag) and os.path.exists(resolved_stop_flag)
+
         pipeline = self.pipeline
         pipeline_id = str(pipeline.get("id") or "")
         provider_ref = str(pipeline.get("provider") or "")
@@ -560,29 +771,16 @@ class PipelineRunner:
         items = doc.load()
         source_lines = self._extract_source_lines(items)
         blocks = chunk_policy.chunk(items)
+        filter_blank_line_blocks = self._should_filter_blank_line_blocks(
+            doc, chunk_type
+        )
+        blank_line_block_indices: Set[int] = set()
+        if filter_blank_line_blocks and blocks:
+            blank_line_block_indices = self._collect_blank_line_block_indices(blocks)
 
         temp_progress_path = f"{output_path}.temp.jsonl"
-        fingerprint = {
-            "type": "fingerprint",
-            "version": 1,
-            "input": input_path,
-            "pipeline": pipeline_id,
-            "chunk_type": chunk_type,
-        }
-        expected_fingerprint = {
-            "input": input_path,
-            "pipeline": pipeline_id,
-            "chunk_type": chunk_type,
-        }
         resume_entries: Dict[int, Dict[str, str]] = {}
         resume_matched = False
-        if resume:
-            resume_entries, resume_matched = self._load_resume_file(
-                temp_progress_path, expected=expected_fingerprint
-            )
-            if not resume_entries:
-                resume_entries = self._load_resume_cache(output_path, cache_dir)
-                resume_matched = False
 
         processing_cfg = pipeline.get("processing") or {}
         if not isinstance(processing_cfg, dict):
@@ -719,6 +917,58 @@ class PipelineRunner:
                     )
                 )
 
+        fingerprint = self._build_resume_fingerprint(
+            input_path=input_path,
+            pipeline_id=pipeline_id,
+            chunk_type=chunk_type,
+            pipeline=pipeline,
+            provider_profile=dict(getattr(provider, "profile", {}) or {}),
+            prompt_profile=dict(prompt_profile or {}),
+            parser_profile=dict(getattr(parser, "profile", {}) or {}),
+            line_policy_profile=(
+                dict(getattr(line_policy, "profile", {}) or {})
+                if line_policy is not None
+                else None
+            ),
+            chunk_policy_profile=dict(getattr(chunk_policy, "profile", {}) or {}),
+            settings=dict(settings or {}),
+            processing_cfg=dict(processing_cfg or {}),
+            pre_rules=pre_rules,
+            post_rules=post_rules,
+            source_format=source_format,
+        )
+        expected_fingerprint = {
+            "input": input_path,
+            "pipeline": pipeline_id,
+            "chunk_type": chunk_type,
+            "config_hash": fingerprint.get("config_hash"),
+        }
+        temp_resume_exists = os.path.exists(temp_progress_path)
+        if resume:
+            resume_entries, resume_matched = self._load_resume_file(
+                temp_progress_path, expected=expected_fingerprint
+            )
+            if not resume_entries and not temp_resume_exists:
+                resume_entries = self._load_resume_cache(output_path, cache_dir)
+                resume_matched = False
+            if not resume_entries and not temp_resume_exists:
+                resume_entries = self._load_resume_output(
+                    output_path,
+                    blocks,
+                    chunk_policy,
+                    chunk_type=chunk_type,
+                    skip_indices=(
+                        blank_line_block_indices if filter_blank_line_blocks else None
+                    ),
+                )
+                resume_matched = False
+            if temp_resume_exists and not resume_matched:
+                emit_warning(
+                    0,
+                    "resume_fingerprint_mismatch_skip_cache",
+                    "quality",
+                )
+
         prompt_source_lines = source_lines
         if (
             processing_processor
@@ -775,11 +1025,19 @@ class PipelineRunner:
 
         _p_profile = provider.profile if provider else {}
         _provider_url = str(_p_profile.get("url") or _p_profile.get("api_base") or _p_profile.get("base_url") or "")
+        tracker_source_lines = len(source_lines)
+        tracker_source_chars = sum(len(l) for l in source_lines)
+        tracker_total_blocks = len(blocks)
+        if filter_blank_line_blocks:
+            non_empty_source_lines = [line for line in source_lines if line.strip()]
+            tracker_source_lines = len(non_empty_source_lines)
+            tracker_source_chars = sum(len(line) for line in non_empty_source_lines)
+            tracker_total_blocks = max(0, len(blocks) - len(blank_line_block_indices))
 
         tracker = ProgressTracker(
-            total_blocks=len(blocks),
-            total_source_lines=len(source_lines),
-            total_source_chars=sum(len(l) for l in source_lines),
+            total_blocks=tracker_total_blocks,
+            total_source_lines=tracker_source_lines,
+            total_source_chars=tracker_source_chars,
             api_url=_provider_url if _provider_url else None,
         )
         # V2 API 模式采用后台心跳持续上报，避免仅在 block 完成时刷新导致“实时曲线卡住”。
@@ -803,11 +1061,21 @@ class PipelineRunner:
         tracker.emit_progress_snapshot(force=True)
 
         translated_blocks: List[Optional[TextBlock]] = [None] * len(blocks)
+        if blank_line_block_indices:
+            for idx in blank_line_block_indices:
+                passthrough_block = blocks[idx]
+                translated_blocks[idx] = TextBlock(
+                    id=idx + 1,
+                    prompt_text=str(getattr(passthrough_block, "prompt_text", "") or ""),
+                    metadata=passthrough_block.metadata,
+                )
         resume_completed = 0
         resume_output_lines = 0
         resume_output_chars = 0
         if resume_entries:
             for idx, block in enumerate(blocks):
+                if translated_blocks[idx] is not None:
+                    continue
                 entry = resume_entries.get(idx)
                 if not entry:
                     continue
@@ -838,6 +1106,8 @@ class PipelineRunner:
                 )
 
         def translate_block(idx: int, block: TextBlock) -> Tuple[int, TextBlock]:
+            if stop_requested():
+                raise PipelineStopRequested("stop_requested")
             context_cfg = prompt_profile.get("context") or {}
             line_index = None
             if block.metadata:
@@ -857,10 +1127,19 @@ class PipelineRunner:
             context_after = ""
             target_line_ids: List[int] = []
             active_source_lines = prompt_source_lines if prompt_source_lines else source_lines
-            if line_index is not None and active_source_lines:
+            if active_source_lines:
+                context_anchor = (
+                    line_index
+                    if line_index is not None
+                    else max(0, min(blk_start, len(active_source_lines) - 1))
+                )
+                safe_block_end = blk_end if blk_end > context_anchor else context_anchor + 1
+                safe_block_end = min(len(active_source_lines), safe_block_end)
                 context = self._build_context(
-                    active_source_lines, line_index, context_cfg,
-                    block_end=blk_end if blk_end > blk_start else None,
+                    active_source_lines,
+                    context_anchor,
+                    context_cfg,
+                    block_end=safe_block_end,
                 )
                 context_before = context["before"]
                 context_after = context["after"]
@@ -921,9 +1200,64 @@ class PipelineRunner:
                 line_index=line_index,
             )
 
+            def fallback_to_source(
+                error_message: Optional[str],
+                error_type: str,
+                *,
+                warning_message: str,
+                status_code: Optional[int] = None,
+            ) -> Tuple[int, TextBlock]:
+                blk_start, _ = self._block_line_range(block)
+                fallback_line = (
+                    line_index + 1
+                    if line_index is not None and line_index < len(source_lines)
+                    else blk_start + 1
+                    if source_lines and 0 <= blk_start < len(source_lines)
+                    else None
+                )
+                fallback_text = self._build_block_fallback_text(
+                    source_lines,
+                    block,
+                    line_index=line_index,
+                    target_line_ids=target_line_ids,
+                )
+                with _failed_line_lock:
+                    failed_line_entries.append(
+                        {
+                            "index": idx,
+                            "line": fallback_line,
+                            "error": error_message or "",
+                            "type": error_type,
+                            "status": "untranslated_fallback",
+                        }
+                    )
+                try:
+                    emit_warning(
+                        idx + 1,
+                        warning_message,
+                        "untranslated_fallback",
+                        line=fallback_line,
+                    )
+                except Exception:
+                    pass
+                tracker.note_error(status_code)
+                write_temp_entry(
+                    idx,
+                    block.prompt_text,
+                    fallback_text,
+                    warnings=["untranslated_fallback"],
+                )
+                return idx, TextBlock(
+                    id=idx + 1,
+                    prompt_text=fallback_text,
+                    metadata=block.metadata,
+                )
+
             attempt = 0
             last_error: Optional[str] = None
             while attempt <= max_retries:
+                if stop_requested():
+                    raise PipelineStopRequested("stop_requested")
                 try:
                     request = provider.build_request(messages, settings)
                     import time
@@ -980,6 +1314,8 @@ class PipelineRunner:
                         prompt_text=translated,
                         metadata=block.metadata,
                     )
+                except PipelineStopRequested:
+                    raise
                 except (ProviderError, ParserError, LinePolicyError) as exc:
                     last_error = str(exc)
                     if adaptive is not None and isinstance(exc, ProviderError):
@@ -1000,50 +1336,30 @@ class PipelineRunner:
                     tracker.note_retry(_status_code)
                     emit_retry(idx + 1, attempt, error_type)
                     if attempt > max_retries:
-                        fallback_line = (
-                            line_index + 1
-                            if line_index is not None and line_index < len(source_lines)
-                            else None
+                        return fallback_to_source(
+                            last_error,
+                            error_type,
+                            warning_message="fallback_to_source_after_max_retries",
+                            status_code=_status_code,
                         )
-                        fallback_text = (
-                            source_lines[line_index]
-                            if line_index is not None and line_index < len(source_lines)
-                            else block.prompt_text
-                        )
-                        with _failed_line_lock:
-                            failed_line_entries.append(
-                                {
-                                    "index": idx,
-                                    "line": fallback_line,
-                                    "error": last_error,
-                                    "type": error_type,
-                                    "status": "untranslated_fallback",
-                                }
-                            )
-                        try:
-                            emit_warning(
-                                idx + 1,
-                                "fallback_to_source_after_max_retries",
-                                "untranslated_fallback",
-                                line=fallback_line,
-                            )
-                        except Exception:
-                            pass
-                        tracker.note_error(_status_code)
-                        write_temp_entry(
-                            idx,
-                            block.prompt_text,
-                            fallback_text,
-                            warnings=["untranslated_fallback"],
-                        )
-                        return idx, TextBlock(
-                            id=idx + 1,
-                            prompt_text=fallback_text,
-                            metadata=block.metadata,
-                        )
+                except Exception as exc:
+                    unexpected_error = f"{type(exc).__name__}: {exc}"
+                    return fallback_to_source(
+                        unexpected_error,
+                        "unknown_error",
+                        warning_message="fallback_to_source_unexpected_error",
+                    )
             if last_error:
-                raise RuntimeError(last_error)
-            raise RuntimeError("unknown_error")
+                return fallback_to_source(
+                    last_error,
+                    "unknown_error",
+                    warning_message="fallback_to_source_unknown_error",
+                )
+            return fallback_to_source(
+                "unknown_error",
+                "unknown_error",
+                warning_message="fallback_to_source_unknown_error",
+            )
 
         try:
             raw_concurrency = settings.get("concurrency")
@@ -1065,70 +1381,112 @@ class PipelineRunner:
             idx for idx, block in enumerate(blocks) if translated_blocks[idx] is None
         ]
 
+        stop_triggered = False
         try:
-            if adaptive is not None and len(pending_indices) > 1:
-                with ThreadPoolExecutor(max_workers=adaptive.max_limit) as executor:
-                    next_pos = 0
-                    futures: Dict[Any, int] = {}
-                    while next_pos < len(pending_indices) or futures:
-                        limit = adaptive.get_limit()
-                        tracker.current_concurrency = limit
-                        while next_pos < len(pending_indices) and len(futures) < limit:
-                            idx = pending_indices[next_pos]
-                            futures[executor.submit(translate_block, idx, blocks[idx])] = idx
-                            next_pos += 1
-                        if not futures:
-                            continue
-                        for future in as_completed(futures):
-                            idx = futures.pop(future)
-                            try:
-                                _, translated_block = future.result()
-                                translated_blocks[idx] = translated_block
-                                adaptive.note_success()
-                                valid_meta = [m for m in (blocks[idx].metadata or []) if isinstance(m, int)]
-                                lines_done = len(valid_meta) if valid_meta else None
-                                tracker.block_done(
-                                    idx, blocks[idx].prompt_text, translated_block.prompt_text,
-                                    lines_done=lines_done
-                                )
-                            except Exception:
+            try:
+                if stop_requested():
+                    raise PipelineStopRequested("stop_requested")
+                if adaptive is not None and len(pending_indices) > 1:
+                    with ThreadPoolExecutor(max_workers=adaptive.max_limit) as executor:
+                        next_pos = 0
+                        futures: Dict[Any, int] = {}
+                        while next_pos < len(pending_indices) or futures:
+                            if stop_requested():
                                 for pending in futures:
                                     pending.cancel()
-                                raise
-                            break
-            elif pending_indices:
-                tracker.current_concurrency = concurrency
-                if concurrency <= 1 or len(pending_indices) <= 1:
-                    for idx in pending_indices:
-                        _, translated_block = translate_block(idx, blocks[idx])
-                        translated_blocks[idx] = translated_block
-                        valid_meta = [m for m in (blocks[idx].metadata or []) if isinstance(m, int)]
-                        lines_done = len(valid_meta) if valid_meta else None
-                        tracker.block_done(
-                            idx, blocks[idx].prompt_text, translated_block.prompt_text,
-                            lines_done=lines_done
-                        )
-                else:
-                    with ThreadPoolExecutor(max_workers=concurrency) as executor:
-                        futures = {
-                            executor.submit(translate_block, idx, blocks[idx]): idx
-                            for idx in pending_indices
-                        }
-                        for future in as_completed(futures):
-                            idx = futures[future]
-                            try:
-                                _ , translated_block = future.result()
-                                translated_blocks[idx] = translated_block
-                                valid_meta = [m for m in (blocks[idx].metadata or []) if isinstance(m, int)]
-                                lines_done = len(valid_meta) if valid_meta else None
-                                tracker.block_done(
-                                    idx, blocks[idx].prompt_text, translated_block.prompt_text,
-                                    lines_done=lines_done
-                                )
-                            except Exception:
-                                for pending in futures:
-                                    pending.cancel()
-                                raise
+                                raise PipelineStopRequested("stop_requested")
+                            limit = adaptive.get_limit()
+                            tracker.current_concurrency = limit
+                            while next_pos < len(pending_indices) and len(futures) < limit:
+                                if stop_requested():
+                                    break
+                                idx = pending_indices[next_pos]
+                                futures[executor.submit(translate_block, idx, blocks[idx])] = idx
+                                next_pos += 1
+                            if not futures:
+                                continue
+                            for future in as_completed(futures):
+                                idx = futures.pop(future)
+                                try:
+                                    _, translated_block = future.result()
+                                    translated_blocks[idx] = translated_block
+                                    adaptive.note_success()
+                                    valid_meta = [m for m in (blocks[idx].metadata or []) if isinstance(m, int)]
+                                    lines_done = len(valid_meta) if valid_meta else None
+                                    tracker.block_done(
+                                        idx, blocks[idx].prompt_text, translated_block.prompt_text,
+                                        lines_done=lines_done
+                                    )
+                                except PipelineStopRequested:
+                                    for pending in futures:
+                                        pending.cancel()
+                                    raise
+                                except Exception:
+                                    for pending in futures:
+                                        pending.cancel()
+                                    raise
+                                if stop_requested():
+                                    for pending in futures:
+                                        pending.cancel()
+                                    raise PipelineStopRequested("stop_requested")
+                                break
+                elif pending_indices:
+                    tracker.current_concurrency = concurrency
+                    if concurrency <= 1 or len(pending_indices) <= 1:
+                        for idx in pending_indices:
+                            if stop_requested():
+                                raise PipelineStopRequested("stop_requested")
+                            _, translated_block = translate_block(idx, blocks[idx])
+                            translated_blocks[idx] = translated_block
+                            valid_meta = [m for m in (blocks[idx].metadata or []) if isinstance(m, int)]
+                            lines_done = len(valid_meta) if valid_meta else None
+                            tracker.block_done(
+                                idx, blocks[idx].prompt_text, translated_block.prompt_text,
+                                lines_done=lines_done
+                            )
+                    else:
+                        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+                            next_pos = 0
+                            futures: Dict[Any, int] = {}
+                            while next_pos < len(pending_indices) or futures:
+                                if stop_requested():
+                                    for pending in futures:
+                                        pending.cancel()
+                                    break
+                                while next_pos < len(pending_indices) and len(futures) < concurrency:
+                                    if stop_requested():
+                                        break
+                                    idx = pending_indices[next_pos]
+                                    futures[executor.submit(translate_block, idx, blocks[idx])] = idx
+                                    next_pos += 1
+                                if not futures:
+                                    continue
+                                for future in as_completed(futures):
+                                    idx = futures.pop(future)
+                                    try:
+                                        _ , translated_block = future.result()
+                                        translated_blocks[idx] = translated_block
+                                        valid_meta = [m for m in (blocks[idx].metadata or []) if isinstance(m, int)]
+                                        lines_done = len(valid_meta) if valid_meta else None
+                                        tracker.block_done(
+                                            idx, blocks[idx].prompt_text, translated_block.prompt_text,
+                                            lines_done=lines_done
+                                        )
+                                    except PipelineStopRequested:
+                                        for pending in futures:
+                                            pending.cancel()
+                                        raise
+                                    except Exception:
+                                        for pending in futures:
+                                            pending.cancel()
+                                        raise
+                                    if stop_requested():
+                                        for pending in futures:
+                                            pending.cancel()
+                                        raise PipelineStopRequested("stop_requested")
+                                    break
+            except PipelineStopRequested:
+                stop_triggered = True
         finally:
             progress_heartbeat_stop.set()
             if progress_heartbeat_thread and progress_heartbeat_thread.is_alive():
@@ -1147,6 +1505,39 @@ class PipelineRunner:
                         flush_realtime_cache_locked()
                 except Exception:
                     pass
+
+        if stop_triggered or stop_requested():
+            temp_resume_entries, _ = self._load_resume_file(temp_progress_path)
+            if temp_resume_entries:
+                for idx, entry in temp_resume_entries.items():
+                    if idx < 0 or idx >= len(translated_blocks):
+                        continue
+                    if translated_blocks[idx] is not None:
+                        continue
+                    translated_blocks[idx] = TextBlock(
+                        id=idx + 1,
+                        prompt_text=str(entry.get("dst") or ""),
+                        metadata=blocks[idx].metadata,
+                    )
+            interrupted_separator = (
+                "\n\n"
+                if (
+                    chunk_type == "chunk"
+                    or self._should_use_double_newline_separator(post_rules)
+                )
+                else "\n"
+            )
+            preview_path = self._write_interrupted_preview(
+                output_path,
+                translated_blocks,
+                separator=interrupted_separator,
+                skip_indices=(
+                    blank_line_block_indices if filter_blank_line_blocks else None
+                ),
+            )
+            if preview_path:
+                print(f"[FlowV2] Partial translation preview saved to: {preview_path}")
+            raise PipelineStopRequested("stop_requested")
 
         if any(block is None for block in translated_blocks):
             raise RuntimeError("translation_incomplete")
@@ -1212,6 +1603,9 @@ class PipelineRunner:
                 output_path,
                 translated_blocks,
                 separator=separator,
+                skip_blank_indices=(
+                    blank_line_block_indices if filter_blank_line_blocks else None
+                ),
             )
         else:
             doc.save(output_path, translated_blocks)

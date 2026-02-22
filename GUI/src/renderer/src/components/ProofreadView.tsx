@@ -107,6 +107,8 @@ interface ProofreadViewProps {
 }
 
 interface RetryConfig {
+  engineMode: "v1" | "v2";
+  v2PipelineId: string;
   modelPath: string;
   glossaryPath: string;
   preset: string;
@@ -133,12 +135,24 @@ interface RetryConfig {
   coverageRetries: number;
 }
 
+interface V2PipelineOption {
+  id: string;
+  name: string;
+  filename: string;
+  chunk_type?: string;
+}
+
 import { ResultChecker } from "./ResultChecker";
 import { findHighSimilarityLines } from "../lib/quality-check";
 import { AlertModal } from "./ui/AlertModal";
 import { useAlertModal } from "../hooks/useAlertModal";
 import { stripSystemMarkersForDisplay } from "../lib/displayText";
 import { resolveRuleListForRun } from "../lib/rulesConfig";
+import {
+  buildProofreadLineLayoutMetrics,
+  normalizeProofreadEngineMode,
+  resolveProofreadRetranslateOptions,
+} from "../lib/proofreadViewConfig";
 
 // ...
 
@@ -465,6 +479,12 @@ export default function ProofreadView({
 
   // Retry Panel
   const [showRetryPanel, setShowRetryPanel] = useState(false);
+  const [retryEngineMode, setRetryEngineMode] = useState<"v1" | "v2">("v1");
+  const [retryV2PipelineId, setRetryV2PipelineId] = useState("");
+  const [retryV2PipelineOptions, setRetryV2PipelineOptions] = useState<
+    V2PipelineOption[]
+  >([]);
+  const [retryV2PipelineLoading, setRetryV2PipelineLoading] = useState(false);
   const [retryModelPath, setRetryModelPath] = useState("");
   const [retryGlossaryPath, setRetryGlossaryPath] = useState("");
   const [retryPreset, setRetryPreset] = useState("novel");
@@ -535,6 +555,17 @@ export default function ProofreadView({
   }, []);
 
   useEffect(() => {
+    const resolvedRetryMode = normalizeProofreadEngineMode(
+      localStorage.getItem("config_engine_mode"),
+    );
+    setRetryEngineMode(resolvedRetryMode);
+    const resolvedRetryOptions = resolveProofreadRetranslateOptions({
+      engineMode: resolvedRetryMode,
+      pipelineId: localStorage.getItem("config_v2_pipeline_id"),
+      legacyPipelineRaw: localStorage.getItem("murasaki.v2.active_pipeline_id"),
+    });
+    setRetryV2PipelineId(resolvedRetryOptions.pipelineId);
+
     setRetryModelPath(localStorage.getItem("config_model") || "");
     setRetryGlossaryPath(localStorage.getItem("config_glossary_path") || "");
     setRetryPreset(localStorage.getItem("config_preset") || "novel");
@@ -793,7 +824,8 @@ export default function ProofreadView({
 
   const openRetryPanel = () => {
     startRetryPanelTransition(() => {
-      setRetryDraft(buildRetryDraft());
+      const draft = buildRetryDraft();
+      setRetryDraft(draft);
       setShowRetryPanel(true);
       setShowQualityCheck(false);
     });
@@ -806,6 +838,14 @@ export default function ProofreadView({
 
   const saveRetryPanel = () => {
     if (retryDraft) {
+      if (retryDraft.engineMode === "v2" && !retryDraft.v2PipelineId.trim()) {
+        showAlert({
+          title: pv.v2PipelineMissingTitle,
+          description: pv.v2PipelineMissingDesc,
+          variant: "destructive",
+        });
+        return;
+      }
       applyRetryConfig(retryDraft);
     }
     closeRetryPanel();
@@ -1124,6 +1164,8 @@ export default function ProofreadView({
   };
 
   const buildRetryDraft = (): RetryConfig => ({
+    engineMode: retryEngineMode,
+    v2PipelineId: retryV2PipelineId,
     modelPath: retryModelPath,
     glossaryPath: retryGlossaryPath,
     preset: retryPreset,
@@ -1151,6 +1193,12 @@ export default function ProofreadView({
   });
 
   const applyRetryConfig = (next: RetryConfig) => {
+    setRetryEngineMode(next.engineMode);
+    localStorage.setItem("config_engine_mode", next.engineMode);
+
+    setRetryV2PipelineId(next.v2PipelineId);
+    localStorage.setItem("config_v2_pipeline_id", next.v2PipelineId);
+
     setRetryModelPath(next.modelPath);
     localStorage.setItem("config_model", next.modelPath);
 
@@ -1258,31 +1306,61 @@ export default function ProofreadView({
     setRetryDraft((prev) => ({ ...(prev || buildRetryDraft()), ...patch }));
   };
 
-  const resolveV2RetranslateOptions = useCallback(() => {
-    const engineMode = localStorage.getItem("config_engine_mode");
-    if (engineMode !== "v2") {
-      return { useV2: false, pipelineId: "" };
+  const loadRetryV2PipelineOptions = useCallback(async () => {
+    if (!window.api?.pipelineV2ProfilesList) {
+      setRetryV2PipelineOptions([]);
+      return [] as V2PipelineOption[];
     }
-    let activePipelineId = (
-      localStorage.getItem("config_v2_pipeline_id") || ""
-    ).trim();
-    if (!activePipelineId) {
-      try {
-        const fromApiManager = localStorage.getItem(
-          "murasaki.v2.active_pipeline_id",
-        );
-        if (fromApiManager) {
-          activePipelineId = String(JSON.parse(fromApiManager) || "").trim();
-        }
-      } catch {
-        // ignore parse error
-      }
+    setRetryV2PipelineLoading(true);
+    try {
+      const list = await window.api.pipelineV2ProfilesList("pipeline");
+      const normalized = (Array.isArray(list) ? list : [])
+        .filter((item) => item && typeof item.id === "string")
+        .map((item) => ({
+          id: String(item.id),
+          name: String(item.name || item.id),
+          filename: String(item.filename || ""),
+          chunk_type: item.chunk_type,
+        }));
+      setRetryV2PipelineOptions(normalized);
+      return normalized;
+    } catch (error) {
+      console.error("Failed to load V2 pipelines for proofread retry:", error);
+      setRetryV2PipelineOptions([]);
+      return [] as V2PipelineOption[];
+    } finally {
+      setRetryV2PipelineLoading(false);
     }
-    return {
-      useV2: true,
-      pipelineId: activePipelineId,
-    };
   }, []);
+
+  useEffect(() => {
+    if (!showRetryPanel || retryDraft?.engineMode !== "v2") return;
+    let cancelled = false;
+    void loadRetryV2PipelineOptions().then((profiles) => {
+      if (cancelled) return;
+      setRetryDraft((prev) => {
+        if (!prev || prev.engineMode !== "v2") return prev;
+        if (prev.v2PipelineId || profiles.length === 0) return prev;
+        return { ...prev, v2PipelineId: profiles[0].id };
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    loadRetryV2PipelineOptions,
+    retryDraft?.engineMode,
+    retryDraft?.v2PipelineId,
+    showRetryPanel,
+  ]);
+
+  const resolveV2RetranslateOptions = useCallback(() => {
+    return resolveProofreadRetranslateOptions({
+      engineMode: retryEngineMode,
+      pipelineId: retryV2PipelineId,
+      legacyPipelineRaw: localStorage.getItem("murasaki.v2.active_pipeline_id"),
+    });
+  }, [retryEngineMode, retryV2PipelineId]);
 
   // Update Block
   const updateBlockDst = useCallback(
@@ -1845,15 +1923,19 @@ export default function ProofreadView({
         ...dstLinesRaw,
         ...Array(maxLines - dstLinesRaw.length).fill(""),
       ];
+      const layoutMetrics = buildProofreadLineLayoutMetrics(maxLines);
+      const isSingleLineBlock = layoutMetrics.isSingleLineBlock;
 
       return (
         <div
           key={block.index}
           id={`block-${block.index}`}
-          className={`group hover:bg-muted/30 transition-colors ${editingBlockId === block.index ? "bg-muted/30" : ""}`}
+          className={`group hover:bg-muted/30 transition-colors ${isSingleLineBlock ? "bg-background/60" : ""} ${editingBlockId === block.index ? "bg-muted/30" : ""}`}
         >
           {/* Block header with info and actions */}
-          <div className="flex items-center gap-2 px-3 py-1 border-b border-border/10 bg-muted/20">
+          <div
+            className={`flex items-center gap-2 border-b border-border/10 bg-muted/20 ${isSingleLineBlock ? "px-2 py-0.5" : "px-3 py-1"}`}
+          >
             <span className="text-[10px] text-muted-foreground/50 font-mono">
               #{block.index + 1}
             </span>
@@ -1917,7 +1999,7 @@ export default function ProofreadView({
                 className="grid"
                 style={{
                   gridTemplateColumns: gridTemplate,
-                  gridAutoRows: "minmax(20px, auto)",
+                  gridAutoRows: `minmax(${layoutMetrics.rowMinHeight}px, auto)`,
                   gridAutoFlow: "row",
                 }}
               >
@@ -1925,14 +2007,19 @@ export default function ProofreadView({
                   const srcLine = srcLines[lineIdx] || "";
                   const isWarning = simSet.has(lineIdx + 1);
                   const baseCellStyle: React.CSSProperties = {
-                    minHeight: "20px",
-                    paddingLeft: "44px",
-                    paddingRight: "12px",
-                    lineHeight: "20px",
+                    minHeight: `${layoutMetrics.rowMinHeight}px`,
+                    paddingLeft: `${layoutMetrics.paddingLeft}px`,
+                    paddingRight: `${layoutMetrics.paddingRight}px`,
+                    paddingTop: `${layoutMetrics.textVerticalPadding}px`,
+                    paddingBottom: `${layoutMetrics.textVerticalPadding}px`,
+                    lineHeight: `${layoutMetrics.lineHeight}px`,
                     fontFamily:
                       '"Cascadia Mono", Consolas, "Meiryo", "MS Gothic", "SimSun", "Courier New", monospace',
-                    fontSize: "13px",
-                    wordBreak: "break-all",
+                    fontSize: `${layoutMetrics.textFontSize}px`,
+                    fontWeight: layoutMetrics.textFontWeight,
+                    wordBreak: "break-word",
+                    display: "flex",
+                    alignItems: isSingleLineBlock ? "center" : "flex-start",
                   };
                   const srcCellStyle: React.CSSProperties = {
                     ...baseCellStyle,
@@ -1953,13 +2040,17 @@ export default function ProofreadView({
                       <span
                         style={{
                           position: "absolute",
-                          left: "12px",
-                          width: "24px",
+                          top: isSingleLineBlock ? "50%" : "0",
+                          transform: isSingleLineBlock
+                            ? "translateY(-50%)"
+                            : "none",
+                          left: `${layoutMetrics.lineNumberLeft}px`,
+                          width: `${layoutMetrics.lineNumberWidth}px`,
                           textAlign: "right",
-                          fontSize: "10px",
+                          fontSize: `${layoutMetrics.lineNumberFontSize}px`,
                           color: "hsl(var(--muted-foreground)/0.5)",
                           userSelect: "none",
-                          lineHeight: "20px",
+                          lineHeight: `${layoutMetrics.lineHeight}px`,
                         }}
                       >
                         {lineIdx + 1}
@@ -1974,14 +2065,19 @@ export default function ProofreadView({
                   const dstLine = dstLines[lineIdx] || "";
                   const isWarning = simSet.has(lineIdx + 1);
                   const baseCellStyle: React.CSSProperties = {
-                    minHeight: "20px",
-                    paddingLeft: "44px",
-                    paddingRight: "12px",
-                    lineHeight: "20px",
+                    minHeight: `${layoutMetrics.rowMinHeight}px`,
+                    paddingLeft: `${layoutMetrics.paddingLeft}px`,
+                    paddingRight: `${layoutMetrics.paddingRight}px`,
+                    paddingTop: `${layoutMetrics.textVerticalPadding}px`,
+                    paddingBottom: `${layoutMetrics.textVerticalPadding}px`,
+                    lineHeight: `${layoutMetrics.lineHeight}px`,
                     fontFamily:
                       '"Cascadia Mono", Consolas, "Meiryo", "MS Gothic", "SimSun", "Courier New", monospace',
-                    fontSize: "13px",
-                    wordBreak: "break-all",
+                    fontSize: `${layoutMetrics.textFontSize}px`,
+                    fontWeight: layoutMetrics.textFontWeight,
+                    wordBreak: "break-word",
+                    display: "flex",
+                    alignItems: isSingleLineBlock ? "center" : "flex-start",
                   };
                   const dstCellStyle: React.CSSProperties = {
                     ...baseCellStyle,
@@ -2008,13 +2104,17 @@ export default function ProofreadView({
                       <span
                         style={{
                           position: "absolute",
-                          left: "12px",
-                          width: "24px",
+                          top: isSingleLineBlock ? "50%" : "0",
+                          transform: isSingleLineBlock
+                            ? "translateY(-50%)"
+                            : "none",
+                          left: `${layoutMetrics.lineNumberLeft}px`,
+                          width: `${layoutMetrics.lineNumberWidth}px`,
                           textAlign: "right",
-                          fontSize: "10px",
+                          fontSize: `${layoutMetrics.lineNumberFontSize}px`,
                           color: "hsl(var(--muted-foreground)/0.5)",
                           userSelect: "none",
-                          lineHeight: "20px",
+                          lineHeight: `${layoutMetrics.lineHeight}px`,
                         }}
                       >
                         {lineIdx + 1}
@@ -2042,13 +2142,16 @@ export default function ProofreadView({
                       autoFocus
                       className="w-full h-full outline-none resize-none border-none m-0 bg-transparent text-foreground"
                       style={{
-                        paddingLeft: "44px",
-                        paddingRight: "12px",
-                        lineHeight: "20px",
+                        paddingLeft: `${layoutMetrics.paddingLeft}px`,
+                        paddingRight: `${layoutMetrics.paddingRight}px`,
+                        paddingTop: `${layoutMetrics.textVerticalPadding}px`,
+                        paddingBottom: `${layoutMetrics.textVerticalPadding}px`,
+                        lineHeight: `${layoutMetrics.lineHeight}px`,
                         fontFamily:
                           '"Cascadia Mono", Consolas, "Meiryo", "MS Gothic", "SimSun", "Courier New", monospace',
-                        fontSize: "13px",
-                        wordBreak: "break-all",
+                        fontSize: `${layoutMetrics.textFontSize}px`,
+                        fontWeight: layoutMetrics.textFontWeight,
+                        wordBreak: "break-word",
                         whiteSpace: "pre-wrap",
                       }}
                       value={editingText}
@@ -3174,29 +3277,99 @@ export default function ProofreadView({
                   {pv.retrySectionModel}
                 </div>
                 <div className="grid gap-4">
-                  <div className="space-y-2">
-                    <label className="text-xs text-muted-foreground">
-                      {pv.retryModelPath}
-                    </label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        className="w-full border p-2 rounded text-sm bg-secondary"
-                        value={retryForm.modelPath}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-xs text-muted-foreground">
+                        {pv.retryEngineMode}
+                      </label>
+                      <select
+                        className="w-full border border-border p-2 rounded bg-secondary text-foreground text-xs"
+                        value={retryForm.engineMode}
                         onChange={(e) =>
-                          updateRetryDraft({ modelPath: e.target.value })
+                          updateRetryDraft({
+                            engineMode: normalizeProofreadEngineMode(
+                              e.target.value,
+                            ),
+                          })
                         }
-                      />
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-9 px-3 text-xs shrink-0"
-                        onClick={selectRetryModel}
                       >
-                        {pv.retrySelectModel}
-                      </Button>
+                        <option value="v1">{pv.retryEngineModeLocal}</option>
+                        <option value="v2">{pv.retryEngineModeApi}</option>
+                      </select>
                     </div>
+                    {retryForm.engineMode === "v2" && (
+                      <div className="space-y-2">
+                        <label className="text-xs text-muted-foreground">
+                          {pv.retryV2Pipeline}
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <select
+                            className="w-full border border-border p-2 rounded bg-secondary text-foreground text-xs"
+                            value={retryForm.v2PipelineId}
+                            onChange={(e) =>
+                              updateRetryDraft({ v2PipelineId: e.target.value })
+                            }
+                            disabled={retryV2PipelineLoading}
+                          >
+                            <option value="">
+                              {retryV2PipelineLoading
+                                ? pv.retryV2PipelineLoading
+                                : pv.retryV2PipelinePlaceholder}
+                            </option>
+                            {retryV2PipelineOptions.map((pipeline) => (
+                              <option key={pipeline.id} value={pipeline.id}>
+                                {pipeline.name}
+                              </option>
+                            ))}
+                          </select>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-9 px-3 text-xs shrink-0"
+                            onClick={() => {
+                              void loadRetryV2PipelineOptions();
+                            }}
+                            disabled={retryV2PipelineLoading}
+                          >
+                            <RefreshCw
+                              className={`w-3.5 h-3.5 ${retryV2PipelineLoading ? "animate-spin" : ""}`}
+                            />
+                          </Button>
+                        </div>
+                        {!retryV2PipelineLoading &&
+                          retryV2PipelineOptions.length === 0 && (
+                            <p className="text-[11px] text-muted-foreground">
+                              {pv.retryV2NoPipeline}
+                            </p>
+                          )}
+                      </div>
+                    )}
                   </div>
+                  {retryForm.engineMode === "v1" && (
+                    <div className="space-y-2">
+                      <label className="text-xs text-muted-foreground">
+                        {pv.retryModelPath}
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          className="w-full border p-2 rounded text-sm bg-secondary"
+                          value={retryForm.modelPath}
+                          onChange={(e) =>
+                            updateRetryDraft({ modelPath: e.target.value })
+                          }
+                        />
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-9 px-3 text-xs shrink-0"
+                          onClick={selectRetryModel}
+                        >
+                          {pv.retrySelectModel}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                   <div className="space-y-2">
                     <label className="text-xs text-muted-foreground">
                       {pv.retryGlossaryPath}
@@ -3234,10 +3407,17 @@ export default function ProofreadView({
                       </Button>
                     )}
                   </div>
+                  {retryForm.engineMode === "v2" && (
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      {pv.retryV2Hint}
+                    </p>
+                  )}
                 </div>
               </div>
 
-              <div className="space-y-4 border-t pt-5">
+              {retryForm.engineMode === "v1" && (
+                <>
+                  <div className="space-y-4 border-t pt-5">
                 <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   {pv.retrySectionInference}
                 </div>
@@ -3614,6 +3794,8 @@ export default function ProofreadView({
                   </div>
                 )}
               </div>
+                </>
+              )}
             </div>
             <div className="p-4 border-t bg-background/95 flex items-center justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={closeRetryPanel}>

@@ -118,6 +118,8 @@ def create_app(store: ProfileStore, base_dir: Path) -> FastAPI:
     async def local_only_middleware(request: Request, call_next):
         client = request.client
         host = client.host if client else ""
+        if host == "testclient":
+            host = request.url.hostname or ""
         if not _is_loopback(host):
             return JSONResponse(status_code=403, content={"detail": "forbidden"})
         return await call_next(request)
@@ -243,6 +245,7 @@ def create_app(store: ProfileStore, base_dir: Path) -> FastAPI:
             res = tester.run_test(payload.text, payload.pipeline)
             clean_pre_traces = _to_json_safe(res.pre_traces)
             clean_post_traces = _to_json_safe(res.post_traces)
+            clean_error_details = _to_json_safe(res.error_details)
 
             return {
                 "ok": res.ok,
@@ -256,6 +259,9 @@ def create_app(store: ProfileStore, base_dir: Path) -> FastAPI:
                 "post_traces": clean_post_traces,
                 "pre_rules_count": res.pre_rules_count,
                 "post_rules_count": res.post_rules_count,
+                "error_stage": res.error_stage,
+                "error_code": res.error_code,
+                "error_details": clean_error_details,
                 "error": res.error,
             }
         except Exception as e:
@@ -280,8 +286,7 @@ def main() -> int:
     _seed_defaults(store, Path(__file__).resolve().parent)
 
     app = create_app(store, Path(__file__).resolve().parent)
-    host = "127.0.0.1"
-    uvicorn.run(app, host=host, port=args.port, log_level="warning")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0
 
 

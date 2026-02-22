@@ -600,16 +600,6 @@ function RecordDetailContent({
                           {v2s.totalOutputTokens.toLocaleString()}
                         </p>
                       </div>
-                      <div className="col-span-2">
-                        <p className="text-muted-foreground text-xs">
-                          {lang === "en" ? "Total Tokens" : "开销汇总"}
-                        </p>
-                        <p className="font-medium text-primary">
-                          {(
-                            v2s.totalInputTokens + v2s.totalOutputTokens
-                          ).toLocaleString()}
-                        </p>
-                      </div>
                     </div>
                   </div>
                 )}

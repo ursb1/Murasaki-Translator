@@ -676,6 +676,31 @@ describe("apiManager view i18n", () => {
   });
 });
 
+describe("apiManager view i18n namespace boundaries", () => {
+  it("only reads first-level keys that exist in apiManager", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const filePath = path.resolve(
+      __dirname,
+      "..",
+      "..",
+      "components",
+      "ApiManagerView.tsx",
+    );
+    const content = fs.readFileSync(filePath, "utf-8");
+    const used = new Set(
+      Array.from(content.matchAll(/\btexts\.([A-Za-z0-9_]+)/g)).map(
+        (m) => m[1],
+      ),
+    );
+    const apiManagerKeys = new Set(Object.keys(translations.zh.apiManager));
+    const missing = Array.from(used)
+      .filter((key) => !apiManagerKeys.has(key))
+      .sort();
+    expect(missing).toEqual([]);
+  });
+});
+
 describe("apiManager view storage keys", () => {
   it("persists parser recommend collapse state", async () => {
     const fs = await import("node:fs");
@@ -930,5 +955,24 @@ describe("apiManager view translation mode resolver", () => {
       ),
     );
     expect(match).toBeTruthy();
+  });
+});
+
+describe("apiManager view pipeline sandbox i18n source", () => {
+  it("reads pipeline sandbox copy from ruleEditor branch with zh fallback", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const filePath = path.resolve(
+      __dirname,
+      "..",
+      "..",
+      "components",
+      "ApiManagerView.tsx",
+    );
+    const content = fs.readFileSync(filePath, "utf-8");
+    expect(content).toContain("t.ruleEditor?.pipelineSandbox");
+    expect(content).toContain("translations.zh.ruleEditor?.pipelineSandbox");
+    expect(content).toContain("const sandboxTexts = pipelineSandboxTexts");
+    expect(content).not.toContain("texts.pipelineSandbox");
   });
 });

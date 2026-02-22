@@ -4,7 +4,8 @@ import json
 import threading
 import pytest
 
-from murasaki_flow_v2.pipelines.runner import PipelineRunner
+import murasaki_flow_v2.pipelines.runner as flow_v2_runner
+from murasaki_flow_v2.pipelines.runner import PipelineRunner, PipelineStopRequested
 from murasaki_flow_v2.registry.profile_store import ProfileStore
 from murasaki_flow_v2.parsers.base import ParserError
 from murasaki_flow_v2.providers.base import ProviderError, ProviderResponse
@@ -66,6 +67,38 @@ def test_flow_v2_runner_block_line_range_non_int_ignored():
 def test_flow_v2_runner_block_line_range_none_metadata():
     block = TextBlock(id=1, prompt_text="hello", metadata=None)
     assert PipelineRunner._block_line_range(block) == (0, 0)
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_build_block_fallback_text_uses_full_metadata_range():
+    source_lines = ["L0", "L1", "L2", "L3", "L4"]
+    block = TextBlock(id=1, prompt_text="fallback", metadata=[1, 2, 3])
+    result = PipelineRunner._build_block_fallback_text(
+        source_lines,
+        block,
+        line_index=1,
+    )
+    assert result == "L1\nL2\nL3"
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_build_block_fallback_text_prefers_target_line_ids():
+    source_lines = ["L0", "L1", "L2", "L3", "L4"]
+    block = TextBlock(id=1, prompt_text="fallback", metadata=[1, 2, 3])
+    result = PipelineRunner._build_block_fallback_text(
+        source_lines,
+        block,
+        line_index=1,
+        target_line_ids=[0, 2, 4],
+    )
+    assert result == "L0\nL2\nL4"
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_build_block_fallback_text_falls_back_to_prompt_text():
+    block = TextBlock(id=1, prompt_text="raw block text", metadata=[])
+    result = PipelineRunner._build_block_fallback_text([], block, line_index=None)
+    assert result == "raw block text"
 
 
 @pytest.mark.unit
@@ -136,6 +169,34 @@ def test_flow_v2_runner_save_txt_blocks_double_separator(tmp_path):
     ]
     PipelineRunner._save_txt_blocks(str(path), blocks, separator="\n\n")
     assert path.read_text(encoding="utf-8") == "A\n\nB\n\n"
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_save_txt_blocks_double_separator_skips_blank_indices(tmp_path):
+    path = tmp_path / "out.txt"
+    blocks = [
+        TextBlock(id=1, prompt_text="A", metadata=[0]),
+        TextBlock(id=2, prompt_text="", metadata=[1]),
+        TextBlock(id=3, prompt_text="B", metadata=[2]),
+    ]
+    PipelineRunner._save_txt_blocks(
+        str(path),
+        blocks,
+        separator="\n\n",
+        skip_blank_indices={1},
+    )
+    assert path.read_text(encoding="utf-8") == "A\n\nB\n\n"
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_normalize_txt_blocks_strips_all_trailing_newlines():
+    blocks = [
+        TextBlock(id=1, prompt_text="A\n\n", metadata=[0]),
+        TextBlock(id=2, prompt_text="B\r\n", metadata=[1]),
+        TextBlock(id=3, prompt_text="", metadata=[2]),
+    ]
+    PipelineRunner._normalize_txt_blocks(blocks)
+    assert [block.prompt_text for block in blocks] == ["A", "B", ""]
 
 
 @pytest.mark.unit
@@ -220,6 +281,93 @@ def test_flow_v2_runner_build_context_zero(tmp_path):
 # ---------------------------------------------------------------------------
 # _extract_source_lines
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_build_resume_fingerprint_changes_with_prompt_profile(tmp_path):
+    runner = _make_runner(tmp_path)
+    base_kwargs = {
+        "input_path": "input.txt",
+        "pipeline_id": "pipeline_demo",
+        "chunk_type": "line",
+        "pipeline": {"id": "pipeline_demo", "prompt": "prompt_default"},
+        "provider_profile": {"id": "provider_demo", "model": "demo-model"},
+        "prompt_profile": {"id": "prompt_default", "user_template": "{{source}}"},
+        "parser_profile": {"id": "parser_default", "type": "plain"},
+        "line_policy_profile": {"id": "line_tolerant", "type": "tolerant"},
+        "chunk_policy_profile": {"id": "chunk_line", "chunk_type": "line"},
+        "settings": {"temperature": 0.2},
+        "processing_cfg": {"source_lang": "ja"},
+        "pre_rules": [],
+        "post_rules": [],
+        "source_format": "auto",
+    }
+    fp_before = runner._build_resume_fingerprint(**base_kwargs)
+    fp_after = runner._build_resume_fingerprint(
+        **{
+            **base_kwargs,
+            "prompt_profile": {
+                "id": "prompt_default",
+                "user_template": "prefix {{source}} suffix",
+            },
+        }
+    )
+    assert fp_before["config_hash"] != fp_after["config_hash"]
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_load_resume_file_requires_fingerprint_when_expected(tmp_path):
+    resume_path = tmp_path / "resume.temp.jsonl"
+    resume_path.write_text(
+        json.dumps({"type": "block", "index": 0, "src": "A", "dst": "B"}, ensure_ascii=False)
+        + "\n",
+        encoding="utf-8",
+    )
+    entries, matched = PipelineRunner._load_resume_file(
+        str(resume_path),
+        expected={
+            "input": "input.txt",
+            "pipeline": "pipe_x",
+            "chunk_type": "line",
+            "config_hash": "hash_x",
+        },
+    )
+    assert entries == {}
+    assert matched is False
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_load_resume_file_matches_config_hash(tmp_path):
+    resume_path = tmp_path / "resume.temp.jsonl"
+    header = {
+        "type": "fingerprint",
+        "input": "input.txt",
+        "pipeline": "pipe_x",
+        "chunk_type": "line",
+        "config_hash": "hash_ok",
+    }
+    body = {"type": "block", "index": 1, "src": "A", "dst": "B"}
+    resume_path.write_text(
+        "\n".join(
+            [
+                json.dumps(header, ensure_ascii=False),
+                json.dumps(body, ensure_ascii=False),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    entries, matched = PipelineRunner._load_resume_file(
+        str(resume_path),
+        expected={
+            "input": "input.txt",
+            "pipeline": "pipe_x",
+            "chunk_type": "line",
+            "config_hash": "hash_ok",
+        },
+    )
+    assert matched is True
+    assert entries[1]["dst"] == "B"
 
 
 @pytest.mark.unit
@@ -628,6 +776,63 @@ def test_flow_v2_runner_fallback_to_source_on_parser_error(tmp_path, monkeypatch
 
 
 @pytest.mark.unit
+def test_flow_v2_runner_fallback_to_source_on_unexpected_parser_error(
+    tmp_path,
+    monkeypatch,
+):
+    runner = _make_runner(tmp_path)
+    runner.pipeline = {
+        "provider": "provider_stub",
+        "prompt": "prompt_stub",
+        "parser": "parser_stub",
+        "chunk_policy": "chunk_stub",
+        "settings": {"max_retries": 0, "concurrency": 1},
+    }
+
+    class _Provider:
+        profile = {"model": "stub-model"}
+
+        def build_request(self, _messages, _settings):
+            return object()
+
+        def send(self, _request):
+            return ProviderResponse(text="raw", raw={})
+
+    class _Parser:
+        profile = {"type": "plain"}
+
+        def parse(self, _text):
+            raise ValueError("unexpected_parse_failure")
+
+    doc = _DummyDoc(["U1", "U2"])
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.DocumentFactory.get_document",
+        lambda _path: doc,
+    )
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.build_messages",
+        lambda *_args, **_kwargs: [{"role": "user", "content": "x"}],
+    )
+    monkeypatch.setattr(runner.providers, "get_provider", lambda _ref: _Provider())
+    monkeypatch.setattr(runner.parsers, "get_parser", lambda _ref: _Parser())
+    monkeypatch.setattr(
+        runner.prompts, "get_prompt", lambda _ref: {"user_template": "{{source}}"}
+    )
+    monkeypatch.setattr(
+        runner.chunk_policies, "get_chunk_policy", lambda _ref: _DummyLineChunkPolicy()
+    )
+
+    output_path = str(tmp_path / "unexpected.txt")
+    runner.run("dummy-input.txt", output_path=output_path, save_cache=False)
+
+    assert [block.prompt_text for block in doc.saved_blocks] == ["U1", "U2"]
+    line_error_path = tmp_path / "unexpected.txt.line_errors.jsonl"
+    assert line_error_path.exists()
+    content = line_error_path.read_text(encoding="utf-8")
+    assert '"type": "unknown_error"' in content
+
+
+@pytest.mark.unit
 def test_flow_v2_runner_block_mode_fallback_does_not_abort_all(
     tmp_path,
     monkeypatch,
@@ -680,6 +885,75 @@ def test_flow_v2_runner_block_mode_fallback_does_not_abort_all(
     result = runner.run("dummy-input.txt", output_path=output_path, save_cache=False)
     assert result == output_path
     assert [block.prompt_text for block in doc.saved_blocks] == ["L1", "L2", "L3"]
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_chunk_mode_context_works_without_line_metadata(
+    tmp_path,
+    monkeypatch,
+):
+    runner = _make_runner(tmp_path)
+    runner.pipeline = {
+        "provider": "provider_stub",
+        "prompt": "prompt_stub",
+        "parser": "parser_stub",
+        "chunk_policy": "chunk_stub",
+        "settings": {"max_retries": 0, "concurrency": 1},
+    }
+
+    class _Provider:
+        profile = {"model": "stub-model"}
+
+        def build_request(self, _messages, _settings):
+            return object()
+
+        def send(self, _request):
+            return ProviderResponse(text="T", raw={})
+
+    class _Parser:
+        profile = {"type": "plain"}
+
+        def parse(self, _text):
+            return type("Parsed", (), {"text": "T"})()
+
+    captured_contexts = []
+
+    def _capture_messages(_prompt_profile, **kwargs):
+        captured_contexts.append(
+            (kwargs.get("context_before", ""), kwargs.get("context_after", ""))
+        )
+        return [{"role": "user", "content": kwargs.get("source_text", "")}]
+
+    doc = _DummyDoc(["C1", "C2", "C3"])
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.DocumentFactory.get_document",
+        lambda _path: doc,
+    )
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.build_messages",
+        _capture_messages,
+    )
+    monkeypatch.setattr(runner.providers, "get_provider", lambda _ref: _Provider())
+    monkeypatch.setattr(runner.parsers, "get_parser", lambda _ref: _Parser())
+    monkeypatch.setattr(
+        runner.prompts,
+        "get_prompt",
+        lambda _ref: {
+            "user_template": "{{source}}",
+            "context": {"before_lines": 1, "after_lines": 1},
+        },
+    )
+    monkeypatch.setattr(
+        runner.chunk_policies,
+        "get_chunk_policy",
+        lambda _ref: _DummyBlockChunkPolicy(),
+    )
+
+    output_path = str(tmp_path / "ctx_out.txt")
+    runner.run("dummy-input.txt", output_path=output_path, save_cache=False)
+
+    assert captured_contexts
+    assert captured_contexts[0][1] == "C2"
 
 
 @pytest.mark.unit
@@ -750,3 +1024,232 @@ def test_flow_v2_runner_realtime_cache_survives_mid_run_abort(
     assert cache_path.exists()
     cache_data = json.loads(cache_path.read_text(encoding="utf-8"))
     assert len(cache_data.get("blocks", [])) >= 1
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_resume_from_existing_output_when_temp_cache_missing(
+    tmp_path,
+    monkeypatch,
+):
+    runner = _make_runner(tmp_path)
+    runner.pipeline = {
+        "provider": "provider_stub",
+        "prompt": "prompt_stub",
+        "parser": "parser_stub",
+        "chunk_policy": "chunk_stub",
+        "settings": {"max_retries": 0, "concurrency": 1},
+    }
+
+    call_counter = {"count": 0}
+
+    class _Provider:
+        profile = {"model": "stub-model"}
+
+        def build_request(self, _messages, _settings):
+            return object()
+
+        def send(self, _request):
+            call_counter["count"] += 1
+            return ProviderResponse(text="T3", raw={})
+
+    class _Parser:
+        profile = {"type": "plain"}
+
+        def parse(self, text):
+            return type("Parsed", (), {"text": text})()
+
+    input_doc = _DummyDoc(["S1", "S2", "S3"])
+    output_doc = _DummyDoc(["T1", "T2"])
+    output_path = str(tmp_path / "resume.txt")
+    (tmp_path / "resume.txt").write_text("T1\nT2\n", encoding="utf-8")
+
+    def _get_document(path):
+        if path == "dummy-input.txt":
+            return input_doc
+        if path == output_path:
+            return output_doc
+        raise AssertionError(f"unexpected path: {path}")
+
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.DocumentFactory.get_document",
+        _get_document,
+    )
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.build_messages",
+        lambda *_args, **_kwargs: [{"role": "user", "content": "x"}],
+    )
+    monkeypatch.setattr(runner.providers, "get_provider", lambda _ref: _Provider())
+    monkeypatch.setattr(runner.parsers, "get_parser", lambda _ref: _Parser())
+    monkeypatch.setattr(
+        runner.prompts, "get_prompt", lambda _ref: {"user_template": "{{source}}"}
+    )
+    monkeypatch.setattr(
+        runner.chunk_policies, "get_chunk_policy", lambda _ref: _DummyLineChunkPolicy()
+    )
+
+    runner.run(
+        "dummy-input.txt",
+        output_path=output_path,
+        resume=True,
+        save_cache=False,
+    )
+
+    assert call_counter["count"] == 1
+    assert [block.prompt_text for block in input_doc.saved_blocks] == ["T1", "T2", "T3"]
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_stop_flag_preserves_resume_artifacts(
+    tmp_path,
+    monkeypatch,
+):
+    runner = _make_runner(tmp_path)
+    runner.pipeline = {
+        "provider": "provider_stub",
+        "prompt": "prompt_stub",
+        "parser": "parser_stub",
+        "chunk_policy": "chunk_stub",
+        "settings": {"max_retries": 0, "concurrency": 1},
+    }
+
+    class _Provider:
+        profile = {"model": "stub-model"}
+
+        def build_request(self, _messages, _settings):
+            return object()
+
+        def send(self, _request):
+            return ProviderResponse(text="OK", raw={})
+
+    class _Parser:
+        profile = {"type": "plain"}
+
+        def parse(self, _text):
+            return type("Parsed", (), {"text": "T"})()
+
+    stop_flag = tmp_path / "stop.flag"
+    original_block_done = flow_v2_runner.ProgressTracker.block_done
+
+    def _block_done_and_request_stop(self, *args, **kwargs):
+        result = original_block_done(self, *args, **kwargs)
+        if not stop_flag.exists():
+            stop_flag.write_text("1", encoding="utf-8")
+        return result
+
+    doc = _DummyDoc(["A", "B", "C"])
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.DocumentFactory.get_document",
+        lambda _path: doc,
+    )
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.build_messages",
+        lambda *_args, **_kwargs: [{"role": "user", "content": "x"}],
+    )
+    monkeypatch.setattr(runner.providers, "get_provider", lambda _ref: _Provider())
+    monkeypatch.setattr(runner.parsers, "get_parser", lambda _ref: _Parser())
+    monkeypatch.setattr(
+        runner.prompts, "get_prompt", lambda _ref: {"user_template": "{{source}}"}
+    )
+    monkeypatch.setattr(
+        runner.chunk_policies,
+        "get_chunk_policy",
+        lambda _ref: _DummyLineChunkPolicy(),
+    )
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.ProgressTracker.block_done",
+        _block_done_and_request_stop,
+    )
+
+    output_path = str(tmp_path / "stop.txt")
+    with pytest.raises(PipelineStopRequested, match="stop_requested"):
+        runner.run(
+            "dummy-input.txt",
+            output_path=output_path,
+            save_cache=True,
+            stop_flag_path=str(stop_flag),
+        )
+
+    cache_path = tmp_path / "stop.txt.cache.json"
+    temp_path = tmp_path / "stop.txt.temp.jsonl"
+    interrupted_path = tmp_path / "stop.txt.interrupted.txt"
+    assert cache_path.exists()
+    assert temp_path.exists()
+    assert interrupted_path.exists()
+    cache_data = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert len(cache_data.get("blocks", [])) >= 1
+    assert interrupted_path.read_text(encoding="utf-8").strip() != ""
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_txt_line_mode_ignores_blank_lines_in_api_count(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    runner = _make_runner(tmp_path)
+    runner.pipeline = {
+        "provider": "provider_stub",
+        "prompt": "prompt_stub",
+        "parser": "parser_stub",
+        "chunk_policy": "chunk_stub",
+        "settings": {"max_retries": 0, "concurrency": 1},
+        "processing": {
+            "rules_post": [
+                {"type": "format", "pattern": "ensure_double_newline", "active": True}
+            ]
+        },
+    }
+
+    call_counter = {"count": 0}
+
+    class _Provider:
+        profile = {"model": "stub-model"}
+
+        def build_request(self, _messages, _settings):
+            return object()
+
+        def send(self, _request):
+            call_counter["count"] += 1
+            return ProviderResponse(text=f"T{call_counter['count']}", raw={})
+
+    class _Parser:
+        profile = {"type": "plain"}
+
+        def parse(self, text):
+            return type("Parsed", (), {"text": text})()
+
+    monkeypatch.setattr(runner.providers, "get_provider", lambda _ref: _Provider())
+    monkeypatch.setattr(runner.parsers, "get_parser", lambda _ref: _Parser())
+    monkeypatch.setattr(
+        runner.prompts, "get_prompt", lambda _ref: {"user_template": "{{source}}"}
+    )
+    monkeypatch.setattr(
+        runner.chunk_policies, "get_chunk_policy", lambda _ref: _DummyLineChunkPolicy()
+    )
+
+    input_path = tmp_path / "input.txt"
+    input_path.write_text("L1\n\nL2\n\n\nL3\n", encoding="utf-8")
+    output_path = str(tmp_path / "out.txt")
+
+    runner.run(str(input_path), output_path=output_path, save_cache=False)
+
+    assert call_counter["count"] == 3
+    output_text = (tmp_path / "out.txt").read_text(encoding="utf-8")
+    assert output_text == "T1\n\nT2\n\nT3\n\n"
+    assert "\n\n\n" not in output_text
+
+    log_text = capsys.readouterr().out
+    final_rows = [
+        json.loads(line.split("JSON_FINAL:", 1)[1])
+        for line in log_text.splitlines()
+        if "JSON_FINAL:" in line
+    ]
+    progress_rows = [
+        json.loads(line.split("JSON_PROGRESS:", 1)[1])
+        for line in log_text.splitlines()
+        if "JSON_PROGRESS:" in line
+    ]
+    assert final_rows
+    assert final_rows[-1]["sourceLines"] == 3
+    assert progress_rows
+    assert progress_rows[-1]["total"] == 3

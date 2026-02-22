@@ -58,6 +58,7 @@ import {
   normalizeWatchFolderConfig,
   type WatchFolderConfig,
 } from "../lib/watchFolder";
+import { applyFileEngineMode } from "../lib/engineModeSwitch";
 
 // ============ Types ============
 
@@ -1004,14 +1005,7 @@ export function FileConfigModal({
               return (
                 <button
                   key={mode}
-                  onClick={() =>
-                    setConfig((prev) => ({
-                      ...prev,
-                      engineMode: mode,
-                      // API 模式下自动关闭 useGlobalDefaults
-                      ...(mode === "v2" ? { useGlobalDefaults: false } : {}),
-                    }))
-                  }
+                  onClick={() => setConfig((prev) => applyFileEngineMode(prev, mode))}
                   className={`flex-1 text-xs font-medium py-1.5 rounded-md transition-all ${
                     active
                       ? "bg-background text-foreground shadow-sm border border-border/50"

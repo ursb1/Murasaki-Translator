@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 import json
 import os
 
+from murasaki_flow_v2.parsers.base import ParserError
 from murasaki_flow_v2.parsers.registry import ParserRegistry
 from murasaki_flow_v2.policies.line_policy import LinePolicyError
 from murasaki_flow_v2.policies.registry import PolicyRegistry
@@ -36,7 +37,25 @@ class SandboxResult:
     post_traces: Optional[List[Dict[str, Any]]] = None
     pre_rules_count: int = 0
     post_rules_count: int = 0
+    error_stage: str = ""
+    error_code: str = ""
+    error_details: Optional[Dict[str, Any]] = None
     error: str = ""
+
+
+class SandboxStageError(RuntimeError):
+    def __init__(
+        self,
+        stage: str,
+        message: str,
+        *,
+        code: str,
+        details: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__(message)
+        self.stage = stage
+        self.code = code
+        self.details = details or {}
 
 
 class SandboxTester:
@@ -130,8 +149,11 @@ class SandboxTester:
         lines = text.splitlines()
         if not lines:
             lines = [text]
-        payload = {str(idx + 1): value for idx, value in enumerate(lines)}
-        return f"jsonline{json.dumps(payload, ensure_ascii=False)}"
+        rows: List[str] = []
+        for idx, value in enumerate(lines):
+            payload = {str(idx + 1): value}
+            rows.append(f"jsonline{json.dumps(payload, ensure_ascii=False)}")
+        return "\n".join(rows)
 
     @staticmethod
     def _extract_jsonl_text(raw_response: str, fallback_text: str) -> str:
@@ -145,6 +167,21 @@ class SandboxTester:
         if ordered:
             return "\n".join(str(value) for value in ordered)
         return fallback_text
+
+    @staticmethod
+    def _extract_parser_error_details(message: str) -> Dict[str, Any]:
+        details: Dict[str, Any] = {"message": message}
+        prefix = "AnyParser: all parsers failed:"
+        if not message.startswith(prefix):
+            return details
+        tail = message[len(prefix) :].strip()
+        if not tail:
+            return details
+        candidates = [part.strip() for part in tail.split(";") if part.strip()]
+        if candidates:
+            details["candidates"] = candidates
+            details["chain_failed"] = True
+        return details
 
     def run_test(
         self,
@@ -251,7 +288,9 @@ class SandboxTester:
                 pre_processed = protector.protect(pre_processed)
 
             context_cfg = prompt.get("context") or {}
-            source_format = str(context_cfg.get("source_format") or "auto").strip().lower()
+            source_format = (
+                str(context_cfg.get("source_format") or "auto").strip().lower()
+            )
             use_jsonl = source_format == "jsonl" and chunk_type == "line"
             text_to_translate = (
                 self._build_jsonline_payload(pre_processed)
@@ -263,17 +302,31 @@ class SandboxTester:
             glossary_text = "\n".join(
                 [f"{k}: {v}" for k, v in proc_options.glossary.items()]
             )
-            messages = build_messages(
-                prompt,
-                source_text=block.prompt_text,
-                context_before="",
-                context_after="",
-                glossary_text=glossary_text,
-                line_index=None,
-            )
+            try:
+                messages = build_messages(
+                    prompt,
+                    source_text=block.prompt_text,
+                    context_before="",
+                    context_after="",
+                    glossary_text=glossary_text,
+                    line_index=None,
+                )
+            except Exception as exc:
+                raise SandboxStageError(
+                    "prompt",
+                    f"Prompt Build Error: {exc}",
+                    code="prompt_build_error",
+                ) from exc
 
             settings = pipeline_config.get("settings") or {}
-            request = provider.build_request(messages, settings)
+            try:
+                request = provider.build_request(messages, settings)
+            except Exception as exc:
+                raise SandboxStageError(
+                    "request",
+                    f"Request Build Error: {exc}",
+                    code="request_build_error",
+                ) from exc
             try:
                 req_dict: Dict[str, Any] = {
                     "model": request.model,
@@ -289,26 +342,68 @@ class SandboxTester:
             except Exception:
                 raw_request = str(request)
 
-            response = provider.send(request)
-            raw_response = response.text
+            try:
+                response = provider.send(request)
+                raw_response = response.text
+            except Exception as exc:
+                raise SandboxStageError(
+                    "provider",
+                    f"Provider Error: {exc}",
+                    code="provider_error",
+                ) from exc
 
-            parsed = parser.parse(raw_response)
-            parsed_result = parsed.text.strip("\n")
-            if source_format == "jsonl":
-                parsed_result = self._extract_jsonl_text(raw_response, parsed_result)
+            try:
+                parsed = parser.parse(raw_response)
+                parsed_result = parsed.text.strip("\n")
+                if source_format == "jsonl":
+                    parsed_result = self._extract_jsonl_text(raw_response, parsed_result)
+            except ParserError as exc:
+                message = str(exc)
+                details = self._extract_parser_error_details(message)
+                code = (
+                    "parser_chain_failed"
+                    if details.get("chain_failed")
+                    else "parser_error"
+                )
+                raise SandboxStageError(
+                    "parser",
+                    f"Parser Error: {message}",
+                    code=code,
+                    details=details,
+                ) from exc
+            except Exception as exc:
+                raise SandboxStageError(
+                    "parser",
+                    f"Parser Error: {exc}",
+                    code="parser_error",
+                ) from exc
 
-            post_processed = processor.apply_post(
-                parsed_result,
-                src_text=source_text,
-                protector=protector,
-                traces=post_traces,
-            )
+            try:
+                post_processed = processor.apply_post(
+                    parsed_result,
+                    src_text=source_text,
+                    protector=protector,
+                    traces=post_traces,
+                )
+            except Exception as exc:
+                raise SandboxStageError(
+                    "post_process",
+                    f"Post-process Error: {exc}",
+                    code="post_process_error",
+                ) from exc
 
             if apply_line_policy and line_policy:
                 source_lines = source_text.splitlines() or [source_text]
                 output_lines = post_processed.splitlines()
-                checked = line_policy.apply(source_lines, output_lines)
-                post_processed = "\n".join(checked)
+                try:
+                    checked = line_policy.apply(source_lines, output_lines)
+                    post_processed = "\n".join(checked)
+                except LinePolicyError as exc:
+                    raise SandboxStageError(
+                        "line_policy",
+                        f"LinePolicy Error: {exc}",
+                        code="line_policy_error",
+                    ) from exc
 
             return SandboxResult(
                 ok=True,
@@ -323,7 +418,7 @@ class SandboxTester:
                 pre_rules_count=len(proc_options.rules_pre),
                 post_rules_count=len(proc_options.rules_post),
             )
-        except LinePolicyError as exc:
+        except SandboxStageError as exc:
             return SandboxResult(
                 ok=False,
                 source_text=source_text,
@@ -336,16 +431,12 @@ class SandboxTester:
                 post_traces=post_traces,
                 pre_rules_count=len(proc_options.rules_pre),
                 post_rules_count=len(proc_options.rules_post),
-                error=f"LinePolicy Error: {exc}",
+                error_stage=exc.stage,
+                error_code=exc.code,
+                error_details=exc.details,
+                error=str(exc),
             )
         except Exception as exc:
-            stage = "Sandbox Execution Error"
-            if not raw_response:
-                stage = "Provider Error"
-            elif not parsed_result and raw_response:
-                stage = "Parser Error"
-            elif not post_processed and parsed_result:
-                stage = "Post-process Error"
             return SandboxResult(
                 ok=False,
                 source_text=source_text,
@@ -358,5 +449,8 @@ class SandboxTester:
                 post_traces=post_traces,
                 pre_rules_count=len(proc_options.rules_pre),
                 post_rules_count=len(proc_options.rules_post),
-                error=f"{stage}: {exc}",
+                error_stage="sandbox",
+                error_code="sandbox_execution_error",
+                error_details={"message": str(exc)},
+                error=f"Sandbox Execution Error: {exc}",
             )

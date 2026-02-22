@@ -51,7 +51,7 @@ export function ApiMonitorBar({ data, lang, isRunning }: ApiMonitorBarProps) {
 
   return (
     <div
-      className={`w-full bg-card border-b border-border pl-3 pr-5 py-2.5 flex items-center justify-between text-xs font-mono select-none transition-colors dark:bg-card/90 ${isOffline ? "bg-muted/30 dark:bg-muted/20" : ""}`}
+      className="w-full bg-card border-b border-border pl-3 pr-5 py-2.5 flex items-center justify-between text-xs font-mono select-none transition-colors dark:bg-card/90"
     >
       {/* API URL - 允许收缩 */}
       <div className="flex items-center gap-2 text-muted-foreground min-w-0 shrink flex-1 mr-2 overflow-hidden">

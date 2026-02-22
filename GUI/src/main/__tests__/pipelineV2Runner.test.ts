@@ -23,3 +23,19 @@ describe("pipelineV2Runner buffered output", () => {
     expect(remaining).toBe("");
   });
 });
+
+describe("pipelineV2Runner bundle args", () => {
+  it("uses script path when bundle path points to plain python interpreter", () => {
+    const args = ["main.py", "--file", "demo.txt"];
+    expect(__testOnly.resolveBundleArgs("python3", args)).toEqual(args);
+    expect(__testOnly.resolveBundleArgs("python.exe", args)).toEqual(args);
+  });
+
+  it("drops script path when using packaged bundle executable", () => {
+    const args = ["main.py", "--file", "demo.txt"];
+    expect(__testOnly.resolveBundleArgs("murasaki-engine", args)).toEqual([
+      "--file",
+      "demo.txt",
+    ]);
+  });
+});

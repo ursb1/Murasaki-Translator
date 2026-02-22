@@ -66,10 +66,15 @@ import { FileConfigModal } from "./LibraryView";
 import { stripSystemMarkersForDisplay } from "../lib/displayText";
 import {
   resolveQueueItemEngineMode,
+  resolveQueueItemPipelineId,
   shouldIgnoreEngineModeToggle,
 } from "../lib/engineModeSwitch";
 import type { UseRemoteRuntimeResult } from "../hooks/useRemoteRuntime";
 import { resolveRuleListForRun } from "../lib/rulesConfig";
+import {
+  formatProgressCount,
+  formatProgressPercent,
+} from "../lib/progressDisplay";
 
 // Window.api type is defined in src/types/api.d.ts
 
@@ -123,7 +128,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
             status: "pending" as const,
           })) as QueueItem[];
         }
-      } catch (e) {}
+      } catch (e) {
+        // Ignore legacy queue parse failure and continue with empty queue.
+      }
       return [];
     });
 
@@ -143,7 +150,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
             });
             setCompletedFiles(completed);
           }
-        } catch (e) {}
+        } catch (e) {
+          // Ignore malformed persisted queue and keep current in-memory state.
+        }
       }
     }, [active]);
 
@@ -432,7 +441,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
             const info = await window.api?.getModelInfo(model);
             if (info)
               infoMap[model] = { paramsB: info.paramsB, sizeGB: info.sizeGB };
-          } catch (e) {}
+          } catch (e) {
+            // Ignore model info fetch failures and keep remaining model metadata.
+          }
         }
         setModelsInfoMap(infoMap);
       }
@@ -458,7 +469,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       }
       setRemoteLoading(true);
       try {
-        // @ts-ignore
+        // @ts-ignore - preload typings do not declare remoteModels yet.
         const result = await window.api?.remoteModels?.();
         if (result?.ok && Array.isArray(result.data)) {
           const mapped = result.data
@@ -484,7 +495,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         return;
       }
       try {
-        // @ts-ignore
+        // @ts-ignore - preload typings do not declare remoteGlossaries yet.
         const result = await window.api?.remoteGlossaries?.();
         if (result?.ok && Array.isArray(result.data)) {
           const mapped = result.data
@@ -639,7 +650,11 @@ export const Dashboard = forwardRef<any, DashboardProps>(
 
     // Ref to hold the fresh checkAndStart function (avoids closure stale state in handleProcessExit)
     const checkAndStartRef = useRef<
-      (inputPath: string, index: number) => Promise<void>
+      (
+        inputPath: string,
+        index: number,
+        modeOverride?: "v1" | "v2",
+      ) => Promise<void>
     >(() => Promise.resolve());
     const currentRunEngineModeRef = useRef<"v1" | "v2" | null>(null);
 
@@ -980,7 +995,12 @@ export const Dashboard = forwardRef<any, DashboardProps>(
 
           setTimeout(() => {
             if (queue[nextIndex]) {
-              checkAndStartRef.current(queue[nextIndex].path, nextIndex);
+              const nextMode = resolveEngineModeForQueueIndex(nextIndex);
+              checkAndStartRef.current(
+                queue[nextIndex].path,
+                nextIndex,
+                nextMode,
+              );
             }
           }, 1000);
         } else if (currentItem) {
@@ -1346,7 +1366,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                     "last_preview_blocks",
                     JSON.stringify(next),
                   );
-                } catch (e) {}
+                } catch (e) {
+                  // Best-effort persistence; ignore storage quota/runtime errors.
+                }
                 return next;
               });
             } catch (e) {
@@ -2284,17 +2306,11 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       forceResume?: boolean,
       glossaryOverride?: string,
     ) => {
-      let customConfig: FileConfig = {};
       const item = queueRef.current.find((q) => q.path === inputPath);
-      if (item?.config && !item.config.useGlobalDefaults) {
-        customConfig = item.config;
-      }
-
-      const effectivePipelineId = (
-        customConfig.v2PipelineId ||
-        v2PipelineId ||
-        ""
-      ).trim();
+      const itemConfig = item?.config;
+      const customConfig: FileConfig =
+        itemConfig && !itemConfig.useGlobalDefaults ? itemConfig : {};
+      const effectivePipelineId = resolveQueueItemPipelineId(item, v2PipelineId);
       if (!effectivePipelineId) {
         showAlert({
           title: t.dashboard.selectPipelineTitle,
@@ -2514,7 +2530,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       if (queue.length === 0) return;
       const targetIndex = 0;
       const inputPath = queue[targetIndex].path;
-      await checkAndStartRef.current(inputPath, targetIndex);
+      const startMode = resolveEngineModeForQueueIndex(targetIndex);
+      await checkAndStartRef.current(inputPath, targetIndex, startMode);
     };
 
     useEffect(() => {
@@ -2527,15 +2544,15 @@ export const Dashboard = forwardRef<any, DashboardProps>(
 
     const checkAndStartV2 = async (inputPath: string, index: number) => {
       const queueItem = queueRef.current[index];
+      const itemConfig = queueItem?.config;
       const customConfig =
-        queueItem?.config && !queueItem.config.useGlobalDefaults
-          ? queueItem.config
+        itemConfig && !itemConfig.useGlobalDefaults
+          ? itemConfig
           : undefined;
-      const effectivePipelineId = (
-        customConfig?.v2PipelineId ||
-        v2PipelineId ||
-        ""
-      ).trim();
+      const effectivePipelineId = resolveQueueItemPipelineId(
+        queueItem,
+        v2PipelineId,
+      );
       if (!effectivePipelineId) {
         showAlert({
           title: t.dashboard.selectPipelineTitle,
@@ -2578,7 +2595,13 @@ export const Dashboard = forwardRef<any, DashboardProps>(
             index < queue.length - 1
               ? () => {
                   setConfirmModal(null);
-                  checkAndStartRef.current(queue[index + 1].path, index + 1);
+                  const nextIndex = index + 1;
+                  const nextMode = resolveEngineModeForQueueIndex(nextIndex);
+                  checkAndStartRef.current(
+                    queue[nextIndex].path,
+                    nextIndex,
+                    nextMode,
+                  );
                 }
               : undefined,
           onStopAll: () => {
@@ -2676,7 +2699,13 @@ export const Dashboard = forwardRef<any, DashboardProps>(
               ? () => {
                   setConfirmModal(null);
                   resetEphemeralGlossarySelection();
-                  checkAndStartRef.current(queue[index + 1].path, index + 1);
+                  const nextIndex = index + 1;
+                  const nextMode = resolveEngineModeForQueueIndex(nextIndex);
+                  checkAndStartRef.current(
+                    queue[nextIndex].path,
+                    nextIndex,
+                    nextMode,
+                  );
                 }
               : undefined,
           onStopAll: () => {
@@ -2699,9 +2728,14 @@ export const Dashboard = forwardRef<any, DashboardProps>(
 
     // Keep checkAndStartRef in sync for use in stale-closure contexts
     useEffect(() => {
-      checkAndStartRef.current = (inputPath: string, index: number) => {
-        const resolvedMode = resolveEngineModeForQueueIndex(index);
-        if (resolvedMode === "v2") {
+      checkAndStartRef.current = (
+        inputPath: string,
+        index: number,
+        modeOverride?: "v1" | "v2",
+      ) => {
+        const selectedMode =
+          modeOverride ?? resolveEngineModeForQueueIndex(index);
+        if (selectedMode === "v2") {
           return checkAndStartV2(inputPath, index);
         }
         return checkAndStart(inputPath, index);
@@ -2813,7 +2847,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       // Regex: /\b(line_mismatch|high_similarity|kana_residue|glossary_missed)\b/g
 
       text = text.replace(
-        /(\s*)[(\[]?\b(line_mismatch|high_similarity|kana_residue|glossary_missed|hangeul_residue)\b[)\]]?(\s*)/g,
+        /(\s*)(?:\(|\[)?\b(line_mismatch|high_similarity|kana_residue|glossary_missed|hangeul_residue)\b(?:\)|\])?(\s*)/g,
         "",
       );
 
@@ -3770,19 +3804,25 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                       </span>
                     )}
                   </div>
-                  <div className="flex items-baseline justify-between mb-1.5">
-                    <span className="text-lg font-black text-foreground font-mono">
-                      {progress.current}/{progress.total}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-base font-bold text-primary">
-                        {(progress.percent || 0).toFixed(1)}%
+                  <div className="mb-3 space-y-1.5">
+                    <div
+                      className="text-xl font-black text-foreground font-mono tabular-nums tracking-tight leading-none whitespace-nowrap"
+                      title={formatProgressCount(
+                        progress.current,
+                        progress.total,
+                      )}
+                    >
+                      {formatProgressCount(progress.current, progress.total)}
+                    </div>
+                    <div className="flex justify-end">
+                      <span className="text-xl font-black text-primary font-mono tabular-nums leading-none">
+                        {formatProgressPercent(progress.percent)}
                       </span>
                     </div>
                   </div>
-                  <div className="w-full bg-secondary/50 h-1.5 rounded-full overflow-hidden">
+                  <div className="mt-4 w-full bg-secondary/50 h-2 rounded-full overflow-hidden">
                     <div
-                      className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-300"
+                      className="h-full bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500 transition-[width] duration-300 ease-out"
                       style={{ width: `${progress.percent || 0}%` }}
                     />
                   </div>
@@ -4248,3 +4288,5 @@ export const Dashboard = forwardRef<any, DashboardProps>(
     );
   },
 );
+
+Dashboard.displayName = "Dashboard";

@@ -6,6 +6,7 @@ export type EngineMode = "v1" | "v2";
 type QueueConfigLike = {
   useGlobalDefaults?: boolean;
   engineMode?: EngineMode;
+  v2PipelineId?: string;
 };
 
 type QueueItemLike = {
@@ -36,10 +37,28 @@ export const resolveQueueItemEngineMode = (
   globalEngineMode: EngineMode,
 ): EngineMode => {
   const config = queueItem?.config;
+  if (config?.engineMode === "v1" || config?.engineMode === "v2") {
+    return config.engineMode;
+  }
   if (!config || config.useGlobalDefaults !== false) {
     return globalEngineMode;
   }
-  return config.engineMode === "v1" || config.engineMode === "v2"
-    ? config.engineMode
-    : globalEngineMode;
+  return globalEngineMode;
 };
+
+export const resolveQueueItemPipelineId = (
+  queueItem: QueueItemLike,
+  globalPipelineId: string,
+): string => {
+  const filePipelineId = String(queueItem?.config?.v2PipelineId || "").trim();
+  if (filePipelineId) return filePipelineId;
+  return String(globalPipelineId || "").trim();
+};
+
+export const applyFileEngineMode = <T extends QueueConfigLike>(
+  config: T,
+  engineMode: EngineMode,
+): T => ({
+  ...config,
+  engineMode,
+});

@@ -285,16 +285,24 @@ class AnyParser(BaseParser):
             raise ParserError("AnyParser: options.parsers is required")
 
         last_error: Exception | None = None
+        failure_details: List[str] = []
         for raw in candidates:
             if not isinstance(raw, dict):
                 last_error = ParserError("AnyParser: invalid parser entry")
+                failure_details.append("unknown: AnyParser: invalid parser entry")
                 continue
+            parser_type = str(raw.get("type") or "unknown").strip() or "unknown"
             try:
                 parser = _build_parser_from_profile(raw)
                 return parser.parse(text)
             except ParserError as exc:
                 last_error = exc
+                failure_details.append(f"{parser_type}: {exc}")
                 continue
+        if failure_details:
+            raise ParserError(
+                f"AnyParser: all parsers failed: {'; '.join(failure_details)}"
+            )
         raise ParserError(f"AnyParser: all parsers failed: {last_error}")
 
 

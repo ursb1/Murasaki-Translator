@@ -1,7 +1,7 @@
 import pytest
 
 from murasaki_flow_v2.api.sandbox_tester import SandboxTester
-from murasaki_flow_v2.parsers.base import ParseOutput
+from murasaki_flow_v2.parsers.base import ParseOutput, ParserError
 from murasaki_flow_v2.policies.line_policy import StrictLinePolicy
 from murasaki_flow_v2.registry.profile_store import ProfileStore
 
@@ -113,3 +113,50 @@ def test_sandbox_skips_line_policy_when_disabled(tmp_path):
     )
     assert result.ok is True
     assert result.post_processed == "dst-1\ndst-2"
+
+
+@pytest.mark.unit
+def test_sandbox_build_jsonline_payload_matches_runner_format():
+    payload = SandboxTester._build_jsonline_payload("L1\nL2")
+    assert payload == 'jsonline{"1": "L1"}\njsonline{"2": "L2"}'
+
+
+@pytest.mark.unit
+def test_sandbox_reports_parser_chain_failure_with_structured_stage(tmp_path):
+    tester = _build_tester(tmp_path, "raw-response")
+
+    class _FailingParser:
+        profile = {"type": "any"}
+
+        @staticmethod
+        def parse(_text: str):
+            raise ParserError(
+                "AnyParser: all parsers failed: jsonl: invalid_jsonl; regex: pattern_not_matched"
+            )
+
+    class _FailingParserRegistry:
+        @staticmethod
+        def get_parser(ref: str):
+            return _FailingParser()
+
+    tester.parsers = _FailingParserRegistry()
+    result = tester.run_test(
+        "src-line",
+        {
+            "provider": "api_x",
+            "prompt": "prompt_x",
+            "parser": "parser_x",
+            "chunk_type": "line",
+            "line_policy": "line_policy_strict",
+            "apply_line_policy": False,
+        },
+    )
+    assert result.ok is False
+    assert result.error_stage == "parser"
+    assert result.error_code == "parser_chain_failed"
+    assert result.error_details
+    assert result.error_details.get("chain_failed") is True
+    assert result.error_details.get("candidates") == [
+        "jsonl: invalid_jsonl",
+        "regex: pattern_not_matched",
+    ]

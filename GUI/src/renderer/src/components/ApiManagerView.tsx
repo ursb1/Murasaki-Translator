@@ -71,6 +71,10 @@ import {
   parseTaggedLinePreviewLines,
   stripThinkTags,
 } from "../lib/parserPreview";
+import {
+  extractSandboxParserCandidates,
+  resolveSandboxFailedTab,
+} from "../lib/sandboxDisplay";
 import { KVEditor } from "./api-manager/shared/KVEditor";
 import { FormSection } from "./api-manager/shared/FormSection";
 import { TemplateSelector } from "./api-manager/shared/TemplateSelector";
@@ -198,7 +202,9 @@ const parseKeyValuePairs = (text: string): KeyValuePair[] => {
         ...toPairValue(value),
       }));
     }
-  } catch {}
+  } catch {
+    // Fallback to an empty row when pasted content is not valid JSON.
+  }
   return [createEmptyPair()];
 };
 
@@ -1574,10 +1580,35 @@ interface ApiManagerViewProps {
   lang: Language;
 }
 
+const mergeI18nBranch = (value: unknown, fallback: unknown): any => {
+  if (Array.isArray(fallback)) {
+    if (!Array.isArray(value)) return fallback;
+    const maxLen = Math.max(value.length, fallback.length);
+    return Array.from({ length: maxLen }, (_, index) =>
+      mergeI18nBranch(value[index], fallback[index]),
+    );
+  }
+  if (fallback && typeof fallback === "object") {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return fallback;
+    }
+    const next: Record<string, any> = { ...(fallback as Record<string, any>) };
+    Object.entries(value as Record<string, any>).forEach(([key, item]) => {
+      next[key] = mergeI18nBranch(item, next[key]);
+    });
+    return next;
+  }
+  return value === undefined ? fallback : value;
+};
+
 export function ApiManagerView({ lang }: ApiManagerViewProps) {
-  const t = translations[lang];
-  const texts = t.apiManager;
+  const t = translations[lang] ?? translations.zh;
   const fallbackTexts = translations.zh.apiManager;
+  const texts = mergeI18nBranch(t.apiManager, fallbackTexts);
+  const pipelineSandboxTexts = mergeI18nBranch(
+    t.ruleEditor?.pipelineSandbox,
+    translations.zh.ruleEditor?.pipelineSandbox ?? {},
+  );
   const { alertProps, showAlert, showConfirm } = useAlertModal();
 
   const isStrategyKind = (targetKind: ProfileKind) =>
@@ -2260,30 +2291,37 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     }
   }, [kind, selectedId, activePipelineId]);
 
-  const resolveProfileName = (id?: string, name?: string) => {
-    const safeId = id || "";
-    const trimmed = String(name || "").trim();
-    const aliases = safeId ? DEFAULT_PROFILE_NAME_ALIASES[safeId] : undefined;
-    const isDefaultName =
-      Boolean(trimmed) &&
-      Array.isArray(aliases) &&
-      aliases.some((alias) => alias.toLowerCase() === trimmed.toLowerCase());
-    const profileNameMap =
-      (texts.profileNames as Record<string, string> | undefined) ||
-      (fallbackTexts.profileNames as Record<string, string> | undefined);
-    const templateItemMap =
-      (texts.templateItems as Record<string, { title?: string }> | undefined) ||
-      (fallbackTexts.templateItems as
-        | Record<string, { title?: string }>
-        | undefined);
-    const localized = safeId ? profileNameMap?.[safeId] : undefined;
-    const templateTitle = safeId ? templateItemMap?.[safeId]?.title : undefined;
-    if (trimmed && trimmed !== safeId && !isDefaultName) return trimmed;
-    if (localized) return localized;
-    if (templateTitle) return templateTitle;
-    if (trimmed) return trimmed;
-    return safeId || texts.untitledProfile;
-  };
+  const resolveProfileName = useCallback(
+    (id?: string, name?: string) => {
+      const safeId = id || "";
+      const trimmed = String(name || "").trim();
+      const aliases = safeId ? DEFAULT_PROFILE_NAME_ALIASES[safeId] : undefined;
+      const isDefaultName =
+        Boolean(trimmed) &&
+        Array.isArray(aliases) &&
+        aliases.some((alias) => alias.toLowerCase() === trimmed.toLowerCase());
+      const profileNameMap =
+        (texts.profileNames as Record<string, string> | undefined) ||
+        (fallbackTexts.profileNames as Record<string, string> | undefined);
+      const templateItemMap =
+        (texts.templateItems as
+          | Record<string, { title?: string }>
+          | undefined) ||
+        (fallbackTexts.templateItems as
+          | Record<string, { title?: string }>
+          | undefined);
+      const localized = safeId ? profileNameMap?.[safeId] : undefined;
+      const templateTitle = safeId
+        ? templateItemMap?.[safeId]?.title
+        : undefined;
+      if (trimmed && trimmed !== safeId && !isDefaultName) return trimmed;
+      if (localized) return localized;
+      if (templateTitle) return templateTitle;
+      if (trimmed) return trimmed;
+      return safeId || texts.untitledProfile;
+    },
+    [fallbackTexts, texts],
+  );
 
   const visibleProfiles = useMemo(() => {
     if (kind === "policy" || kind === "chunk") {
@@ -2341,8 +2379,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
         resolveProfileName(p.id, p.name).toLowerCase().includes(lower) ||
         p.id.toLowerCase().includes(lower),
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- resolveProfileName only depends on texts (in deps) and fallbackTexts (constant)
-  }, [visibleProfiles, deferredSearchTerm, texts]);
+  }, [visibleProfiles, deferredSearchTerm, resolveProfileName]);
 
   const getProfileLabel = (targetKind: ProfileKind, id?: string) => {
     if (!id) return "";
@@ -2915,7 +2952,6 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     }
   }, [kind]);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- buildNewProfileYaml/handlePresetSelect are stable within the component render
   useEffect(() => {
     if (!pendingCreate || pendingCreate.kind !== kind) return;
     if (profilesLoadedKind !== kind) return;
@@ -4598,12 +4634,14 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       if (!data || typeof data !== "object") return;
       lastProfileDataRef.current[targetKind] = data;
       syncFormsFromData(targetKind, data);
-    } catch {}
+    } catch {
+      // Keep the current form state when YAML is temporarily invalid.
+    }
   };
 
   const localizeTemplateName = (templateYaml: string, displayName?: string) => {
     if (!displayName) return templateYaml;
-    const safeName = `"${displayName.replace(/\"/g, '\\"')}"`;
+    const safeName = `"${displayName.replace(/"/g, '\\"')}"`;
     if (/^\s*name:/m.test(templateYaml)) {
       return templateYaml.replace(/^\s*name:.*$/m, `name: ${safeName}`);
     }
@@ -4893,7 +4931,9 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
         let stopValue: any = newForm.stop.trim();
         try {
           stopValue = JSON.parse(newForm.stop);
-        } catch {}
+        } catch {
+          // Keep raw input when stop is plain string and not JSON.
+        }
         params.stop = stopValue;
       }
       if (Object.keys(params).length) {
@@ -4957,7 +4997,9 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       }
 
       queueYamlDump(payload);
-    } catch {}
+    } catch {
+      // Ignore transient form conversion errors and keep editor responsive.
+    }
   };
 
   const fillPipelineRefs = (composer: PipelineComposerState) => ({
@@ -5213,7 +5255,9 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       }
       if (Object.keys(options).length) payload.options = options;
       queueYamlDump(payload);
-    } catch {}
+    } catch {
+      // Ignore temporary input parse errors during incremental edits.
+    }
   };
 
   const updateYamlFromChunkForm = (newForm: ChunkFormState) => {
@@ -5242,7 +5286,9 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       if (Number.isFinite(balanceCount)) options.balance_count = balanceCount;
       if (Object.keys(options).length) payload.options = options;
       queueYamlDump(payload);
-    } catch {}
+    } catch {
+      // Ignore temporary input parse errors during incremental edits.
+    }
   };
 
   const updateYamlFromParserForm = (newForm: ParserFormState) => {
@@ -5813,7 +5859,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
             </div>
 
             <div className="space-y-2">
-              <Label>异常重试次数</Label>
+              <Label>{texts.formFields.maxRetriesLabel}</Label>
               <InputAffix
                 type="number"
                 value={apiForm.maxRetries}
@@ -5825,12 +5871,11 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                     maxRetries: e.target.value,
                   })
                 }
-                placeholder="默认 3 次"
+                placeholder={texts.formPlaceholders.maxRetries}
                 prefix={<RotateCcw className="h-3.5 w-3.5" />}
-                suffix="次"
               />
               <p className="text-xs text-muted-foreground whitespace-pre-line">
-                API 异常或产生幻觉时的轮询上限
+                {texts.formHints.maxRetries}
               </p>
             </div>
 
@@ -5850,7 +5895,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                 suffix="s"
               />
               <p className="text-xs text-muted-foreground whitespace-pre-line">
-                网络请求的超时截断时间
+                {texts.formHints.timeout}
               </p>
             </div>
           </div>
@@ -7782,10 +7827,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     ) {
       setSandboxResult({
         type: "error",
-        error:
-          lang === "en"
-            ? "Please ensure a Provider, Prompt, Parser, and Strategy are selected."
-            : "请确保已选择完整的大模型、提示词、解析器和拆分策略配置。",
+        error: pipelineSandboxTexts.requiredConfigError,
       });
       return;
     }
@@ -7831,14 +7873,14 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
         } else {
           setSandboxResult({
             type: "error",
-            error: res.data.error || "Sandbox payload returned error",
+            error: res.data.error || pipelineSandboxTexts.payloadError,
             data: res.data,
           });
         }
       } else {
         setSandboxResult({
           type: "error",
-          error: res?.error || "Unknown Error",
+          error: res?.error || pipelineSandboxTexts.unknownError,
           data: res?.data,
         });
       }
@@ -7850,28 +7892,40 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
   };
 
   const renderSandboxDebugger = () => {
+    const sandboxErrorStage = String(
+      sandboxResult?.data?.error_stage || "",
+    ).trim();
+    const sandboxErrorCode = String(
+      sandboxResult?.data?.error_code || "",
+    ).trim();
+    const sandboxErrorDetails =
+      (sandboxResult?.data?.error_details as
+        | Record<string, unknown>
+        | undefined) || undefined;
+    const parserFailureCandidates =
+      extractSandboxParserCandidates(sandboxErrorDetails);
+    const failedTabId = resolveSandboxFailedTab(sandboxErrorStage);
+    const sandboxTexts = pipelineSandboxTexts;
+    const renderTraceSummary = (applied: number, total: number) =>
+      sandboxTexts.traceSummary
+        .replace("{applied}", String(applied))
+        .replace("{total}", String(total));
+    const renderStepFallback = () =>
+      sandboxResult.type === "error"
+        ? sandboxTexts.notAvailableBeforeStep
+        : sandboxTexts.notAvailable;
+
     return (
-      <FormSection
-        title={lang === "en" ? "Sandbox Testing" : "沙盒测试"}
-        desc={
-          lang === "en"
-            ? "Test your pipeline end-to-end to ensure the provider, prompt, and parser work harmoniously together."
-            : "进行端到端的方案测试，确保模型、提示词及解析器可良好协同工作。"
-        }
-      >
+      <FormSection title={sandboxTexts.title} desc={sandboxTexts.desc}>
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label>{lang === "en" ? "Test Input Text" : "测试输入文本"}</Label>
+            <Label>{sandboxTexts.testInputLabel}</Label>
             <textarea
               spellCheck={false}
               className="flex min-h-[120px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring font-mono"
               value={sandboxText}
               onChange={(e) => setSandboxText(e.target.value)}
-              placeholder={
-                lang === "en"
-                  ? "Enter Japanese text to test..."
-                  : "输入日文准备测试..."
-              }
+              placeholder={sandboxTexts.testInputPlaceholder}
             />
           </div>
 
@@ -7887,13 +7941,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
               ) : (
                 <Play className="h-4 w-4" />
               )}
-              {sandboxLoading
-                ? lang === "en"
-                  ? "Running..."
-                  : "执行中..."
-                : lang === "en"
-                  ? "Run Sandbox Test"
-                  : "运行沙盒测试"}
+              {sandboxLoading ? sandboxTexts.testing : sandboxTexts.run}
             </Button>
           </div>
 
@@ -7923,22 +7971,39 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                   )}
                   <span>
                     {sandboxResult.type === "error"
-                      ? lang === "en"
-                        ? "Execution Failed"
-                        : "沙盒测试失败"
-                      : lang === "en"
-                        ? "Execution Successful"
-                        : "沙盒测试成功"}
+                      ? sandboxTexts.statusFailed
+                      : sandboxTexts.statusSuccess}
                   </span>
+                  {sandboxResult.type === "error" &&
+                    (sandboxErrorStage || sandboxErrorCode) && (
+                      <span className="inline-flex items-center rounded border border-red-500/30 bg-red-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-600 dark:text-red-400">
+                        {sandboxErrorStage || sandboxTexts.errorBadgeFallback}
+                        {sandboxErrorCode ? ` · ${sandboxErrorCode}` : ""}
+                      </span>
+                    )}
                 </div>
               </div>
 
               {/* Inline Error Details */}
               {sandboxResult.type === "error" && sandboxResult.error && (
-                <div className="p-4 bg-red-500/5 border-b border-red-500/10">
+                <div className="space-y-3 p-4 bg-red-500/5 border-b border-red-500/10">
                   <div className="text-xs font-mono text-red-600/90 dark:text-red-400/90 whitespace-pre-wrap break-all leading-relaxed">
                     {sandboxResult.error}
                   </div>
+                  {parserFailureCandidates.length > 0 && (
+                    <div className="rounded border border-red-500/15 bg-background/70 p-3">
+                      <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-red-700/90 dark:text-red-300/90">
+                        {sandboxTexts.parserCascadeFailures}
+                      </div>
+                      <div className="space-y-1 text-[11px] font-mono text-red-600/85 dark:text-red-300/85">
+                        {parserFailureCandidates.map((candidate, idx) => (
+                          <div key={`${candidate}_${idx}`}>
+                            {idx + 1}. {candidate}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -7948,23 +8013,23 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                   {[
                     {
                       id: "pre",
-                      label: lang === "en" ? "Pre-process" : "预处理",
+                      label: sandboxTexts.tabs?.pre || "",
                     },
                     {
                       id: "request",
-                      label: lang === "en" ? "Raw Request" : "请求体",
+                      label: sandboxTexts.tabs?.request || "",
                     },
                     {
                       id: "response",
-                      label: lang === "en" ? "Raw Response" : "模型原响应",
+                      label: sandboxTexts.tabs?.response || "",
                     },
                     {
                       id: "parsed",
-                      label: lang === "en" ? "Parsed Result" : "解析提取结果",
+                      label: sandboxTexts.tabs?.parsed || "",
                     },
                     {
                       id: "post",
-                      label: lang === "en" ? "Post-process" : "后处理",
+                      label: sandboxTexts.tabs?.post || "",
                     },
                   ].map((tab) => (
                     <button
@@ -7975,7 +8040,9 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                         "px-4 py-2 text-[13px] font-medium rounded-t-lg transition-colors border -mb-px outline-none whitespace-nowrap",
                         sandboxTab === tab.id
                           ? "bg-background border-border/60 border-b-background text-foreground shadow-[0_-2px_0_inset_hsl(var(--primary))]"
-                          : "border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+                          : failedTabId === tab.id
+                            ? "border-transparent bg-red-500/10 text-red-700 hover:bg-red-500/15 dark:text-red-300"
+                            : "border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground",
                       )}
                     >
                       {tab.label}
@@ -7986,13 +8053,11 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                   {sandboxTab === "pre" && (
                     <div className="flex flex-col p-4 w-full h-full gap-4">
                       <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">
-                        Final Result
+                        {sandboxTexts.finalLabel}
                       </div>
                       <div className="bg-background border border-border/50 rounded-md p-3">
                         {sandboxResult.data?.pre_processed ||
-                          (sandboxResult.type === "error"
-                            ? "N/A (Failed before this step)"
-                            : "N/A")}
+                          renderStepFallback()}
                       </div>
 
                       {sandboxResult.data?.pre_traces &&
@@ -8000,11 +8065,10 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                         <div className="flex flex-col mt-2 gap-3">
                           <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold flex items-center justify-between">
                             <span>
-                              Processing Traces (
-                              {sandboxResult.data.pre_traces.length} steps
-                              applied /{" "}
-                              {sandboxResult.data.pre_rules_count || 0} total
-                              rules)
+                              {renderTraceSummary(
+                                sandboxResult.data.pre_traces.length,
+                                sandboxResult.data.pre_rules_count || 0,
+                              )}
                             </span>
                           </div>
 
@@ -8059,25 +8123,22 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                         <div className="flex flex-col mt-2 gap-3">
                           <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold flex items-center justify-between">
                             <span>
-                              Processing Traces (0 steps applied /{" "}
-                              {sandboxResult.data?.pre_rules_count || 0} total
-                              rules)
+                              {renderTraceSummary(
+                                0,
+                                sandboxResult.data?.pre_rules_count || 0,
+                              )}
                             </span>
                           </div>
                           {(sandboxResult.data?.pre_rules_count || 0) > 0 ? (
                             <div className="text-center p-6 bg-background border border-border/50 border-dashed rounded-lg">
                               <p className="text-sm text-muted-foreground">
-                                {lang === "en"
-                                  ? "Rules were loaded but text was unaffected."
-                                  : "已加载规则，但无任何规则被触发修改文本。"}
+                                {sandboxTexts.rulesNoEffect}
                               </p>
                             </div>
                           ) : (
                             <div className="text-center p-6 bg-background border border-border/50 border-dashed rounded-lg">
                               <p className="text-sm text-muted-foreground">
-                                {lang === "en"
-                                  ? "No pre-processing rules configured."
-                                  : "暂未配置任何预处理规则。"}
+                                {sandboxTexts.noPreRules}
                               </p>
                             </div>
                           )}
@@ -8088,39 +8149,29 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
 
                   {sandboxTab === "request" && (
                     <div className="p-4">
-                      {sandboxResult.data?.raw_request ||
-                        (sandboxResult.type === "error"
-                          ? "N/A (Failed before this step)"
-                          : "N/A")}
+                      {sandboxResult.data?.raw_request || renderStepFallback()}
                     </div>
                   )}
                   {sandboxTab === "response" && (
                     <div className="p-4">
-                      {sandboxResult.data?.raw_response ||
-                        (sandboxResult.type === "error"
-                          ? "N/A (Failed before this step)"
-                          : "N/A")}
+                      {sandboxResult.data?.raw_response || renderStepFallback()}
                     </div>
                   )}
                   {sandboxTab === "parsed" && (
                     <div className="p-4">
                       {sandboxResult.data?.parsed_result ||
-                        (sandboxResult.type === "error"
-                          ? "N/A (Failed before this step)"
-                          : "N/A")}
+                        renderStepFallback()}
                     </div>
                   )}
 
                   {sandboxTab === "post" && (
                     <div className="flex flex-col p-4 w-full h-full gap-4">
                       <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">
-                        Final Result
+                        {sandboxTexts.finalLabel}
                       </div>
                       <div className="bg-background border border-border/50 rounded-md p-3">
                         {sandboxResult.data?.post_processed ||
-                          (sandboxResult.type === "error"
-                            ? "N/A (Failed before this step)"
-                            : "N/A")}
+                          renderStepFallback()}
                       </div>
 
                       {sandboxResult.data?.post_traces &&
@@ -8128,11 +8179,10 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                         <div className="flex flex-col mt-2 gap-3">
                           <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold flex items-center justify-between">
                             <span>
-                              Processing Traces (
-                              {sandboxResult.data.post_traces.length} steps
-                              applied /{" "}
-                              {sandboxResult.data.post_rules_count || 0} total
-                              rules)
+                              {renderTraceSummary(
+                                sandboxResult.data.post_traces.length,
+                                sandboxResult.data.post_rules_count || 0,
+                              )}
                             </span>
                           </div>
 
@@ -8187,25 +8237,22 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                         <div className="flex flex-col mt-2 gap-3">
                           <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold flex items-center justify-between">
                             <span>
-                              Processing Traces (0 steps applied /{" "}
-                              {sandboxResult.data?.post_rules_count || 0} total
-                              rules)
+                              {renderTraceSummary(
+                                0,
+                                sandboxResult.data?.post_rules_count || 0,
+                              )}
                             </span>
                           </div>
                           {(sandboxResult.data?.post_rules_count || 0) > 0 ? (
                             <div className="text-center p-6 bg-background border border-border/50 border-dashed rounded-lg">
                               <p className="text-sm text-muted-foreground">
-                                {lang === "en"
-                                  ? "Rules were loaded but text was unaffected."
-                                  : "已加载规则，但无任何规则被触发修改文本。"}
+                                {sandboxTexts.rulesNoEffect}
                               </p>
                             </div>
                           ) : (
                             <div className="text-center p-6 bg-background border border-border/50 border-dashed rounded-lg">
                               <p className="text-sm text-muted-foreground">
-                                {lang === "en"
-                                  ? "No post-processing rules configured."
-                                  : "暂未配置任何后处理规则。"}
+                                {sandboxTexts.noPostRules}
                               </p>
                             </div>
                           )}
@@ -8362,7 +8409,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
         <FormSection title={texts.composer.title} desc={texts.composer.desc}>
           <div className="grid grid-cols-2 gap-4 mb-4">
             <div className="col-span-2 space-y-2">
-              <Label>{texts.formFields?.nameLabel || "名称"}</Label>
+              <Label>{texts.formFields.nameLabel}</Label>
               <Input
                 value={pipelineComposer.name}
                 onChange={(e) => {
@@ -8376,11 +8423,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                     : pipelineComposer.id;
                   applyPipelineChange({ name: nextName, id: nextId });
                 }}
-                placeholder={
-                  lang === "en"
-                    ? "Give this plan a name..."
-                    : "为方案起个名字..."
-                }
+                placeholder={texts.composer.placeholders.name}
               />
             </div>
           </div>

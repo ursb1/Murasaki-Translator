@@ -1,5 +1,5 @@
 import { spawn, ChildProcessWithoutNullStreams } from "child_process";
-import { join } from "path";
+import { basename, join } from "path";
 import net from "net";
 
 type PythonPath = { type: "python" | "bundle"; path: string };
@@ -17,6 +17,8 @@ type ServerState = {
 };
 
 const state: ServerState = {};
+const PYTHON_INTERPRETER_NAME_RE =
+  /^python(?:\d+(?:\.\d+)*)?(?:\.exe)?$/i;
 
 export type PipelineV2Status = {
   mode: "server" | "local";
@@ -82,6 +84,18 @@ const resetServerState = () => {
 
 export const stopPipelineV2Server = () => {
   resetServerState();
+};
+
+const resolveBundleArgs = (
+  executablePath: string,
+  scriptArgs: string[],
+): string[] => {
+  const executableName = basename(executablePath);
+  if (PYTHON_INTERPRETER_NAME_RE.test(executableName)) {
+    // Misconfigured environments may point "bundle" to a plain interpreter.
+    return scriptArgs;
+  }
+  return scriptArgs.slice(1);
 };
 
 const pickFreePort = (): Promise<number> =>
@@ -171,7 +185,7 @@ export const ensurePipelineV2Server = async (
     let stderrBuffer = "";
     const child =
       python.type === "bundle"
-        ? spawn(python.path, scriptArgs.slice(1))
+        ? spawn(python.path, resolveBundleArgs(python.path, scriptArgs))
         : spawn(python.path, moduleArgs, { cwd: middlewarePath });
 
     state.proc = child;
@@ -214,4 +228,8 @@ export const ensurePipelineV2Server = async (
   })();
 
   return state.starting;
+};
+
+export const __testOnly = {
+  resolveBundleArgs,
 };

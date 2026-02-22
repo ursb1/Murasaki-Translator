@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  __testOnly,
   getPipelineV2Status,
   markPipelineV2Local,
   markPipelineV2ServerOk,
@@ -31,5 +32,21 @@ describe("pipelineV2Server status", () => {
     snapshot.mode = "local";
     const next = getPipelineV2Status();
     expect(next.mode).toBe("server");
+  });
+});
+
+describe("pipelineV2Server bundle args", () => {
+  it("keeps script path when bundle path points to python interpreter", () => {
+    const args = ["api_server.py", "--port", "48321"];
+    expect(__testOnly.resolveBundleArgs("python3", args)).toEqual(args);
+    expect(__testOnly.resolveBundleArgs("python.exe", args)).toEqual(args);
+  });
+
+  it("drops script path for packaged bundle executable", () => {
+    const args = ["api_server.py", "--port", "48321"];
+    expect(__testOnly.resolveBundleArgs("murasaki-server", args)).toEqual([
+      "--port",
+      "48321",
+    ]);
   });
 });

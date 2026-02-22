@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow } from "electron";
 import { spawn, ChildProcess } from "child_process";
-import { existsSync } from "fs";
+import { existsSync, unlinkSync, writeFileSync } from "fs";
 import { basename, extname, join } from "path";
 import { validatePipelineRun } from "./pipelineV2Validation";
 
@@ -20,22 +20,64 @@ type RunnerDeps = {
 // --- 模块级状态：活动子进程 + stop 标记 ---
 let activeChild: ChildProcess | null = null;
 let stopRequested = false;
+let activeStopFlagPath: string | null = null;
+let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
+const FORCE_KILL_TIMEOUT_MS = 15000;
+const PYTHON_INTERPRETER_NAME_RE =
+  /^python(?:\d+(?:\.\d+)*)?(?:\.exe)?$/i;
+
+const clearForceKillTimer = () => {
+  if (!forceKillTimer) return;
+  clearTimeout(forceKillTimer);
+  forceKillTimer = null;
+};
+
+const cleanupStopFlag = () => {
+  if (!activeStopFlagPath) return;
+  try {
+    if (existsSync(activeStopFlagPath)) {
+      unlinkSync(activeStopFlagPath);
+    }
+  } catch (e) {
+    console.warn("[FlowV2] Failed to cleanup stop flag:", e);
+  } finally {
+    activeStopFlagPath = null;
+  }
+};
 
 const stopActivePipelineChild = () => {
   if (!activeChild) return;
+  if (stopRequested) return;
   stopRequested = true;
-  console.log("[FlowV2] Stop requested, killing child process...");
+  console.log(
+    "[FlowV2] Stop requested, waiting child for graceful shutdown...",
+  );
   try {
-    activeChild.kill("SIGTERM");
-    if (process.platform === "win32" && activeChild.pid) {
-      spawn("taskkill", ["/pid", activeChild.pid.toString(), "/f", "/t"], {
-        stdio: "ignore",
-        windowsHide: true,
-      });
+    if (activeStopFlagPath) {
+      writeFileSync(activeStopFlagPath, `${Date.now()}`, "utf8");
     }
   } catch (e) {
-    console.error("[FlowV2] Error killing child:", e);
+    console.error("[FlowV2] Failed to write stop flag:", e);
   }
+
+  clearForceKillTimer();
+  forceKillTimer = setTimeout(() => {
+    if (!activeChild) return;
+    const pid = activeChild.pid;
+    console.warn("[FlowV2] Graceful stop timed out, forcing child exit...");
+    try {
+      if (process.platform === "win32" && pid) {
+        spawn("taskkill", ["/pid", pid.toString(), "/f", "/t"], {
+          stdio: "ignore",
+          windowsHide: true,
+        });
+      } else {
+        activeChild.kill("SIGKILL");
+      }
+    } catch (err) {
+      console.error("[FlowV2] Error force-killing child:", err);
+    }
+  }, FORCE_KILL_TIMEOUT_MS);
 };
 
 export const stopPipelineV2Runner = () => {
@@ -57,6 +99,18 @@ const flushBufferedLines = (
     onLine(line);
   }
   return remaining;
+};
+
+const resolveBundleArgs = (
+  executablePath: string,
+  scriptArgs: string[],
+): string[] => {
+  const executableName = basename(executablePath);
+  if (PYTHON_INTERPRETER_NAME_RE.test(executableName)) {
+    // Misconfigured environments may point "bundle" to a plain interpreter.
+    return scriptArgs;
+  }
+  return scriptArgs.slice(1);
 };
 
 export const registerPipelineV2Runner = (deps: RunnerDeps) => {
@@ -156,6 +210,19 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
         "--profiles-dir",
         profilesDir,
       ];
+      const stopFlagPath = join(
+        middlewarePath,
+        `temp_flowv2_stop_${runId}.flag`,
+      );
+      try {
+        if (existsSync(stopFlagPath)) {
+          unlinkSync(stopFlagPath);
+        }
+      } catch (e) {
+        console.warn("[FlowV2] Failed to clear stale stop flag:", e);
+      }
+      scriptArgs.push("--stop-flag", stopFlagPath);
+      moduleArgs.push("--stop-flag", stopFlagPath);
       let resolvedOutputPath = outputPath;
       if (!resolvedOutputPath && outputDir && existsSync(outputDir)) {
         const ext = extname(filePath);
@@ -169,6 +236,20 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
         scriptArgs.push("--output", resolvedOutputPath);
         moduleArgs.push("--output", resolvedOutputPath);
       }
+
+      const temporaryRulePaths: string[] = [];
+      const cleanupTemporaryRulePaths = () => {
+        for (const path of temporaryRulePaths) {
+          try {
+            if (existsSync(path)) {
+              unlinkSync(path);
+            }
+          } catch (e) {
+            console.warn("[FlowV2] Failed to cleanup temp rules file:", path, e);
+          }
+        }
+        temporaryRulePaths.length = 0;
+      };
 
       let activeRulesPrePath = rulesPrePath;
       if (
@@ -184,6 +265,7 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
           JSON.stringify(rulesPre),
           "utf8",
         );
+        temporaryRulePaths.push(activeRulesPrePath);
       }
       if (activeRulesPrePath) {
         scriptArgs.push("--rules-pre", activeRulesPrePath);
@@ -207,6 +289,7 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
           JSON.stringify(rulesPost),
           "utf8",
         );
+        temporaryRulePaths.push(activeRulesPostPath);
       }
       if (activeRulesPostPath) {
         scriptArgs.push("--rules-post", activeRulesPostPath);
@@ -248,6 +331,9 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
       }
 
       stopRequested = false;
+      clearForceKillTimer();
+      cleanupStopFlag();
+      activeStopFlagPath = stopFlagPath;
 
       return await new Promise<{
         ok: boolean;
@@ -264,16 +350,45 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
           settled = true;
           resolve(result);
         };
-        const child =
-          python.type === "bundle"
-            ? spawn(python.path, scriptArgs.slice(1))
-            : spawn(python.path, moduleArgs, {
-                cwd: middlewarePath,
-                env: {
-                  ...process.env,
-                  PYTHONIOENCODING: "utf-8",
-                },
-              });
+        let child: ChildProcess;
+        try {
+          child =
+            python.type === "bundle"
+              ? spawn(python.path, resolveBundleArgs(python.path, scriptArgs))
+              : spawn(python.path, moduleArgs, {
+                  cwd: middlewarePath,
+                  env: {
+                    ...process.env,
+                    PYTHONIOENCODING: "utf-8",
+                  },
+                });
+        } catch (err) {
+          console.error("[FlowV2] Spawn failed:", err);
+          const win = deps.getMainWindow();
+          if (win) {
+            const payload = {
+              title: "Pipeline V2 Error",
+              message: String((err as Error)?.message || err),
+            };
+            win.webContents.send(
+              "log-update",
+              `JSON_ERROR:${JSON.stringify(payload)}\n`,
+            );
+            win.webContents.send("process-exit", {
+              code: 1,
+              signal: null,
+              stopRequested: false,
+              runId,
+            });
+          }
+          activeChild = null;
+          stopRequested = false;
+          clearForceKillTimer();
+          cleanupStopFlag();
+          cleanupTemporaryRulePaths();
+          finalize({ ok: false, runId, code: 1 });
+          return;
+        }
         activeChild = child;
 
         let stdoutBuffer = "";
@@ -329,6 +444,9 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
           }
           activeChild = null;
           stopRequested = false;
+          clearForceKillTimer();
+          cleanupStopFlag();
+          cleanupTemporaryRulePaths();
           finalize({ ok: false, runId, code: 1 });
         });
 
@@ -341,6 +459,9 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
           const wasStopRequested = stopRequested;
           stopRequested = false;
           activeChild = null;
+          clearForceKillTimer();
+          cleanupStopFlag();
+          cleanupTemporaryRulePaths();
 
           console.log(
             `[FlowV2] Process exited (code=${String(code)}, signal=${String(signal)}, stopRequested=${wasStopRequested})`,
@@ -366,4 +487,5 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
 
 export const __testOnly = {
   flushBufferedLines,
+  resolveBundleArgs,
 };

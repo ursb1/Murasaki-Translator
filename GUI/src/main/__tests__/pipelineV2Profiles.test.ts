@@ -5,6 +5,8 @@ describe("pipelineV2Profiles concurrency helpers", () => {
   const {
     classifyConcurrencyFailure,
     buildConcurrencyTestPayload,
+    resolveConcurrencyProbeStart,
+    assessConcurrencyBatch,
     ensureDefaultLineQualityChecks,
   } = __testOnly;
 
@@ -54,6 +56,42 @@ describe("pipelineV2Profiles concurrency helpers", () => {
     expect(payload.max_tokens).toBe(8);
   });
 
+  it("starts concurrency probe from 64 when max allows", () => {
+    expect(resolveConcurrencyProbeStart(128)).toBe(64);
+    expect(resolveConcurrencyProbeStart(80)).toBe(64);
+    expect(resolveConcurrencyProbeStart(32)).toBe(32);
+    expect(resolveConcurrencyProbeStart(0)).toBe(1);
+  });
+
+  it("accepts small transient failures in large batches", () => {
+    const statuses = [...Array.from({ length: 62 }, () => 200), 500, 500];
+    const result = assessConcurrencyBatch(statuses);
+    expect(result.ok).toBe(true);
+    expect(result.hardFailure).toBe(false);
+  });
+
+  it("rejects hard failures even if success rate is high", () => {
+    const statuses = [...Array.from({ length: 63 }, () => 200), 401];
+    const result = assessConcurrencyBatch(statuses);
+    expect(result.ok).toBe(false);
+    expect(result.hardFailure).toBe(true);
+    expect(result.reason).toBe("concurrency_test_auth");
+  });
+
+  it("rejects too many transient failures", () => {
+    const statuses = [
+      ...Array.from({ length: 60 }, () => 200),
+      500,
+      500,
+      500,
+      500,
+    ];
+    const result = assessConcurrencyBatch(statuses);
+    expect(result.ok).toBe(false);
+    expect(result.hardFailure).toBe(false);
+    expect(result.reason).toBe("concurrency_test_server_error");
+  });
+
   it("ensures all default line quality checks are enabled", () => {
     expect(ensureDefaultLineQualityChecks(["similarity"])).toEqual([
       "similarity",
@@ -61,11 +99,11 @@ describe("pipelineV2Profiles concurrency helpers", () => {
       "kana_trace",
     ]);
     expect(
-      ensureDefaultLineQualityChecks(["empty_line", "similarity", "kana_trace"]),
-    ).toEqual([
-      "empty_line",
-      "similarity",
-      "kana_trace",
-    ]);
+      ensureDefaultLineQualityChecks([
+        "empty_line",
+        "similarity",
+        "kana_trace",
+      ]),
+    ).toEqual(["empty_line", "similarity", "kana_trace"]);
   });
 });

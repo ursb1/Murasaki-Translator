@@ -17,4 +17,21 @@ describe("ApiMonitorBar", () => {
     expect(element.props.className).toContain("pl-3");
     expect(element.props.className).toContain("pr-5");
   });
+
+  it("keeps a unified background color in offline mode", () => {
+    const element = ApiMonitorBar({
+      data: {
+        url: "",
+        ping: null,
+        rpm: 0,
+        concurrency: 0,
+      },
+      lang: "zh",
+      isRunning: false,
+    });
+
+    expect(element.props.className).toContain("bg-card");
+    expect(element.props.className).not.toContain("bg-muted/30");
+    expect(element.props.className).not.toContain("dark:bg-muted/20");
+  });
 });

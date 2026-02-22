@@ -22,14 +22,14 @@ class TestFlowV2RunnerHelpers(unittest.TestCase):
         result = PipelineRunner._filter_target_line_ids(metadata, 0, 3)
         self.assertEqual(result, [0, 1])
 
-    def test_normalize_txt_blocks_removes_single_trailing_newline(self) -> None:
+    def test_normalize_txt_blocks_removes_all_trailing_newlines(self) -> None:
         blocks = [
             TextBlock(id=1, prompt_text="a\n"),
             TextBlock(id=2, prompt_text="b\n\n"),
         ]
         PipelineRunner._normalize_txt_blocks(blocks)
         self.assertEqual(blocks[0].prompt_text, "a")
-        self.assertEqual(blocks[1].prompt_text, "b\n")
+        self.assertEqual(blocks[1].prompt_text, "b")
 
     def test_validate_jsonl_prompt_requires_marker(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -312,6 +312,9 @@ const buildChatCompletionsUrl = (baseUrl: string) => {
 const CONCURRENCY_TEST_MESSAGE = "你好";
 const CONCURRENCY_TEST_MESSAGE_COUNT = 32;
 const CONCURRENCY_TEST_MAX_TOKENS = 8;
+const CONCURRENCY_TEST_INITIAL_PROBE = 64;
+const CONCURRENCY_TEST_MIN_SUCCESS_RATE = 0.96;
+const CONCURRENCY_TEST_ALLOWED_FAILURE_RATIO = 0.04;
 
 const buildConcurrencyTestMessages = (count = CONCURRENCY_TEST_MESSAGE_COUNT) =>
   Array.from({ length: Math.max(1, Math.floor(count)) }, () => ({
@@ -1372,6 +1375,50 @@ const classifyConcurrencyFailure = (statuses: number[]) => {
   return "concurrency_test_failed";
 };
 
+const isHardConcurrencyFailureStatus = (status: number) =>
+  status === 401 ||
+  status === 403 ||
+  status === 404 ||
+  status === 400 ||
+  status === 405 ||
+  status === 415 ||
+  status === 422;
+
+const resolveConcurrencyProbeStart = (maxConcurrency: number) =>
+  Math.max(
+    1,
+    Math.min(Math.floor(maxConcurrency), CONCURRENCY_TEST_INITIAL_PROBE),
+  );
+
+const assessConcurrencyBatch = (statuses: number[]) => {
+  const total = Math.max(1, statuses.length);
+  const successCount = statuses.filter(
+    (code) => code >= 200 && code < 300,
+  ).length;
+  const failedCount = total - successCount;
+  const successRate = successCount / total;
+  const hardFailure = statuses.some((status) =>
+    isHardConcurrencyFailureStatus(status),
+  );
+  const toleratedFailures = Math.max(
+    1,
+    Math.floor(total * CONCURRENCY_TEST_ALLOWED_FAILURE_RATIO),
+  );
+
+  const ok =
+    !hardFailure &&
+    (failedCount === 0 ||
+      (failedCount <= toleratedFailures &&
+        successRate >= CONCURRENCY_TEST_MIN_SUCCESS_RATE));
+
+  return {
+    ok,
+    hardFailure,
+    successRate,
+    reason: ok ? "" : classifyConcurrencyFailure(statuses),
+  };
+};
+
 const testApiConcurrency = async (
   baseUrl: string,
 
@@ -1399,9 +1446,8 @@ const testApiConcurrency = async (
     buildConcurrencyTestPayload(resolvedModel || "test"),
   );
 
-  const runBatch = async (count: number) => {
+  const runBatchOnce = async (count: number) => {
     const start = Date.now();
-
     const tasks = Array.from({ length: count }, () =>
       requestWithTimeout(
         url,
@@ -1409,30 +1455,41 @@ const testApiConcurrency = async (
         Math.max(1000, timeoutMs),
       )
         .then((res) => res.status)
-
         .catch(() => 0),
     );
-
     const statuses = await Promise.all(tasks);
+    return {
+      statuses,
+      latencyMs: Date.now() - start,
+    };
+  };
 
-    const ok = statuses.every((code) => code >= 200 && code < 300);
+  const runBatch = async (count: number) => {
+    const firstRun = await runBatchOnce(count);
+    let mergedStatuses = firstRun.statuses;
+    let latencyMs = firstRun.latencyMs;
+    let assessment = assessConcurrencyBatch(mergedStatuses);
+
+    if (!assessment.ok && !assessment.hardFailure) {
+      const retryRun = await runBatchOnce(count);
+      mergedStatuses = [...firstRun.statuses, ...retryRun.statuses];
+      latencyMs = Math.round((firstRun.latencyMs + retryRun.latencyMs) / 2);
+      assessment = assessConcurrencyBatch(mergedStatuses);
+    }
 
     return {
-      ok,
-
-      statuses,
-
-      counts: summarizeStatusCounts(statuses),
-
-      latencyMs: Date.now() - start,
-
-      reason: ok ? "" : classifyConcurrencyFailure(statuses),
+      ok: assessment.ok,
+      statuses: mergedStatuses,
+      counts: summarizeStatusCounts(mergedStatuses),
+      latencyMs,
+      reason: assessment.ok
+        ? ""
+        : assessment.reason || "concurrency_test_failed",
     };
   };
 
   let low = 0;
-
-  let high = 1;
+  let high = resolveConcurrencyProbeStart(max);
 
   let lastCounts: Record<string, number> | undefined;
 
@@ -1440,73 +1497,98 @@ const testApiConcurrency = async (
 
   let lastReason: string | undefined;
 
-  while (high <= max) {
-    const result = await runBatch(high);
-
+  const updateLastMetrics = (result: {
+    counts: Record<string, number>;
+    latencyMs: number;
+    reason: string;
+  }) => {
     lastCounts = result.counts;
-
     lastLatencyMs = result.latencyMs;
-
-    if (result.ok) {
-      low = high;
-
-      high *= 2;
-    } else {
-      lastReason = result.reason || "concurrency_test_failed";
-
-      break;
+    if (result.reason) {
+      lastReason = result.reason;
     }
-  }
+  };
 
-  if (low === 0) {
-    return {
-      ok: false,
+  const initialResult = await runBatch(high);
+  updateLastMetrics(initialResult);
 
-      message: lastReason || "concurrency_test_failed",
+  if (!initialResult.ok) {
+    let left = 1;
+    let right = high - 1;
+    while (left <= right) {
+      const mid = Math.floor((left + right) / 2);
+      const result = await runBatch(mid);
+      updateLastMetrics(result);
+      if (result.ok) {
+        low = mid;
+        left = mid + 1;
+      } else {
+        right = mid - 1;
+      }
+    }
 
-      url,
+    if (low === 0) {
+      return {
+        ok: false,
+        message: lastReason || "concurrency_test_failed",
+        url,
+        statusCounts: lastCounts,
+        latencyMs: lastLatencyMs,
+      };
+    }
 
-      statusCounts: lastCounts,
-
-      latencyMs: lastLatencyMs,
-    };
-  }
-
-  if (high > max) {
     return {
       ok: true,
-
       maxConcurrency: low,
-
       url,
-
       statusCounts: lastCounts,
+      latencyMs: lastLatencyMs,
+      message: lastReason,
+    };
+  }
 
+  low = high;
+  if (low >= max) {
+    return {
+      ok: true,
+      maxConcurrency: low,
+      url,
+      statusCounts: lastCounts,
       latencyMs: lastLatencyMs,
     };
   }
 
-  let left = low + 1;
-
-  let right = Math.min(high - 1, max);
-
-  while (left <= right) {
-    const mid = Math.floor((left + right) / 2);
-
-    const result = await runBatch(mid);
-
-    lastCounts = result.counts;
-
-    lastLatencyMs = result.latencyMs;
-
+  let failAt = 0;
+  while (high < max) {
+    const next = Math.min(max, high * 2);
+    if (next <= high) break;
+    const result = await runBatch(next);
+    updateLastMetrics(result);
     if (result.ok) {
-      low = mid;
+      low = next;
+      high = next;
+      if (low >= max) break;
+      continue;
+    }
 
-      left = mid + 1;
-    } else {
-      lastReason = result.reason || "concurrency_test_failed";
+    failAt = next;
+    break;
+  }
 
-      right = mid - 1;
+  if (failAt > 0) {
+    let left = low + 1;
+    let right = Math.min(failAt - 1, max);
+
+    while (left <= right) {
+      const mid = Math.floor((left + right) / 2);
+      const result = await runBatch(mid);
+      updateLastMetrics(result);
+      if (result.ok) {
+        low = mid;
+        left = mid + 1;
+      } else {
+        right = mid - 1;
+      }
     }
   }
 
@@ -1962,6 +2044,8 @@ export const __testOnly = {
   buildNextProfileIndexCache,
   buildConcurrencyTestPayload,
   classifyConcurrencyFailure,
+  resolveConcurrencyProbeStart,
+  assessConcurrencyBatch,
   normalizeProfilesListOptions,
   ensureDefaultLineQualityChecks,
 };

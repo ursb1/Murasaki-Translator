@@ -14,7 +14,10 @@ except Exception:
     pass
 
 from murasaki_flow_v2.registry.profile_store import ProfileStore
-from murasaki_flow_v2.pipelines.runner import PipelineRunner
+from murasaki_flow_v2.pipelines.runner import (
+    PipelineRunner,
+    PipelineStopRequested,
+)
 from murasaki_flow_v2.utils.log_protocol import emit_error
 
 
@@ -30,6 +33,7 @@ def main() -> int:
     parser.add_argument("--resume", action="store_true", help="Resume from temp progress")
     parser.add_argument("--cache-dir", help="Custom directory to store cache files")
     parser.add_argument("--no-cache", action="store_true", help="Disable cache saving")
+    parser.add_argument("--stop-flag", help="Stop request marker file path")
     parser.add_argument("--source-lang", default="ja", help="Source language for QC (e.g. ja)")
     parser.add_argument("--enable-quality", action="store_true", help="Enable V1 quality checks")
     parser.add_argument("--disable-quality", action="store_true", help="Disable V1 quality checks")
@@ -92,7 +96,11 @@ def main() -> int:
             resume=bool(args.resume),
             save_cache=not bool(args.no_cache),
             cache_dir=args.cache_dir,
+            stop_flag_path=args.stop_flag,
         )
+    except PipelineStopRequested:
+        print("[FlowV2] Stop requested. Preserved temp/cache for resume.")
+        return 130
     except Exception as e:
         import traceback
         error_msg = f"{str(e)}\n\n{traceback.format_exc()}"

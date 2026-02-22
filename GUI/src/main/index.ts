@@ -3627,7 +3627,7 @@ ipcMain.handle(
               return;
             }
             const dstRaw = fs.readFileSync(outputPath, "utf8");
-            const dst = dstRaw.replace(/\r?\n$/, "");
+            const dst = dstRaw.replace(/[\r\n]+$/, "");
             finish({
               success: true,
               src,
