@@ -159,23 +159,23 @@ export function ServiceView({
     runtime?.syncMirrorPath || network?.syncMirrorPath || "";
   const inlineNoticeConfig = inlineNotice
     ? {
-      success: {
-        className: "bg-emerald-500/10 border-emerald-500/30 text-emerald-600",
-        icon: Check,
-      },
-      warning: {
-        className: "bg-amber-500/10 border-amber-500/30 text-amber-600",
-        icon: Info,
-      },
-      error: {
-        className: "bg-red-500/10 border-red-500/30 text-red-600",
-        icon: Info,
-      },
-      info: {
-        className: "bg-blue-500/10 border-blue-500/30 text-blue-600",
-        icon: Info,
-      },
-    }[inlineNotice.type]
+        success: {
+          className: "bg-emerald-500/10 border-emerald-500/30 text-emerald-600",
+          icon: Check,
+        },
+        warning: {
+          className: "bg-amber-500/10 border-amber-500/30 text-amber-600",
+          icon: Info,
+        },
+        error: {
+          className: "bg-red-500/10 border-red-500/30 text-red-600",
+          icon: Info,
+        },
+        info: {
+          className: "bg-blue-500/10 border-blue-500/30 text-blue-600",
+          icon: Info,
+        },
+      }[inlineNotice.type]
     : null;
 
   useEffect(() => {
@@ -326,8 +326,8 @@ export function ServiceView({
       const parsedLocalPort = Number.parseInt(localPort, 10);
       const preferredPort =
         Number.isFinite(parsedLocalPort) &&
-          parsedLocalPort >= 1 &&
-          parsedLocalPort <= 65535
+        parsedLocalPort >= 1 &&
+        parsedLocalPort <= 65535
           ? parsedLocalPort
           : DEFAULT_LOCAL_API_PORT;
       if (String(preferredPort) !== localPort) {
@@ -703,7 +703,9 @@ export function ServiceView({
           <RefreshCw className="w-4 h-4 animate-spin text-muted-foreground" />
         )}
       </h3>
-      <p className="text-xs text-muted-foreground mt-1 mb-4 leading-relaxed">{s.subtitle}</p>
+      <p className="text-xs text-muted-foreground mt-1 mb-4 leading-relaxed">
+        {s.subtitle}
+      </p>
 
       {inlineNotice &&
         inlineNoticeConfig &&
@@ -808,9 +810,7 @@ export function ServiceView({
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <div>
-                  <span className="text-sm font-semibold">
-                    {s.localTitle}
-                  </span>
+                  <span className="text-sm font-semibold">{s.localTitle}</span>
                   <p className="text-[10px] text-muted-foreground mt-0.5">
                     {s.localDesc}
                   </p>
@@ -818,19 +818,21 @@ export function ServiceView({
                 <div className="flex bg-secondary rounded-lg p-0.5 border">
                   <button
                     onClick={() => void toggleDaemonMode(false)}
-                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${!daemonMode
-                      ? "bg-background text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                      }`}
+                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                      !daemonMode
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
                   >
                     {s.modeAuto}
                   </button>
                   <button
                     onClick={() => void toggleDaemonMode(true)}
-                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${daemonMode
-                      ? "bg-background text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                      }`}
+                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                      daemonMode
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
                   >
                     {s.modeFixed}
                   </button>
@@ -860,10 +862,7 @@ export function ServiceView({
                             .replace(/[^\d]/g, "")
                             .slice(0, 5);
                           setLocalPort(nextValue);
-                          localStorage.setItem(
-                            "config_local_port",
-                            nextValue,
-                          );
+                          localStorage.setItem("config_local_port", nextValue);
                         }}
                       />
                       <p className="text-[11px] leading-5 text-muted-foreground">
@@ -906,9 +905,7 @@ export function ServiceView({
                           size="sm"
                           variant="outline"
                           className="h-6 px-2 text-[10px] gap-1"
-                          onClick={() =>
-                            setShowLocalApiKey((value) => !value)
-                          }
+                          onClick={() => setShowLocalApiKey((value) => !value)}
                         >
                           {showLocalApiKey ? (
                             <>
@@ -1026,16 +1023,11 @@ export function ServiceView({
                           serverStatus.lanEndpoints.length > 0 && (
                             <div className="space-y-0.5">
                               <div>{s.lanApiLabel}</div>
-                              {serverStatus.lanEndpoints.map(
-                                (url: string) => (
-                                  <div
-                                    key={url}
-                                    className="font-mono break-all"
-                                  >
-                                    {url}
-                                  </div>
-                                ),
-                              )}
+                              {serverStatus.lanEndpoints.map((url: string) => (
+                                <div key={url} className="font-mono break-all">
+                                  {url}
+                                </div>
+                              ))}
                             </div>
                           )}
                         <div className="space-y-0.5">
@@ -1369,7 +1361,7 @@ export function ServiceView({
                         </span>
                         <span className="font-mono justify-self-end text-right break-all">
                           {Array.isArray(runtime?.capabilities) &&
-                            runtime.capabilities.length > 0
+                          runtime.capabilities.length > 0
                             ? runtime.capabilities.join(", ")
                             : s.none}
                         </span>
@@ -1388,9 +1380,7 @@ export function ServiceView({
                         </span>
                         <span className="font-mono justify-self-end text-right">
                           {network.lastSyncAt
-                            ? new Date(
-                              network.lastSyncAt,
-                            ).toLocaleTimeString()
+                            ? new Date(network.lastSyncAt).toLocaleTimeString()
                             : "--"}
                         </span>
                       </div>

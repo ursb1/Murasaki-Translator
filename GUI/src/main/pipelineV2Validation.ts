@@ -116,7 +116,11 @@ const validatePromptParserPair = (
     }
   }
   if (parserType === "jsonl") {
-    if (!promptText.includes("jsonl") && !promptText.includes("json lines") && !promptText.includes("jsonline")) {
+    if (
+      !promptText.includes("jsonl") &&
+      !promptText.includes("json lines") &&
+      !promptText.includes("jsonline")
+    ) {
       result.errors.push("parser_requires_jsonl_prompt");
     }
   }
@@ -188,7 +192,11 @@ export const validateProfileLocal = async (
         result.errors.push("invalid_rpm");
       }
     }
-    if (data.timeout !== undefined && data.timeout !== null && data.timeout !== "") {
+    if (
+      data.timeout !== undefined &&
+      data.timeout !== null &&
+      data.timeout !== ""
+    ) {
       const timeoutValue = Number(data.timeout);
       if (!Number.isFinite(timeoutValue) || timeoutValue <= 0) {
         result.errors.push("invalid_timeout");
@@ -233,10 +241,20 @@ export const validateProfileLocal = async (
     }
     const options = data.options || {};
     const similarityRaw =
-      options.similarity_threshold ?? options.similarity ?? options.similarityThreshold;
-    if (similarityRaw !== undefined && similarityRaw !== null && similarityRaw !== "") {
+      options.similarity_threshold ??
+      options.similarity ??
+      options.similarityThreshold;
+    if (
+      similarityRaw !== undefined &&
+      similarityRaw !== null &&
+      similarityRaw !== ""
+    ) {
       const similarityValue = Number(similarityRaw);
-      if (!Number.isFinite(similarityValue) || similarityValue <= 0 || similarityValue > 1) {
+      if (
+        !Number.isFinite(similarityValue) ||
+        similarityValue <= 0 ||
+        similarityValue > 1
+      ) {
         result.errors.push("invalid_similarity_threshold");
       }
     }
@@ -280,7 +298,11 @@ export const validateProfileLocal = async (
       balanceThresholdRaw !== ""
     ) {
       const balanceValue = Number(balanceThresholdRaw);
-      if (!Number.isFinite(balanceValue) || balanceValue <= 0 || balanceValue > 1) {
+      if (
+        !Number.isFinite(balanceValue) ||
+        balanceValue <= 0 ||
+        balanceValue > 1
+      ) {
         result.errors.push("invalid_balance_threshold");
       }
     }

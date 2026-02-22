@@ -6,6 +6,7 @@ import pytest
 from murasaki_flow_v2.pipelines.runner import PipelineRunner
 from murasaki_flow_v2.registry.profile_store import ProfileStore
 from murasaki_flow_v2.parsers.base import ParserError
+from murasaki_flow_v2.providers.base import ProviderError, ProviderResponse
 from murasaki_flow_v2.utils.adaptive_concurrency import AdaptiveConcurrency
 
 try:
@@ -64,6 +65,46 @@ def test_flow_v2_runner_block_line_range_non_int_ignored():
 def test_flow_v2_runner_block_line_range_none_metadata():
     block = TextBlock(id=1, prompt_text="hello", metadata=None)
     assert PipelineRunner._block_line_range(block) == (0, 0)
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_should_use_double_newline_separator():
+    assert (
+        PipelineRunner._should_use_double_newline_separator(
+            [
+                {
+                    "type": "format",
+                    "pattern": "ensure_double_newline",
+                    "active": True,
+                }
+            ]
+        )
+        is True
+    )
+    assert (
+        PipelineRunner._should_use_double_newline_separator(
+            [
+                {
+                    "type": "format",
+                    "pattern": "ensure_double_newline",
+                    "active": False,
+                }
+            ]
+        )
+        is False
+    )
+    assert PipelineRunner._should_use_double_newline_separator([]) is False
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_save_txt_blocks_double_separator(tmp_path):
+    path = tmp_path / "out.txt"
+    blocks = [
+        TextBlock(id=1, prompt_text="A", metadata=[0]),
+        TextBlock(id=2, prompt_text="B", metadata=[1]),
+    ]
+    PipelineRunner._save_txt_blocks(str(path), blocks, separator="\n\n")
+    assert path.read_text(encoding="utf-8") == "A\n\nB\n\n"
 
 
 # ---------------------------------------------------------------------------
@@ -378,3 +419,132 @@ def test_flow_v2_runner_processing_lock_separation():
     assert processor._pre_lock is not processor._post_lock
     assert isinstance(processor._pre_lock, type(threading.Lock()))
     assert isinstance(processor._post_lock, type(threading.Lock()))
+
+
+class _DummyDoc:
+    def __init__(self, lines):
+        self._lines = lines
+        self.saved_path = None
+        self.saved_blocks = []
+
+    def load(self):
+        return [{"text": line} for line in self._lines]
+
+    def save(self, path, blocks):
+        self.saved_path = path
+        self.saved_blocks = blocks
+
+
+class _DummyLineChunkPolicy:
+    profile = {"chunk_type": "line", "type": "line"}
+
+    def chunk(self, items):
+        return [
+            TextBlock(id=index + 1, prompt_text=item["text"], metadata=[index])
+            for index, item in enumerate(items)
+        ]
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_fallback_to_source_on_provider_error(tmp_path, monkeypatch):
+    runner = _make_runner(tmp_path)
+    runner.pipeline = {
+        "provider": "provider_stub",
+        "prompt": "prompt_stub",
+        "parser": "parser_stub",
+        "chunk_policy": "chunk_stub",
+        "settings": {"max_retries": 0, "concurrency": 1},
+    }
+
+    class _Provider:
+        profile = {"model": "stub-model"}
+
+        def build_request(self, _messages, _settings):
+            return object()
+
+        def send(self, _request):
+            raise ProviderError("HTTP 503 provider_unavailable")
+
+    class _Parser:
+        profile = {"type": "plain"}
+
+        def parse(self, _text):
+            raise AssertionError("ProviderError path should not call parser")
+
+    doc = _DummyDoc(["L1", "L2"])
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.DocumentFactory.get_document",
+        lambda _path: doc,
+    )
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.build_messages",
+        lambda *_args, **_kwargs: [{"role": "user", "content": "x"}],
+    )
+    monkeypatch.setattr(runner.providers, "get_provider", lambda _ref: _Provider())
+    monkeypatch.setattr(runner.parsers, "get_parser", lambda _ref: _Parser())
+    monkeypatch.setattr(
+        runner.prompts, "get_prompt", lambda _ref: {"user_template": "{{source}}"}
+    )
+    monkeypatch.setattr(
+        runner.chunk_policies, "get_chunk_policy", lambda _ref: _DummyLineChunkPolicy()
+    )
+
+    output_path = str(tmp_path / "out.txt")
+    result = runner.run("dummy-input.txt", output_path=output_path, save_cache=False)
+    assert result == output_path
+    assert [block.prompt_text for block in doc.saved_blocks] == ["L1", "L2"]
+
+    line_error_path = tmp_path / "out.txt.line_errors.jsonl"
+    assert line_error_path.exists()
+    content = line_error_path.read_text(encoding="utf-8")
+    assert '"status": "untranslated_fallback"' in content
+    assert '"type": "provider_error"' in content
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_fallback_to_source_on_parser_error(tmp_path, monkeypatch):
+    runner = _make_runner(tmp_path)
+    runner.pipeline = {
+        "provider": "provider_stub",
+        "prompt": "prompt_stub",
+        "parser": "parser_stub",
+        "chunk_policy": "chunk_stub",
+        "settings": {"max_retries": 0, "concurrency": 1},
+    }
+
+    class _Provider:
+        profile = {"model": "stub-model"}
+
+        def build_request(self, _messages, _settings):
+            return object()
+
+        def send(self, _request):
+            return ProviderResponse(text="invalid", raw={})
+
+    class _Parser:
+        profile = {"type": "plain"}
+
+        def parse(self, _text):
+            raise ParserError("empty_output")
+
+    doc = _DummyDoc(["A", "B"])
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.DocumentFactory.get_document",
+        lambda _path: doc,
+    )
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.build_messages",
+        lambda *_args, **_kwargs: [{"role": "user", "content": "x"}],
+    )
+    monkeypatch.setattr(runner.providers, "get_provider", lambda _ref: _Provider())
+    monkeypatch.setattr(runner.parsers, "get_parser", lambda _ref: _Parser())
+    monkeypatch.setattr(
+        runner.prompts, "get_prompt", lambda _ref: {"user_template": "{{source}}"}
+    )
+    monkeypatch.setattr(
+        runner.chunk_policies, "get_chunk_policy", lambda _ref: _DummyLineChunkPolicy()
+    )
+
+    output_path = str(tmp_path / "out.txt")
+    runner.run("dummy-input.txt", output_path=output_path, save_cache=False)
+    assert [block.prompt_text for block in doc.saved_blocks] == ["A", "B"]

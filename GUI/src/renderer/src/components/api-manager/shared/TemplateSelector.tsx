@@ -83,9 +83,7 @@ export function TemplateSelector({
       list.push(item);
       map.set(item.group, list);
     }
-    const order = groupOrder.length
-      ? groupOrder
-      : Array.from(map.keys());
+    const order = groupOrder.length ? groupOrder : Array.from(map.keys());
     return order
       .map((key) => ({
         key,

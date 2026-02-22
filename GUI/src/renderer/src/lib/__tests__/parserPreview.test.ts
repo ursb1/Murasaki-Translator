@@ -13,18 +13,18 @@ describe("parserPreview helpers", () => {
   });
 
   it("parses JSONL inside code fences", () => {
-    const raw = "```jsonl\njsonline{\"translation\":\"B\"}\n```";
+    const raw = '```jsonl\njsonline{"translation":"B"}\n```';
     const lines = parseJsonlPreviewLines(raw, "translation");
     expect(lines).toEqual(["B"]);
   });
 
   it("extracts JSON block from mixed text", () => {
-    const data = parseJsonPreviewValue("Answer: {\"ok\": true}");
+    const data = parseJsonPreviewValue('Answer: {"ok": true}');
     expect(data).toEqual({ ok: true });
   });
 
   it("strips think tags before JSON parsing", () => {
-    const data = parseJsonPreviewValue("<think>analysis</think>\n{\"ok\": true}");
+    const data = parseJsonPreviewValue('<think>analysis</think>\n{"ok": true}');
     expect(data).toEqual({ ok: true });
   });
 
@@ -46,7 +46,7 @@ describe("parserPreview helpers", () => {
   });
 
   it("strips think tags for JSONL preview", () => {
-    const raw = "<think>analysis</think>\n{\"translation\":\"A\"}";
+    const raw = '<think>analysis</think>\n{"translation":"A"}';
     const lines = parseJsonlPreviewLines(raw, "translation");
     expect(lines).toEqual(["A"]);
   });

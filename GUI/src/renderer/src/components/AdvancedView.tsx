@@ -763,10 +763,11 @@ export function AdvancedView({ lang, remoteRuntime }: AdvancedViewProps) {
                     return (
                       (isHardLimited || isNearLimit) && (
                         <p
-                          className={`mt-3 text-[10px] p-3 rounded-lg border leading-relaxed flex gap-2 ${isHardLimited
-                            ? "text-red-600 dark:text-red-400 bg-red-500/10 border-red-500/20"
-                            : "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/20"
-                            }`}
+                          className={`mt-3 text-[10px] p-3 rounded-lg border leading-relaxed flex gap-2 ${
+                            isHardLimited
+                              ? "text-red-600 dark:text-red-400 bg-red-500/10 border-red-500/20"
+                              : "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/20"
+                          }`}
                         >
                           <Info className="w-3 h-3 shrink-0 mt-0.5" />
                           <span>
@@ -777,13 +778,13 @@ export function AdvancedView({ lang, remoteRuntime }: AdvancedViewProps) {
                             </strong>{" "}
                             {isHardLimited
                               ? av.contextWarningHardDesc.replace(
-                                "{theoretical}",
-                                String(theoretical),
-                              )
+                                  "{theoretical}",
+                                  String(theoretical),
+                                )
                               : av.contextWarningSoftDesc.replace(
-                                "{effective}",
-                                String(effective),
-                              )}
+                                  "{effective}",
+                                  String(effective),
+                                )}
                           </span>
                         </p>
                       )
@@ -986,13 +987,14 @@ export function AdvancedView({ lang, remoteRuntime }: AdvancedViewProps) {
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         {/* Card 1: Token Throughput Stats */}
                         <div
-                          className={`relative overflow-hidden rounded-xl border p-3 flex flex-col justify-between h-full transition-all duration-300 ${parseInt(ctxSize) * concurrency > 16384 * 16 * 0.75
-                            ? "bg-red-500/5 border-red-500/20"
-                            : parseInt(ctxSize) * concurrency >
-                              16384 * 16 * 0.45
-                              ? "bg-amber-500/5 border-amber-500/20"
-                              : "bg-secondary/30 border-border/40 hover:border-primary/30"
-                            }`}
+                          className={`relative overflow-hidden rounded-xl border p-3 flex flex-col justify-between h-full transition-all duration-300 ${
+                            parseInt(ctxSize) * concurrency > 16384 * 16 * 0.75
+                              ? "bg-red-500/5 border-red-500/20"
+                              : parseInt(ctxSize) * concurrency >
+                                  16384 * 16 * 0.45
+                                ? "bg-amber-500/5 border-amber-500/20"
+                                : "bg-secondary/30 border-border/40 hover:border-primary/30"
+                          }`}
                         >
                           <div className="flex flex-col">
                             <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">
@@ -1000,14 +1002,15 @@ export function AdvancedView({ lang, remoteRuntime }: AdvancedViewProps) {
                             </span>
                             <div className="flex items-baseline gap-1.5 mt-1">
                               <span
-                                className={`text-xl font-mono font-bold tracking-tight ${parseInt(ctxSize) * concurrency >
+                                className={`text-xl font-mono font-bold tracking-tight ${
+                                  parseInt(ctxSize) * concurrency >
                                   16384 * 16 * 0.75
-                                  ? "text-red-600"
-                                  : parseInt(ctxSize) * concurrency >
-                                    16384 * 16 * 0.45
-                                    ? "text-amber-600"
-                                    : "text-primary"
-                                  }`}
+                                    ? "text-red-600"
+                                    : parseInt(ctxSize) * concurrency >
+                                        16384 * 16 * 0.45
+                                      ? "text-amber-600"
+                                      : "text-primary"
+                                }`}
                               >
                                 {(
                                   parseInt(ctxSize) * concurrency
@@ -1020,14 +1023,15 @@ export function AdvancedView({ lang, remoteRuntime }: AdvancedViewProps) {
                           </div>
                           <div className="w-full h-1 mt-3 bg-foreground/5 rounded-full overflow-hidden">
                             <div
-                              className={`h-full rounded-full transition-all duration-500 ${parseInt(ctxSize) * concurrency >
+                              className={`h-full rounded-full transition-all duration-500 ${
+                                parseInt(ctxSize) * concurrency >
                                 16384 * 16 * 0.75
-                                ? "bg-red-500 w-full animate-pulse"
-                                : parseInt(ctxSize) * concurrency >
-                                  16384 * 16 * 0.45
-                                  ? "bg-amber-500"
-                                  : "bg-emerald-500"
-                                }`}
+                                  ? "bg-red-500 w-full animate-pulse"
+                                  : parseInt(ctxSize) * concurrency >
+                                      16384 * 16 * 0.45
+                                    ? "bg-amber-500"
+                                    : "bg-emerald-500"
+                              }`}
                               style={{
                                 width: `${Math.min(100, ((parseInt(ctxSize) * concurrency) / (16384 * 16)) * 100)}%`,
                               }}
@@ -1039,10 +1043,10 @@ export function AdvancedView({ lang, remoteRuntime }: AdvancedViewProps) {
                             </span>
                             <span>
                               {parseInt(ctxSize) * concurrency >
-                                16384 * 16 * 0.75
+                              16384 * 16 * 0.75
                                 ? "High Throughput"
                                 : parseInt(ctxSize) * concurrency >
-                                  16384 * 16 * 0.45
+                                    16384 * 16 * 0.45
                                   ? "Medium Throughput"
                                   : "Balanced"}
                             </span>
@@ -1083,12 +1087,13 @@ export function AdvancedView({ lang, remoteRuntime }: AdvancedViewProps) {
 
                             return (
                               <div
-                                className={`relative overflow-hidden rounded-xl border p-3 flex flex-col justify-between h-full transition-all duration-300 ${!isSafe
-                                  ? "bg-red-500/5 border-red-500/20"
-                                  : usagePct > 90
-                                    ? "bg-amber-500/5 border-amber-500/20"
-                                    : "bg-secondary/30 border-border/40 hover:border-blue-500/30"
-                                  }`}
+                                className={`relative overflow-hidden rounded-xl border p-3 flex flex-col justify-between h-full transition-all duration-300 ${
+                                  !isSafe
+                                    ? "bg-red-500/5 border-red-500/20"
+                                    : usagePct > 90
+                                      ? "bg-amber-500/5 border-amber-500/20"
+                                      : "bg-secondary/30 border-border/40 hover:border-blue-500/30"
+                                }`}
                               >
                                 <div className="flex flex-col">
                                   <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">
@@ -1142,10 +1147,11 @@ export function AdvancedView({ lang, remoteRuntime }: AdvancedViewProps) {
                       {/* --- Consolidated System Advisory --- */}
                       {concurrency > 1 && (
                         <div
-                          className={`rounded-xl border p-3 flex gap-3 items-start backdrop-blur-sm ${concurrency > 8
-                            ? "bg-orange-500/10 border-orange-500/20 text-orange-700 dark:text-orange-400"
-                            : "bg-secondary/40 border-border/50 text-foreground/80"
-                            }`}
+                          className={`rounded-xl border p-3 flex gap-3 items-start backdrop-blur-sm ${
+                            concurrency > 8
+                              ? "bg-orange-500/10 border-orange-500/20 text-orange-700 dark:text-orange-400"
+                              : "bg-secondary/40 border-border/50 text-foreground/80"
+                          }`}
                         >
                           <Info className="w-4 h-4 shrink-0 mt-0.5 opacity-80" />
                           <div className="space-y-1.5 flex-1">
@@ -1364,10 +1370,11 @@ export function AdvancedView({ lang, remoteRuntime }: AdvancedViewProps) {
                           onClick={() => setKvCacheType(opt.id)}
                           disabled={autoKvSwitch}
                           className={`flex flex-col items-start p-2 rounded-lg border transition-all text-left
-                                                        ${kvCacheType === opt.id
-                              ? "bg-primary/10 border-primary ring-1 ring-primary/20"
-                              : "bg-secondary/40 border-border hover:border-primary/50"
-                            }
+                                                        ${
+                                                          kvCacheType === opt.id
+                                                            ? "bg-primary/10 border-primary ring-1 ring-primary/20"
+                                                            : "bg-secondary/40 border-border hover:border-primary/50"
+                                                        }
                                                         ${autoKvSwitch ? "opacity-70 grayscale-[0.5] cursor-not-allowed" : "cursor-pointer"}
                                                     `}
                         >

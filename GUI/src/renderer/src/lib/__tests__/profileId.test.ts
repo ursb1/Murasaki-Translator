@@ -9,7 +9,9 @@ describe("profileId utils", () => {
 
   it("creates unique ids when collisions exist", () => {
     const existing = ["new_profile", "new_profile_2"];
-    expect(createUniqueProfileId("new_profile", existing)).toBe("new_profile_3");
+    expect(createUniqueProfileId("new_profile", existing)).toBe(
+      "new_profile_3",
+    );
   });
 
   it("keeps current id when provided", () => {

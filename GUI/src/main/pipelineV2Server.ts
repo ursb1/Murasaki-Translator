@@ -97,7 +97,10 @@ const waitForHealth = async (baseUrl: string, timeoutMs = 8000) => {
   while (Date.now() < deadline) {
     try {
       const perAttemptTimeout = Math.min(2000, Math.max(500, timeoutMs));
-      const res = await fetchWithTimeout(`${baseUrl}/health`, perAttemptTimeout);
+      const res = await fetchWithTimeout(
+        `${baseUrl}/health`,
+        perAttemptTimeout,
+      );
       if (res.ok) return;
     } catch {
       // ignore

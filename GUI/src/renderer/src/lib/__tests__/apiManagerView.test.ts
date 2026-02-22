@@ -605,9 +605,16 @@ describe("apiManager view i18n", () => {
   });
 
   it("keeps only supported chunk strategy labels", () => {
-    const removedKeys = ["chunk_line_strict", "chunk_line_loose", "chunk_line_keep"];
+    const removedKeys = [
+      "chunk_line_strict",
+      "chunk_line_loose",
+      "chunk_line_keep",
+    ];
     for (const lang of Object.values(translations)) {
-      const profileNames = lang.apiManager.profileNames as Record<string, string>;
+      const profileNames = lang.apiManager.profileNames as Record<
+        string,
+        string
+      >;
       expect(profileNames.chunk_legacy_doc).toBeTruthy();
       for (const key of removedKeys) {
         expect(profileNames[key]).toBeUndefined();
@@ -802,9 +809,7 @@ describe("apiManager view defaults", () => {
       "ApiManagerView.tsx",
     );
     const content = fs.readFileSync(filePath, "utf-8");
-    const match = content.match(
-      /const DEFAULT_PIPELINE_COMPOSER:[\s\S]*?};/,
-    );
+    const match = content.match(/const DEFAULT_PIPELINE_COMPOSER:[\s\S]*?};/);
     expect(match).toBeTruthy();
     const block = match?.[0] || "";
     expect(block).toContain('temperature: ""');
@@ -891,7 +896,9 @@ describe("apiManager view chunk type handling", () => {
       "ApiManagerView.tsx",
     );
     const content = fs.readFileSync(filePath, "utf-8");
-    expect(content).toContain("const normalizedChunkType = normalizeChunkType(rawChunkType);");
+    expect(content).toContain(
+      "const normalizedChunkType = normalizeChunkType(rawChunkType);",
+    );
   });
 });
 
@@ -915,4 +922,3 @@ describe("apiManager view translation mode resolver", () => {
     expect(match).toBeTruthy();
   });
 });
-

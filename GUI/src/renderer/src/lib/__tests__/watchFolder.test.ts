@@ -59,4 +59,44 @@ describe("watchFolder helpers", () => {
       isLikelyTranslatedOutput("movie_modela.doc", ["ModelA"], supported),
     ).toBe(false);
   });
+
+  it("detects likely translated outputs by v2 provider_model suffix", () => {
+    const supported = [".srt", ".txt"];
+    expect(
+      isLikelyTranslatedOutput("movie_openai_gpt-4.1-mini.srt", [], supported, [
+        "openai",
+      ]),
+    ).toBe(true);
+    expect(
+      isLikelyTranslatedOutput(
+        "movie_deepseek-ai_DeepSeek-V3.srt",
+        [],
+        supported,
+        ["deepseek-ai"],
+      ),
+    ).toBe(true);
+    expect(
+      isLikelyTranslatedOutput(
+        "movie_customProvider_claude-3-7.txt",
+        [],
+        supported,
+        ["customProvider"],
+      ),
+    ).toBe(true);
+    expect(
+      isLikelyTranslatedOutput("movie_sample-provider_sample-model.srt", [], supported, [
+        "another_provider",
+      ]),
+    ).toBe(false);
+  });
+
+  it("falls back to provider/model heuristic when provider list is unavailable", () => {
+    const supported = [".txt"];
+    expect(
+      isLikelyTranslatedOutput("test2_deepseek-ai_DeepSeek-V3.txt", [], supported),
+    ).toBe(true);
+    expect(
+      isLikelyTranslatedOutput("chapter_part-1_section-2.txt", [], supported),
+    ).toBe(false);
+  });
 });

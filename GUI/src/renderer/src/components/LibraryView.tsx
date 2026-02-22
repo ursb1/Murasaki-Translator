@@ -98,6 +98,22 @@ const getModelNameFromPath = (modelPath?: string) => {
   return name.replace(/\.gguf$/i, "");
 };
 
+const getProviderNameFromModelRef = (modelRef?: string) => {
+  const raw = String(modelRef || "").trim();
+  if (!raw) return "";
+  if (/^https?:\/\//i.test(raw)) return "";
+  if (/^[a-zA-Z]:[\\/]/.test(raw)) return "";
+  if (raw.startsWith("/") || raw.startsWith("./") || raw.startsWith("../")) {
+    return "";
+  }
+  const normalized = raw.replace(/\\/g, "/");
+  const parts = normalized.split("/").filter(Boolean);
+  if (parts.length < 2) return "";
+  const provider = String(parts[0] || "").trim();
+  if (!provider) return "";
+  return provider;
+};
+
 function getCachePath(
   filePath: string,
   outputDir?: string,
@@ -136,17 +152,13 @@ function getCachePath(
   return `${joined}.cache.json`;
 }
 
-const resolveCachePathFromOutput = (
-  outputPath: string,
-  cacheDir?: string,
-) => {
+const resolveCachePathFromOutput = (outputPath: string, cacheDir?: string) => {
   if (!outputPath) return "";
   const dir = String(cacheDir || "").trim();
   if (!dir) return `${outputPath}.cache.json`;
   const fileName = outputPath.split(/[/\\]/).pop() || outputPath;
   const sep = dir.includes("\\") && !dir.includes("/") ? "\\" : "/";
-  const prefix =
-    dir.endsWith("\\") || dir.endsWith("/") ? dir : `${dir}${sep}`;
+  const prefix = dir.endsWith("\\") || dir.endsWith("/") ? dir : `${dir}${sep}`;
   return `${prefix}${fileName}.cache.json`;
 };
 
@@ -906,10 +918,11 @@ export function FileConfigModal({
             step={step}
             className={`
                             flex-1 h-8 px-2.5 text-sm rounded-md border transition-all outline-none
-                            ${config.useGlobalDefaults
-                ? "bg-secondary/30 border-transparent text-muted-foreground/50 cursor-not-allowed placeholder:text-muted-foreground/40"
-                : "bg-background/50 border-border focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
-              }
+                            ${
+                              config.useGlobalDefaults
+                                ? "bg-secondary/30 border-transparent text-muted-foreground/50 cursor-not-allowed placeholder:text-muted-foreground/40"
+                                : "bg-background/50 border-border focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
+                            }
                         `}
           />
           {onBrowse && (
@@ -999,10 +1012,11 @@ export function FileConfigModal({
                       ...(mode === "v2" ? { useGlobalDefaults: false } : {}),
                     }))
                   }
-                  className={`flex-1 text-xs font-medium py-1.5 rounded-md transition-all ${active
-                    ? "bg-background text-foreground shadow-sm border border-border/50"
-                    : "text-muted-foreground hover:text-foreground"
-                    }`}
+                  className={`flex-1 text-xs font-medium py-1.5 rounded-md transition-all ${
+                    active
+                      ? "bg-background text-foreground shadow-sm border border-border/50"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
                 >
                   {mode === "v1" ? t.engineModeLocal : t.engineModeApi}
                 </button>
@@ -1013,7 +1027,6 @@ export function FileConfigModal({
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
-
           {/* === API Mode: Pipeline Selector === */}
           {isApiMode && (
             <div className="space-y-4">
@@ -1044,7 +1057,8 @@ export function FileConfigModal({
                     <option value="">{t.selectPipeline}</option>
                     {v2Profiles.map((p) => (
                       <option key={p.id} value={p.id}>
-                        {p.name}{p.providerName ? ` (${p.providerName})` : ""}
+                        {p.name}
+                        {p.providerName ? ` (${p.providerName})` : ""}
                       </option>
                     ))}
                   </select>
@@ -1103,10 +1117,11 @@ export function FileConfigModal({
                   }
                   className={`
                   w-full h-8 px-2.5 text-sm rounded-md border transition-all outline-none
-                  ${config.useGlobalDefaults
+                  ${
+                    config.useGlobalDefaults
                       ? "bg-secondary/30 border-transparent text-muted-foreground/50 cursor-not-allowed"
                       : "bg-background/50 border-border focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
-                    }
+                  }
                 `}
                 >
                   <option
@@ -1151,10 +1166,11 @@ export function FileConfigModal({
                   }
                   className={`
                   w-full h-8 px-2.5 text-sm rounded-md border transition-all outline-none
-                  ${config.useGlobalDefaults
+                  ${
+                    config.useGlobalDefaults
                       ? "bg-secondary/30 border-transparent text-muted-foreground/50 cursor-not-allowed"
                       : "bg-background/50 border-border focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
-                    }
+                  }
                 `}
                 >
                   <option value="">
@@ -1166,15 +1182,15 @@ export function FileConfigModal({
                   </option>
                   {isRemoteMode
                     ? availableRemoteModels.map((model) => (
-                      <option key={model.path} value={model.path}>
-                        {model.name || model.path}
-                      </option>
-                    ))
+                        <option key={model.path} value={model.path}>
+                          {model.name || model.path}
+                        </option>
+                      ))
                     : availableModels.map((model) => (
-                      <option key={model} value={model}>
-                        {model.replace(".gguf", "")}
-                      </option>
-                    ))}
+                        <option key={model} value={model}>
+                          {model.replace(".gguf", "")}
+                        </option>
+                      ))}
                 </select>
               </div>
 
@@ -1222,9 +1238,10 @@ export function FileConfigModal({
                   }
                   className={`
                     w-full h-8 px-2.5 text-sm rounded-md border transition-all outline-none
-                    ${config.useGlobalDefaults
-                      ? "bg-secondary/30 border-transparent text-muted-foreground/50 cursor-not-allowed"
-                      : "bg-background/50 border-border focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
+                    ${
+                      config.useGlobalDefaults
+                        ? "bg-secondary/30 border-transparent text-muted-foreground/50 cursor-not-allowed"
+                        : "bg-background/50 border-border focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
                     }
                   `}
                 >
@@ -1268,9 +1285,10 @@ export function FileConfigModal({
                   }
                   className={`
                     w-full h-8 px-2.5 text-sm rounded-md border transition-all outline-none
-                    ${config.useGlobalDefaults
-                      ? "bg-secondary/30 border-transparent text-muted-foreground/50 cursor-not-allowed"
-                      : "bg-background/50 border-border focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
+                    ${
+                      config.useGlobalDefaults
+                        ? "bg-secondary/30 border-transparent text-muted-foreground/50 cursor-not-allowed"
+                        : "bg-background/50 border-border focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
                     }
                   `}
                 >
@@ -1321,327 +1339,334 @@ export function FileConfigModal({
           </div>
 
           {/* Core Params + Engine Tuning + Features (local mode only) */}
-          {!isApiMode && (<>
-            <div className="h-px bg-border/50" />
+          {!isApiMode && (
+            <>
+              <div className="h-px bg-border/50" />
 
-            {/* Core Params Section */}
-            <div className="space-y-4">
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-                {t.sectionCoreParams}
-              </h4>
-              <div className="grid grid-cols-2 gap-4">
-                <InputRow
-                  icon={Gauge}
-                  label={t.contextSize}
-                  value={config.contextSize}
-                  onChange={(val) =>
-                    setConfig((prev) => ({
-                      ...prev,
-                      contextSize: parseInt(val) || undefined,
-                    }))
-                  }
-                  type="number"
-                  step={1024}
-                  globalValue={globalCtx}
-                  helpText={t.help?.contextSize}
-                />
-                <InputRow
-                  icon={LayoutGrid}
-                  label={t.concurrency}
-                  value={config.concurrency}
-                  onChange={(val) =>
-                    setConfig((prev) => ({
-                      ...prev,
-                      concurrency: parseInt(val) || undefined,
-                    }))
-                  }
-                  type="number"
-                  min={1}
-                  max={8}
-                  globalValue={globalConcurrency}
-                  helpText={t.help?.concurrency}
-                />
-                <InputRow
-                  icon={Zap}
-                  label={t.temperature}
-                  value={config.temperature}
-                  onChange={(val) =>
-                    setConfig((prev) => ({
-                      ...prev,
-                      temperature: parseFloat(val) || undefined,
-                    }))
-                  }
-                  type="number"
-                  step={0.1}
-                  min={0}
-                  max={2}
-                  globalValue={globalTemp}
-                  helpText={t.help?.temperature}
-                />
-                <InputRow
-                  icon={Cpu}
-                  label={t.gpuLayers}
-                  value={config.gpuLayers}
-                  onChange={(val) =>
-                    setConfig((prev) => ({
-                      ...prev,
-                      gpuLayers: val === "" ? -1 : parseInt(val) || -1,
-                    }))
-                  }
-                  type="number"
-                  globalValue={globalGpu}
-                  helpText={t.help?.gpuLayers}
-                />
-              </div>
-            </div>
-
-            <div className="h-px bg-border/50" />
-
-            {/* Advanced Params Section */}
-            <div className="space-y-4">
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-                {t.sectionEngineTuning}
-              </h4>
-              <div className="grid grid-cols-2 gap-4">
-                <InputRow
-                  icon={Scale}
-                  label={t.repPenaltyBase}
-                  value={config.repPenaltyBase}
-                  onChange={(val) =>
-                    setConfig((prev) => ({
-                      ...prev,
-                      repPenaltyBase: parseFloat(val) || undefined,
-                    }))
-                  }
-                  type="number"
-                  step={0.01}
-                  globalValue={globalRepBase}
-                  helpText={t.help?.repPenaltyBase}
-                />
-                <InputRow
-                  icon={Scale}
-                  label={t.repPenaltyMax}
-                  value={config.repPenaltyMax}
-                  onChange={(val) =>
-                    setConfig((prev) => ({
-                      ...prev,
-                      repPenaltyMax: parseFloat(val) || undefined,
-                    }))
-                  }
-                  type="number"
-                  step={0.01}
-                  globalValue={globalRepMax}
-                  helpText={t.help?.repPenaltyMax}
-                />
-
-                {/* KV Cache */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <label
-                      className={`text-xs font-medium flex items-center gap-1.5 ${config.useGlobalDefaults ? "text-muted-foreground" : "text-foreground"}`}
-                    >
-                      <MemoryStick className="w-3.5 h-3.5 shrink-0 opacity-70" />
-                      {t.kvCacheType}
-                    </label>
-                    <span className="text-[10px] text-muted-foreground/50 tabular-nums">
-                      {t.currentGlobal}: {globalKvCache}
-                    </span>
-                  </div>
-                  <select
-                    value={
-                      !config.useGlobalDefaults && config.kvCacheType
-                        ? config.kvCacheType
-                        : ""
-                    }
-                    disabled={config.useGlobalDefaults}
-                    onChange={(e) =>
+              {/* Core Params Section */}
+              <div className="space-y-4">
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                  {t.sectionCoreParams}
+                </h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <InputRow
+                    icon={Gauge}
+                    label={t.contextSize}
+                    value={config.contextSize}
+                    onChange={(val) =>
                       setConfig((prev) => ({
                         ...prev,
-                        kvCacheType: e.target.value || undefined,
+                        contextSize: parseInt(val) || undefined,
                       }))
                     }
-                    className={`
-                                        w-full h-8 px-2.5 text-sm rounded-md border transition-all outline-none
-                                        ${config.useGlobalDefaults
-                        ? "bg-secondary/30 border-transparent text-muted-foreground/50 cursor-not-allowed"
-                        : "bg-background/50 border-border focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
-                      }
-                                    `}
-                  >
-                    <option
-                      value=""
-                      disabled={!config.useGlobalDefaults && !config.kvCacheType}
-                    >
-                      {config.useGlobalDefaults ? globalKvCache : t.notSet}
-                    </option>
-                    <option value="f16">{t.kvOptions.f16}</option>
-                    <option value="q8_0">{t.kvOptions.q8_0}</option>
-                    <option value="q5_1">{t.kvOptions.q5_1}</option>
-                    <option value="q4_0">{t.kvOptions.q4_0}</option>
-                  </select>
-                </div>
-
-                {/* Seed Input */}
-                <InputRow
-                  icon={Sparkles}
-                  label={t.seed}
-                  value={config.seed}
-                  onChange={(val) =>
-                    setConfig((prev) => ({
-                      ...prev,
-                      seed: val ? parseInt(val) : undefined,
-                    }))
-                  }
-                  type="number"
-                  placeholder={t.random}
-                  globalValue={globalSeed || t.random}
-                  helpText={t.help?.seed}
-                />
-
-                {/* Flash Attention */}
-                <div
-                  className={`
-                  col-span-2 flex items-center justify-between p-3 rounded-lg border transition-colors
-                  ${config.useGlobalDefaults
-                      ? "bg-secondary/20 border-transparent opacity-60"
-                      : "bg-background/30 border-border"
+                    type="number"
+                    step={1024}
+                    globalValue={globalCtx}
+                    helpText={t.help?.contextSize}
+                  />
+                  <InputRow
+                    icon={LayoutGrid}
+                    label={t.concurrency}
+                    value={config.concurrency}
+                    onChange={(val) =>
+                      setConfig((prev) => ({
+                        ...prev,
+                        concurrency: parseInt(val) || undefined,
+                      }))
                     }
-                `}
-                >
-                  <div className="flex items-center gap-2">
-                    <Zap
-                      className={`w-4 h-4 ${config.useGlobalDefaults ? "text-muted-foreground" : "text-amber-500"}`}
-                    />
-                    <span
-                      className={`text-sm font-medium ${config.useGlobalDefaults ? "text-muted-foreground" : "text-foreground"}`}
-                    >
-                      {t.flashAttn}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-[10px] text-muted-foreground">
-                      {t.currentGlobal}: {globalFlashAttn ? t.on : t.off}
-                    </span>
+                    type="number"
+                    min={1}
+                    max={8}
+                    globalValue={globalConcurrency}
+                    helpText={t.help?.concurrency}
+                  />
+                  <InputRow
+                    icon={Zap}
+                    label={t.temperature}
+                    value={config.temperature}
+                    onChange={(val) =>
+                      setConfig((prev) => ({
+                        ...prev,
+                        temperature: parseFloat(val) || undefined,
+                      }))
+                    }
+                    type="number"
+                    step={0.1}
+                    min={0}
+                    max={2}
+                    globalValue={globalTemp}
+                    helpText={t.help?.temperature}
+                  />
+                  <InputRow
+                    icon={Cpu}
+                    label={t.gpuLayers}
+                    value={config.gpuLayers}
+                    onChange={(val) =>
+                      setConfig((prev) => ({
+                        ...prev,
+                        gpuLayers: val === "" ? -1 : parseInt(val) || -1,
+                      }))
+                    }
+                    type="number"
+                    globalValue={globalGpu}
+                    helpText={t.help?.gpuLayers}
+                  />
+                </div>
+              </div>
+
+              <div className="h-px bg-border/50" />
+
+              {/* Advanced Params Section */}
+              <div className="space-y-4">
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                  {t.sectionEngineTuning}
+                </h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <InputRow
+                    icon={Scale}
+                    label={t.repPenaltyBase}
+                    value={config.repPenaltyBase}
+                    onChange={(val) =>
+                      setConfig((prev) => ({
+                        ...prev,
+                        repPenaltyBase: parseFloat(val) || undefined,
+                      }))
+                    }
+                    type="number"
+                    step={0.01}
+                    globalValue={globalRepBase}
+                    helpText={t.help?.repPenaltyBase}
+                  />
+                  <InputRow
+                    icon={Scale}
+                    label={t.repPenaltyMax}
+                    value={config.repPenaltyMax}
+                    onChange={(val) =>
+                      setConfig((prev) => ({
+                        ...prev,
+                        repPenaltyMax: parseFloat(val) || undefined,
+                      }))
+                    }
+                    type="number"
+                    step={0.01}
+                    globalValue={globalRepMax}
+                    helpText={t.help?.repPenaltyMax}
+                  />
+
+                  {/* KV Cache */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label
+                        className={`text-xs font-medium flex items-center gap-1.5 ${config.useGlobalDefaults ? "text-muted-foreground" : "text-foreground"}`}
+                      >
+                        <MemoryStick className="w-3.5 h-3.5 shrink-0 opacity-70" />
+                        {t.kvCacheType}
+                      </label>
+                      <span className="text-[10px] text-muted-foreground/50 tabular-nums">
+                        {t.currentGlobal}: {globalKvCache}
+                      </span>
+                    </div>
                     <select
-                      className={`
-                      h-8 text-sm rounded-md border outline-none
-                      ${config.useGlobalDefaults
-                          ? "bg-transparent border-transparent text-muted-foreground cursor-not-allowed"
-                          : "bg-background/50 border-border focus:ring-2 focus:ring-primary/20"
-                        }
-                    `}
                       value={
-                        config.useGlobalDefaults
-                          ? globalFlashAttn
-                            ? "true"
-                            : "false"
-                          : config.flashAttn === undefined
-                            ? "default"
-                            : config.flashAttn
-                              ? "true"
-                              : "false"
+                        !config.useGlobalDefaults && config.kvCacheType
+                          ? config.kvCacheType
+                          : ""
                       }
                       disabled={config.useGlobalDefaults}
-                      onChange={(e) => {
-                        const val = e.target.value;
+                      onChange={(e) =>
                         setConfig((prev) => ({
                           ...prev,
-                          flashAttn:
-                            val === "default" ? undefined : val === "true",
-                        }));
-                      }}
+                          kvCacheType: e.target.value || undefined,
+                        }))
+                      }
+                      className={`
+                                        w-full h-8 px-2.5 text-sm rounded-md border transition-all outline-none
+                                        ${
+                                          config.useGlobalDefaults
+                                            ? "bg-secondary/30 border-transparent text-muted-foreground/50 cursor-not-allowed"
+                                            : "bg-background/50 border-border focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
+                                        }
+                                    `}
                     >
-                      <option value="default" disabled>
-                        {t.notSet}
+                      <option
+                        value=""
+                        disabled={
+                          !config.useGlobalDefaults && !config.kvCacheType
+                        }
+                      >
+                        {config.useGlobalDefaults ? globalKvCache : t.notSet}
                       </option>
-                      <option value="true">{t.on}</option>
-                      <option value="false">{t.off}</option>
+                      <option value="f16">{t.kvOptions.f16}</option>
+                      <option value="q8_0">{t.kvOptions.q8_0}</option>
+                      <option value="q5_1">{t.kvOptions.q5_1}</option>
+                      <option value="q4_0">{t.kvOptions.q4_0}</option>
                     </select>
                   </div>
+
+                  {/* Seed Input */}
+                  <InputRow
+                    icon={Sparkles}
+                    label={t.seed}
+                    value={config.seed}
+                    onChange={(val) =>
+                      setConfig((prev) => ({
+                        ...prev,
+                        seed: val ? parseInt(val) : undefined,
+                      }))
+                    }
+                    type="number"
+                    placeholder={t.random}
+                    globalValue={globalSeed || t.random}
+                    helpText={t.help?.seed}
+                  />
+
+                  {/* Flash Attention */}
+                  <div
+                    className={`
+                  col-span-2 flex items-center justify-between p-3 rounded-lg border transition-colors
+                  ${
+                    config.useGlobalDefaults
+                      ? "bg-secondary/20 border-transparent opacity-60"
+                      : "bg-background/30 border-border"
+                  }
+                `}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Zap
+                        className={`w-4 h-4 ${config.useGlobalDefaults ? "text-muted-foreground" : "text-amber-500"}`}
+                      />
+                      <span
+                        className={`text-sm font-medium ${config.useGlobalDefaults ? "text-muted-foreground" : "text-foreground"}`}
+                      >
+                        {t.flashAttn}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] text-muted-foreground">
+                        {t.currentGlobal}: {globalFlashAttn ? t.on : t.off}
+                      </span>
+                      <select
+                        className={`
+                      h-8 text-sm rounded-md border outline-none
+                      ${
+                        config.useGlobalDefaults
+                          ? "bg-transparent border-transparent text-muted-foreground cursor-not-allowed"
+                          : "bg-background/50 border-border focus:ring-2 focus:ring-primary/20"
+                      }
+                    `}
+                        value={
+                          config.useGlobalDefaults
+                            ? globalFlashAttn
+                              ? "true"
+                              : "false"
+                            : config.flashAttn === undefined
+                              ? "default"
+                              : config.flashAttn
+                                ? "true"
+                                : "false"
+                        }
+                        disabled={config.useGlobalDefaults}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setConfig((prev) => ({
+                            ...prev,
+                            flashAttn:
+                              val === "default" ? undefined : val === "true",
+                          }));
+                        }}
+                      >
+                        <option value="default" disabled>
+                          {t.notSet}
+                        </option>
+                        <option value="true">{t.on}</option>
+                        <option value="false">{t.off}</option>
+                      </select>
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div className="h-px bg-border/50" />
+              <div className="h-px bg-border/50" />
 
-            {/* Features Section */}
-            <div className="space-y-4">
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-                {t.sectionFeatureToggles}
-              </h4>
-              <div className="grid grid-cols-2 gap-4">
-                <div
-                  className={`
+              {/* Features Section */}
+              <div className="space-y-4">
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                  {t.sectionFeatureToggles}
+                </h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <div
+                    className={`
                                 flex items-center justify-between p-3 rounded-lg border transition-colors
                                 ${config.useGlobalDefaults ? "bg-secondary/20 border-transparent opacity-60" : "bg-background/30 border-border"}
                             `}
-                >
-                  <div className="flex items-center gap-2">
-                    <AlignLeft
-                      className={`w-4 h-4 ${config.useGlobalDefaults ? "text-muted-foreground" : "text-indigo-500"}`}
-                    />
-                    <span
-                      className={`text-sm font-medium ${config.useGlobalDefaults ? "text-muted-foreground" : "text-foreground"}`}
-                    >
-                      {t.alignmentMode}
-                    </span>
+                  >
+                    <div className="flex items-center gap-2">
+                      <AlignLeft
+                        className={`w-4 h-4 ${config.useGlobalDefaults ? "text-muted-foreground" : "text-indigo-500"}`}
+                      />
+                      <span
+                        className={`text-sm font-medium ${config.useGlobalDefaults ? "text-muted-foreground" : "text-foreground"}`}
+                      >
+                        {t.alignmentMode}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] text-muted-foreground">
+                        {t.currentGlobal}: {globalAlignmentMode ? t.on : t.off}
+                      </span>
+                      <Switch
+                        checked={
+                          config.useGlobalDefaults
+                            ? globalAlignmentMode
+                            : (config.alignmentMode ?? globalAlignmentMode)
+                        }
+                        disabled={config.useGlobalDefaults}
+                        onCheckedChange={(c) =>
+                          setConfig((prev) => ({ ...prev, alignmentMode: c }))
+                        }
+                        className="scale-75"
+                      />
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-[10px] text-muted-foreground">
-                      {t.currentGlobal}: {globalAlignmentMode ? t.on : t.off}
-                    </span>
-                    <Switch
-                      checked={
-                        config.useGlobalDefaults
-                          ? globalAlignmentMode
-                          : (config.alignmentMode ?? globalAlignmentMode)
-                      }
-                      disabled={config.useGlobalDefaults}
-                      onCheckedChange={(c) =>
-                        setConfig((prev) => ({ ...prev, alignmentMode: c }))
-                      }
-                      className="scale-75"
-                    />
-                  </div>
-                </div>
 
-                <div
-                  className={`
+                  <div
+                    className={`
                                 flex items-center justify-between p-3 rounded-lg border transition-colors
                                 ${config.useGlobalDefaults ? "bg-secondary/20 border-transparent opacity-60" : "bg-background/30 border-border"}
                             `}
-                >
-                  <div className="flex items-center gap-2">
-                    <FileText
-                      className={`w-4 h-4 ${config.useGlobalDefaults ? "text-muted-foreground" : "text-amber-500"}`}
-                    />
-                    <span
-                      className={`text-sm font-medium ${config.useGlobalDefaults ? "text-muted-foreground" : "text-foreground"}`}
-                    >
-                      {t.saveCot}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-[10px] text-muted-foreground">
-                      {t.currentGlobal}: {globalSaveCot ? t.on : t.off}
-                    </span>
-                    <Switch
-                      checked={
-                        config.useGlobalDefaults
-                          ? globalSaveCot
-                          : (config.saveCot ?? false)
-                      }
-                      disabled={config.useGlobalDefaults}
-                      onCheckedChange={(c) =>
-                        setConfig((prev) => ({ ...prev, saveCot: c }))
-                      }
-                      className="scale-75"
-                    />
+                  >
+                    <div className="flex items-center gap-2">
+                      <FileText
+                        className={`w-4 h-4 ${config.useGlobalDefaults ? "text-muted-foreground" : "text-amber-500"}`}
+                      />
+                      <span
+                        className={`text-sm font-medium ${config.useGlobalDefaults ? "text-muted-foreground" : "text-foreground"}`}
+                      >
+                        {t.saveCot}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] text-muted-foreground">
+                        {t.currentGlobal}: {globalSaveCot ? t.on : t.off}
+                      </span>
+                      <Switch
+                        checked={
+                          config.useGlobalDefaults
+                            ? globalSaveCot
+                            : (config.saveCot ?? false)
+                        }
+                        disabled={config.useGlobalDefaults}
+                        onCheckedChange={(c) =>
+                          setConfig((prev) => ({ ...prev, saveCot: c }))
+                        }
+                        className="scale-75"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          </>)}
+            </>
+          )}
         </div>
 
         {/* Footer */}
@@ -1666,7 +1691,7 @@ export function FileConfigModal({
           </div>
         </div>
       </div>
-    </div >
+    </div>
   );
 }
 
@@ -1763,21 +1788,105 @@ export function LibraryView({
   const [watchDraft, setWatchDraft] =
     useState<WatchFolderConfig>(createWatchDraft);
   const [knownModelNames, setKnownModelNames] = useState<string[]>([]);
-  const [v2Profiles, setV2Profiles] = useState<Array<{ id: string; name: string; providerName?: string }>>([]);
+  const [hasLoadedModelNames, setHasLoadedModelNames] = useState(false);
+  const [knownV2ProviderNames, setKnownV2ProviderNames] = useState<string[]>(
+    [],
+  );
+  const [hasLoadedV2Providers, setHasLoadedV2Providers] = useState(false);
+  const [v2Profiles, setV2Profiles] = useState<
+    Array<{ id: string; name: string; providerName?: string }>
+  >([]);
 
   useEffect(() => {
-    window.api?.pipelineV2ProfilesList?.("pipeline").then((profiles: any[]) => {
-      if (Array.isArray(profiles)) {
-        setV2Profiles(profiles.map((p: any) => ({
-          id: p.id,
-          name: p.name || p.id,
-          providerName: p.providerName,
-        })));
+    let alive = true;
+    const loadV2Profiles = async () => {
+      try {
+        const [pipelineProfiles, apiProfiles] = await Promise.all([
+          window.api?.pipelineV2ProfilesList?.("pipeline", {
+            preferLocal: true,
+          }),
+          window.api?.pipelineV2ProfilesList?.("api", { preferLocal: true }),
+        ]);
+        if (!alive) return;
+        const providerNames = new Set<string>();
+        const providerNameById = new Map<string, string>();
+        (apiProfiles || []).forEach((profile: any) => {
+          const id = String(profile?.id || "").trim();
+          const name = String(profile?.name || "").trim();
+          if (id) {
+            providerNames.add(id);
+            providerNameById.set(id, name || id);
+          }
+          if (name) providerNames.add(name);
+        });
+
+        const pipelineProviderById = new Map<string, string>();
+        if (
+          Array.isArray(pipelineProfiles) &&
+          pipelineProfiles.length > 0 &&
+          window.api?.pipelineV2ProfilesLoadBatch
+        ) {
+          try {
+            const details = await window.api.pipelineV2ProfilesLoadBatch(
+              "pipeline",
+              pipelineProfiles.map((p: any) => String(p?.id || "").trim()),
+            );
+            details.forEach((entry: any) => {
+              const pipelineId = String(entry?.id || "").trim();
+              const providerId = String(entry?.result?.data?.provider || "").trim();
+              if (!pipelineId || !providerId) return;
+              providerNames.add(providerId);
+              pipelineProviderById.set(
+                pipelineId,
+                providerNameById.get(providerId) || providerId,
+              );
+            });
+          } catch (e) {
+            console.warn(
+              "[LibraryView] Failed to load pipeline provider mappings:",
+              e,
+            );
+          }
+        }
+
+        if (Array.isArray(pipelineProfiles)) {
+          setV2Profiles(
+            pipelineProfiles.map((p: any) => {
+              const id = String(p?.id || "").trim();
+              return {
+                id,
+                name: p?.name || id,
+                providerName:
+                  pipelineProviderById.get(id) || String(p?.providerName || ""),
+              };
+            }),
+          );
+        } else {
+          setV2Profiles([]);
+        }
+
+        setKnownV2ProviderNames(Array.from(providerNames));
+      } catch {
+        if (!alive) return;
+        setV2Profiles([]);
+        setKnownV2ProviderNames([]);
+      } finally {
+        if (alive) {
+          setHasLoadedV2Providers(true);
+        }
       }
-    });
+    };
+    void loadV2Profiles();
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const addFilesRef = useRef<
+    (paths: string[], options?: { source?: "manual" | "watch" }) => void
+  >(() => {});
+  const pendingWatchPathsRef = useRef<string[]>([]);
 
   const pushNotice = useCallback(
     (next: {
@@ -1867,6 +1976,7 @@ export function LibraryView({
       }
       if (!alive) return;
       setKnownModelNames(Array.from(names));
+      setHasLoadedModelNames(true);
     };
     void loadModelNames();
     return () => {
@@ -1897,48 +2007,9 @@ export function LibraryView({
 
   useEffect(() => {
     if (!window.api?.watchFolderAdd) return;
-    let cancelled = false;
-    const bootstrapWatchFolders = async () => {
-      watchFolders.forEach((entry) => {
-        void window.api.watchFolderAdd(entry);
-      });
-
-      if (!window.api?.scanDirectory) return;
-      const targets = watchFolders.filter(
-        (entry) => entry.enabled && entry.path,
-      );
-      if (targets.length === 0) return;
-
-      try {
-        const results = await Promise.all(
-          targets.map(async (entry) => {
-            const files = await window.api!.scanDirectory(
-              entry.path,
-              entry.includeSubdirs,
-            );
-            return filterWatchFilesByTypes(
-              files || [],
-              entry.fileTypes,
-              SUPPORTED_EXTENSIONS,
-            );
-          }),
-        );
-        if (cancelled) return;
-        const merged = Array.from(new Set(results.flat()));
-        addFiles(merged, { source: "watch" });
-      } catch (e) {
-        if (cancelled) return;
-        console.error("[LibraryView] Watch folders initial scan failed:", e);
-        pushWatchNotice({
-          type: "error",
-          message: t.scanFailed.replace("{count}", String(targets.length)),
-        });
-      }
-    };
-    void bootstrapWatchFolders();
-    return () => {
-      cancelled = true;
-    };
+    watchFolders.forEach((entry) => {
+      void window.api.watchFolderAdd(entry);
+    });
   }, []);
 
   const buildModelNamesForFilter = useCallback(() => {
@@ -1953,6 +2024,29 @@ export function LibraryView({
     return Array.from(names);
   }, [knownModelNames]);
 
+  const buildProviderNamesForFilter = useCallback(() => {
+    const names = new Set<string>();
+    const addName = (value: string | null | undefined) => {
+      const normalized = String(value || "").trim();
+      if (normalized) names.add(normalized);
+    };
+    const addFromModelRef = (value: string | null | undefined) => {
+      const provider = getProviderNameFromModelRef(value || "");
+      if (provider) names.add(provider);
+    };
+    knownV2ProviderNames.forEach((name) => {
+      addName(name);
+    });
+    v2Profiles.forEach((profile) => {
+      addName(profile.providerName);
+    });
+    addFromModelRef(localStorage.getItem("config_remote_model"));
+    queue.forEach((item) => {
+      addFromModelRef(item.config?.remoteModel);
+    });
+    return Array.from(names);
+  }, [knownV2ProviderNames, queue, v2Profiles]);
+
   // Add files
   const addFiles = useCallback(
     (paths: string[], options?: { source?: "manual" | "watch" }) => {
@@ -1962,6 +2056,7 @@ export function LibraryView({
       let skippedDuplicate = 0;
       let skippedTranslated = 0;
       const modelNames = buildModelNamesForFilter();
+      const providerNames = buildProviderNamesForFilter();
 
       for (const path of paths) {
         const ext = "." + path.split(".").pop()?.toLowerCase();
@@ -1969,7 +2064,14 @@ export function LibraryView({
           skippedUnsupported += 1;
           continue;
         }
-        if (isLikelyTranslatedOutput(path, modelNames, SUPPORTED_EXTENSIONS)) {
+        if (
+          isLikelyTranslatedOutput(
+            path,
+            modelNames,
+            SUPPORTED_EXTENSIONS,
+            providerNames,
+          )
+        ) {
           skippedTranslated += 1;
           continue;
         }
@@ -2020,8 +2122,8 @@ export function LibraryView({
       if (messages.length > 0) {
         const type =
           skippedUnsupported > 0 ||
-            skippedDuplicate > 0 ||
-            skippedTranslated > 0
+          skippedDuplicate > 0 ||
+          skippedTranslated > 0
             ? "warning"
             : "success";
         pushNotice({ type, message: `${prefix}${messages.join("，")}` });
@@ -2032,18 +2134,83 @@ export function LibraryView({
         });
       }
     },
-    [queue, pushNotice, t, watchNoticePrefix, buildModelNamesForFilter],
+    [
+      queue,
+      pushNotice,
+      t,
+      watchNoticePrefix,
+      buildModelNamesForFilter,
+      buildProviderNamesForFilter,
+    ],
   );
+
+  useEffect(() => {
+    addFilesRef.current = addFiles;
+  }, [addFiles]);
+
+  const isWatchFilterReady = hasLoadedModelNames && hasLoadedV2Providers;
+
+  useEffect(() => {
+    if (!isWatchFilterReady) return;
+    if (pendingWatchPathsRef.current.length === 0) return;
+    const pending = Array.from(new Set(pendingWatchPathsRef.current));
+    pendingWatchPathsRef.current = [];
+    addFiles(pending, { source: "watch" });
+  }, [addFiles, isWatchFilterReady]);
+
+  useEffect(() => {
+    if (!isWatchFilterReady || !window.api?.scanDirectory) return;
+    let cancelled = false;
+    const targets = watchFolders.filter((entry) => entry.enabled && entry.path);
+    if (targets.length === 0) return;
+
+    const scanWatchFolders = async () => {
+      try {
+        const results = await Promise.all(
+          targets.map(async (entry) => {
+            const files = await window.api!.scanDirectory(
+              entry.path,
+              entry.includeSubdirs,
+            );
+            return filterWatchFilesByTypes(
+              files || [],
+              entry.fileTypes,
+              SUPPORTED_EXTENSIONS,
+            );
+          }),
+        );
+        if (cancelled) return;
+        const merged = Array.from(new Set(results.flat()));
+        addFilesRef.current(merged, { source: "watch" });
+      } catch (e) {
+        if (cancelled) return;
+        console.error("[LibraryView] Watch folders initial scan failed:", e);
+        pushWatchNotice({
+          type: "error",
+          message: t.scanFailed.replace("{count}", String(targets.length)),
+        });
+      }
+    };
+
+    void scanWatchFolders();
+    return () => {
+      cancelled = true;
+    };
+  }, [isWatchFilterReady, pushWatchNotice, t.scanFailed, watchFolders]);
 
   useEffect(() => {
     const unsubscribe = window.api?.onWatchFolderFileAdded?.((payload) => {
       if (!payload?.path) return;
+      if (!isWatchFilterReady) {
+        pendingWatchPathsRef.current.push(payload.path);
+        return;
+      }
       addFiles([payload.path], { source: "watch" });
     });
     return () => {
       unsubscribe?.();
     };
-  }, [addFiles]);
+  }, [addFiles, isWatchFilterReady]);
 
   const handleAddFiles = async () => {
     if (isRunning) {
@@ -2798,23 +2965,23 @@ export function LibraryView({
 
   const noticeConfig = notice
     ? {
-      success: {
-        className: "bg-emerald-500/10 border-emerald-500/30 text-emerald-600",
-        icon: Check,
-      },
-      warning: {
-        className: "bg-amber-500/10 border-amber-500/30 text-amber-600",
-        icon: AlertTriangle,
-      },
-      error: {
-        className: "bg-red-500/10 border-red-500/30 text-red-600",
-        icon: AlertTriangle,
-      },
-      info: {
-        className: "bg-blue-500/10 border-blue-500/30 text-blue-600",
-        icon: Info,
-      },
-    }[notice.type]
+        success: {
+          className: "bg-emerald-500/10 border-emerald-500/30 text-emerald-600",
+          icon: Check,
+        },
+        warning: {
+          className: "bg-amber-500/10 border-amber-500/30 text-amber-600",
+          icon: AlertTriangle,
+        },
+        error: {
+          className: "bg-red-500/10 border-red-500/30 text-red-600",
+          icon: AlertTriangle,
+        },
+        info: {
+          className: "bg-blue-500/10 border-blue-500/30 text-blue-600",
+          icon: Info,
+        },
+      }[notice.type]
     : null;
   const NoticeIcon = noticeConfig?.icon;
 
@@ -3161,10 +3328,11 @@ export function LibraryView({
                       key={item.id}
                       className={`
                                             flex items-center gap-3 px-4 py-3 transition-all group
-                                            ${selectedItems.has(item.id)
-                          ? "bg-primary/5"
-                          : "hover:bg-secondary/30"
-                        }
+                                            ${
+                                              selectedItems.has(item.id)
+                                                ? "bg-primary/5"
+                                                : "hover:bg-secondary/30"
+                                            }
                                         `}
                       onDragOver={(e) => {
                         e.preventDefault();
@@ -3182,10 +3350,11 @@ export function LibraryView({
 
                       {/* Drag Handle - Larger Hit Area */}
                       <div
-                        className={`p-2 -m-1 rounded shrink-0 transition-colors ${isRunning || isFilterActive
-                          ? "opacity-20 cursor-not-allowed"
-                          : "hover:bg-secondary cursor-grab active:cursor-grabbing text-muted-foreground/30 hover:text-foreground"
-                          }`}
+                        className={`p-2 -m-1 rounded shrink-0 transition-colors ${
+                          isRunning || isFilterActive
+                            ? "opacity-20 cursor-not-allowed"
+                            : "hover:bg-secondary cursor-grab active:cursor-grabbing text-muted-foreground/30 hover:text-foreground"
+                        }`}
                         draggable={!isRunning && !isFilterActive}
                         onDragStart={(e) => handleDragStart(e, queueIndex)}
                         onDragEnd={handleDragEnd}
@@ -3314,20 +3483,22 @@ export function LibraryView({
                   <button
                     type="button"
                     onClick={() => setImportMode("merge")}
-                    className={`flex-1 px-3 py-2 rounded-md border text-xs font-medium transition-all ${importMode === "merge"
-                      ? "border-primary/40 bg-primary/10 text-primary"
-                      : "border-border/60 text-muted-foreground hover:text-foreground"
-                      }`}
+                    className={`flex-1 px-3 py-2 rounded-md border text-xs font-medium transition-all ${
+                      importMode === "merge"
+                        ? "border-primary/40 bg-primary/10 text-primary"
+                        : "border-border/60 text-muted-foreground hover:text-foreground"
+                    }`}
                   >
                     {t.importQueueMerge}
                   </button>
                   <button
                     type="button"
                     onClick={() => setImportMode("replace")}
-                    className={`flex-1 px-3 py-2 rounded-md border text-xs font-medium transition-all ${importMode === "replace"
-                      ? "border-primary/40 bg-primary/10 text-primary"
-                      : "border-border/60 text-muted-foreground hover:text-foreground"
-                      }`}
+                    className={`flex-1 px-3 py-2 rounded-md border text-xs font-medium transition-all ${
+                      importMode === "replace"
+                        ? "border-primary/40 bg-primary/10 text-primary"
+                        : "border-border/60 text-muted-foreground hover:text-foreground"
+                    }`}
                   >
                     {t.importQueueReplace}
                   </button>
@@ -3427,10 +3598,11 @@ export function LibraryView({
                             fileTypes: [],
                           }))
                         }
-                        className={`px-2.5 py-1 rounded-full border text-[11px] font-medium transition-all ${watchDraft.fileTypes.length === 0
-                          ? "border-primary/40 bg-primary/10 text-primary"
-                          : "border-border/60 text-muted-foreground hover:text-foreground"
-                          }`}
+                        className={`px-2.5 py-1 rounded-full border text-[11px] font-medium transition-all ${
+                          watchDraft.fileTypes.length === 0
+                            ? "border-primary/40 bg-primary/10 text-primary"
+                            : "border-border/60 text-muted-foreground hover:text-foreground"
+                        }`}
                       >
                         {t.watchFolderAllTypes}
                       </button>
@@ -3441,10 +3613,11 @@ export function LibraryView({
                             key={type}
                             type="button"
                             onClick={() => toggleWatchDraftType(type)}
-                            className={`px-2.5 py-1 rounded-full border text-[11px] font-medium transition-all uppercase ${active
-                              ? "border-primary/40 bg-primary/10 text-primary"
-                              : "border-border/60 text-muted-foreground hover:text-foreground"
-                              }`}
+                            className={`px-2.5 py-1 rounded-full border text-[11px] font-medium transition-all uppercase ${
+                              active
+                                ? "border-primary/40 bg-primary/10 text-primary"
+                                : "border-border/60 text-muted-foreground hover:text-foreground"
+                            }`}
                           >
                             .{type}
                           </button>
@@ -3508,10 +3681,11 @@ export function LibraryView({
                                     fileTypes: [],
                                   })
                                 }
-                                className={`px-2 py-0.5 rounded-full border text-[10px] font-medium transition-all ${entry.fileTypes.length === 0
-                                  ? "border-primary/40 bg-primary/10 text-primary"
-                                  : "border-border/60 text-muted-foreground hover:text-foreground"
-                                  }`}
+                                className={`px-2 py-0.5 rounded-full border text-[10px] font-medium transition-all ${
+                                  entry.fileTypes.length === 0
+                                    ? "border-primary/40 bg-primary/10 text-primary"
+                                    : "border-border/60 text-muted-foreground hover:text-foreground"
+                                }`}
                               >
                                 {t.watchFolderAllTypes}
                               </button>
@@ -3524,17 +3698,18 @@ export function LibraryView({
                                     onClick={() => {
                                       const next = active
                                         ? entry.fileTypes.filter(
-                                          (t) => t !== type,
-                                        )
+                                            (t) => t !== type,
+                                          )
                                         : [...entry.fileTypes, type];
                                       applyWatchFolderUpdate(entry.id, {
                                         fileTypes: next,
                                       });
                                     }}
-                                    className={`px-2 py-0.5 rounded-full border text-[10px] font-medium transition-all uppercase ${active
-                                      ? "border-primary/40 bg-primary/10 text-primary"
-                                      : "border-border/60 text-muted-foreground hover:text-foreground"
-                                      }`}
+                                    className={`px-2 py-0.5 rounded-full border text-[10px] font-medium transition-all uppercase ${
+                                      active
+                                        ? "border-primary/40 bg-primary/10 text-primary"
+                                        : "border-border/60 text-muted-foreground hover:text-foreground"
+                                    }`}
                                   >
                                     .{type}
                                   </button>

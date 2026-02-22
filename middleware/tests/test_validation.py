@@ -61,7 +61,9 @@ def prepare_profiles(tmp_path: Path) -> Path:
           trim: true
           similarity_threshold: 0.8
           checks:
+            - empty_line
             - similarity
+            - kana_trace
         """,
     )
     return base

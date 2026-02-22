@@ -138,6 +138,7 @@ import { findHighSimilarityLines } from "../lib/quality-check";
 import { AlertModal } from "./ui/AlertModal";
 import { useAlertModal } from "../hooks/useAlertModal";
 import { stripSystemMarkersForDisplay } from "../lib/displayText";
+import { resolveRuleListForRun } from "../lib/rulesConfig";
 
 // ...
 
@@ -1257,6 +1258,32 @@ export default function ProofreadView({
     setRetryDraft((prev) => ({ ...(prev || buildRetryDraft()), ...patch }));
   };
 
+  const resolveV2RetranslateOptions = useCallback(() => {
+    const engineMode = localStorage.getItem("config_engine_mode");
+    if (engineMode !== "v2") {
+      return { useV2: false, pipelineId: "" };
+    }
+    let activePipelineId = (
+      localStorage.getItem("config_v2_pipeline_id") || ""
+    ).trim();
+    if (!activePipelineId) {
+      try {
+        const fromApiManager = localStorage.getItem(
+          "murasaki.v2.active_pipeline_id",
+        );
+        if (fromApiManager) {
+          activePipelineId = String(JSON.parse(fromApiManager) || "").trim();
+        }
+      } catch {
+        // ignore parse error
+      }
+    }
+    return {
+      useV2: true,
+      pipelineId: activePipelineId,
+    };
+  }, []);
+
   // Update Block
   const updateBlockDst = useCallback(
     (index: number, newDst: string) => {
@@ -1284,21 +1311,62 @@ export default function ProofreadView({
     [cacheData],
   );
 
+  const isFailedOrUntranslatedBlock = useCallback((block: CacheBlock) => {
+    const status = String(block.status || "")
+      .trim()
+      .toLowerCase();
+    if (status === "none" || status === "failed") return true;
+    if (!String(block.dst || "").trim()) return true;
+    const warningSet = new Set(
+      (block.warnings || []).map((warning) =>
+        String(warning || "")
+          .trim()
+          .toLowerCase(),
+      ),
+    );
+    return (
+      warningSet.has("line_mismatch") || warningSet.has("untranslated_fallback")
+    );
+  }, []);
+
+  const failedOrUntranslatedIndexes = useMemo(() => {
+    if (!cacheData?.blocks) return [];
+    return cacheData.blocks
+      .filter((block) => isFailedOrUntranslatedBlock(block))
+      .map((block) => block.index);
+  }, [cacheData, isFailedOrUntranslatedBlock]);
+
+  const failedOrUntranslatedCount = failedOrUntranslatedIndexes.length;
+
   // Retranslate
   const retranslateBlock = useCallback(
-    async (index: number) => {
-      if (!cacheData) return;
+    async (index: number, options?: { silent?: boolean }) => {
+      if (!cacheData) return false;
       const block = cacheData.blocks.find((b) => b.index === index);
-      if (!block) return;
+      if (!block) return false;
 
       // Global Lock: Enforce single-threading for manual re-translation
       if (retranslatingBlocks.size > 0 || loading) {
-        showAlert({
-          title: pv.waitTitle,
-          description: pv.waitDesc,
-          variant: "destructive",
-        });
-        return;
+        if (!options?.silent) {
+          showAlert({
+            title: pv.waitTitle,
+            description: pv.waitDesc,
+            variant: "destructive",
+          });
+        }
+        return false;
+      }
+
+      const v2Options = resolveV2RetranslateOptions();
+      if (v2Options.useV2 && !v2Options.pipelineId) {
+        if (!options?.silent) {
+          showAlert({
+            title: pv.v2PipelineMissingTitle,
+            description: pv.v2PipelineMissingDesc,
+            variant: "destructive",
+          });
+        }
+        return false;
       }
 
       const resolvedModelPath = (
@@ -1306,13 +1374,15 @@ export default function ProofreadView({
         localStorage.getItem("config_model") ||
         ""
       ).trim();
-      if (!resolvedModelPath) {
-        showAlert({
-          title: t.advancedFeatures,
-          description: pv.modelMissingDesc,
-          variant: "destructive",
-        });
-        return;
+      if (!v2Options.useV2 && !resolvedModelPath) {
+        if (!options?.silent) {
+          showAlert({
+            title: t.advancedFeatures,
+            description: pv.modelMissingDesc,
+            variant: "destructive",
+          });
+        }
+        return false;
       }
 
       try {
@@ -1337,12 +1407,8 @@ export default function ProofreadView({
           repPenaltyStep: retryRepPenaltyStep,
           glossaryPath: resolvedGlossaryPath || undefined,
           deviceMode: retryDeviceMode || "auto",
-          rulesPre: JSON.parse(
-            localStorage.getItem("config_rules_pre") || "[]",
-          ),
-          rulesPost: JSON.parse(
-            localStorage.getItem("config_rules_post") || "[]",
-          ),
+          rulesPre: resolveRuleListForRun("pre"),
+          rulesPost: resolveRuleListForRun("post"),
           strictMode: retryStrictMode || "off", // Default to off for manual retry unless set
           flashAttn: localStorage.getItem("config_flash_attn") !== "false", // Most models support it now
           kvCacheType: localStorage.getItem("config_kv_cache_type") || "f16",
@@ -1364,34 +1430,45 @@ export default function ProofreadView({
         const result = await window.api?.retranslateBlock({
           src: block.src,
           index: block.index,
-          modelPath: resolvedModelPath,
+          modelPath: resolvedModelPath || "",
           config: config,
+          useV2: v2Options.useV2,
+          pipelineId: v2Options.pipelineId,
         });
 
         if (result?.success) {
           updateBlockDst(index, result.dst);
-          showAlert({
-            title: t.config.proofread.retranslateSuccess,
-            description: t.config.proofread.retranslateSuccessDesc.replace(
-              "{index}",
-              (index + 1).toString(),
-            ),
-            variant: "success",
-          });
+          if (!options?.silent) {
+            showAlert({
+              title: t.config.proofread.retranslateSuccess,
+              description: t.config.proofread.retranslateSuccessDesc.replace(
+                "{index}",
+                (index + 1).toString(),
+              ),
+              variant: "success",
+            });
+          }
+          return true;
         } else {
-          showAlert({
-            title: pv.retranslateFailTitle,
-            description: result?.error || pv.unknownError,
-            variant: "destructive",
-          });
+          if (!options?.silent) {
+            showAlert({
+              title: pv.retranslateFailTitle,
+              description: result?.error || pv.unknownError,
+              variant: "destructive",
+            });
+          }
+          return false;
         }
       } catch (error) {
         console.error("Failed to retranslate:", error);
-        showAlert({
-          title: pv.retranslateErrorTitle,
-          description: String(error),
-          variant: "destructive",
-        });
+        if (!options?.silent) {
+          showAlert({
+            title: pv.retranslateErrorTitle,
+            description: String(error),
+            variant: "destructive",
+          });
+        }
+        return false;
       } finally {
         setLoading(false);
         setRetranslatingBlocks((prev) => {
@@ -1405,6 +1482,7 @@ export default function ProofreadView({
       cacheData,
       loading,
       pv,
+      resolveV2RetranslateOptions,
       retryAnchorCheck,
       retryAnchorCheckRetries,
       retryCoverageCheck,
@@ -1446,7 +1524,9 @@ export default function ProofreadView({
           "{index}",
           String(index + 1),
         ),
-        onConfirm: () => retranslateBlock(index),
+        onConfirm: async () => {
+          await retranslateBlock(index);
+        },
       });
     },
     [
@@ -1456,6 +1536,85 @@ export default function ProofreadView({
       showConfirm,
     ],
   );
+
+  const retryFailedOrUntranslatedBlocks = useCallback(async () => {
+    if (!cacheData) return;
+    if (retranslatingBlocks.size > 0 || loading) {
+      showAlert({
+        title: pv.waitTitle,
+        description: pv.waitDesc,
+        variant: "destructive",
+      });
+      return;
+    }
+    const targets = failedOrUntranslatedIndexes;
+    if (targets.length === 0) {
+      showAlert({
+        title: pv.retranslateFailedLinesTitle,
+        description: pv.retranslateFailedLinesNone,
+        variant: "info",
+      });
+      return;
+    }
+    let successCount = 0;
+    for (const blockIndex of targets) {
+      const ok = await retranslateBlock(blockIndex, { silent: true });
+      if (ok) successCount += 1;
+    }
+    const failedCount = targets.length - successCount;
+    showAlert({
+      title: pv.retranslateFailedLinesDoneTitle,
+      description: pv.retranslateFailedLinesDoneDesc
+        .replace("{success}", String(successCount))
+        .replace("{failed}", String(failedCount))
+        .replace("{total}", String(targets.length)),
+      variant: failedCount > 0 ? "warning" : "success",
+    });
+  }, [
+    cacheData,
+    failedOrUntranslatedIndexes,
+    loading,
+    pv.retranslateFailedLinesDoneDesc,
+    pv.retranslateFailedLinesDoneTitle,
+    pv.retranslateFailedLinesNone,
+    pv.retranslateFailedLinesTitle,
+    pv.waitDesc,
+    pv.waitTitle,
+    retranslateBlock,
+    retranslatingBlocks,
+    showAlert,
+  ]);
+
+  const requestRetryFailedOrUntranslatedBlocks = useCallback(() => {
+    const targets = failedOrUntranslatedIndexes.length;
+    if (targets === 0) {
+      showAlert({
+        title: pv.retranslateFailedLinesTitle,
+        description: pv.retranslateFailedLinesNone,
+        variant: "info",
+      });
+      return;
+    }
+    showConfirm({
+      title: pv.retranslateFailedLinesConfirmTitle,
+      description: pv.retranslateFailedLinesConfirmDesc.replace(
+        "{count}",
+        String(targets),
+      ),
+      onConfirm: () => {
+        void retryFailedOrUntranslatedBlocks();
+      },
+    });
+  }, [
+    failedOrUntranslatedIndexes,
+    pv.retranslateFailedLinesConfirmDesc,
+    pv.retranslateFailedLinesConfirmTitle,
+    pv.retranslateFailedLinesNone,
+    pv.retranslateFailedLinesTitle,
+    retryFailedOrUntranslatedBlocks,
+    showAlert,
+    showConfirm,
+  ]);
 
   // --- Replace Logic ---
 
@@ -2301,9 +2460,7 @@ export default function ProofreadView({
                 h.outputPath.split(/[/\\]/).pop() || h.outputPath;
               const sep = dir.includes("\\") && !dir.includes("/") ? "\\" : "/";
               const prefix =
-                dir.endsWith("\\") || dir.endsWith("/")
-                  ? dir
-                  : `${dir}${sep}`;
+                dir.endsWith("\\") || dir.endsWith("/") ? dir : `${dir}${sep}`;
               cachePath = `${prefix}${fileName}.cache.json`;
             } else {
               cachePath = h.outputPath + ".cache.json";
@@ -2802,6 +2959,25 @@ export default function ProofreadView({
               <RefreshCw className="w-3.5 h-3.5 mr-1" />
               {pv.retryPanelButton}
             </Button>
+            {lineMode && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={requestRetryFailedOrUntranslatedBlocks}
+                className="h-8 text-xs px-3"
+                disabled={
+                  loading ||
+                  retranslatingBlocks.size > 0 ||
+                  failedOrUntranslatedCount === 0
+                }
+              >
+                <RefreshCw className="w-3.5 h-3.5 mr-1" />
+                {pv.retranslateFailedLinesButton.replace(
+                  "{count}",
+                  String(failedOrUntranslatedCount),
+                )}
+              </Button>
+            )}
 
             {/* Quality Check - Text Button */}
             <Button

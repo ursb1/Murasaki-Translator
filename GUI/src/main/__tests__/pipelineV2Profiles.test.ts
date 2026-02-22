@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import { __testOnly } from "../pipelineV2Profiles";
 
 describe("pipelineV2Profiles concurrency helpers", () => {
-  const { classifyConcurrencyFailure, buildConcurrencyTestPayload } = __testOnly;
+  const {
+    classifyConcurrencyFailure,
+    buildConcurrencyTestPayload,
+    ensureDefaultLineQualityChecks,
+  } = __testOnly;
 
   it("classifies auth errors before others", () => {
     const result = classifyConcurrencyFailure([429, 401, 500]);
@@ -44,7 +48,24 @@ describe("pipelineV2Profiles concurrency helpers", () => {
     expect(payload.model).toBe("demo-model");
     expect(Array.isArray(payload.messages)).toBe(true);
     expect(payload.messages.length).toBe(32);
-    expect(payload.messages.every((item) => item.content === "你好")).toBe(true);
+    expect(payload.messages.every((item) => item.content === "你好")).toBe(
+      true,
+    );
     expect(payload.max_tokens).toBe(8);
+  });
+
+  it("ensures all default line quality checks are enabled", () => {
+    expect(ensureDefaultLineQualityChecks(["similarity"])).toEqual([
+      "similarity",
+      "empty_line",
+      "kana_trace",
+    ]);
+    expect(
+      ensureDefaultLineQualityChecks(["empty_line", "similarity", "kana_trace"]),
+    ).toEqual([
+      "empty_line",
+      "similarity",
+      "kana_trace",
+    ]);
   });
 });

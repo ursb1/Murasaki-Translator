@@ -39,22 +39,22 @@ export interface TriggerEvent {
   time: string;
   /** Type of trigger event */
   type:
-  | "empty_retry"
-  | "rep_penalty_increase"
-  | "line_mismatch"
-  | "anchor_missing"
-  | "provider_error"
-  | "parse_fallback"
-  | "kana_residue"
-  | "hangeul_residue"
-  | "high_similarity"
-  | "glossary_missed"
-  | "warning_line_mismatch"
-  | "warning_kana_residue"
-  | "warning_hangeul_residue"
-  | "warning_high_similarity"
-  | "warning_glossary_missed"
-  | "warning_quality";
+    | "empty_retry"
+    | "rep_penalty_increase"
+    | "line_mismatch"
+    | "anchor_missing"
+    | "provider_error"
+    | "parse_fallback"
+    | "kana_residue"
+    | "hangeul_residue"
+    | "high_similarity"
+    | "glossary_missed"
+    | "warning_line_mismatch"
+    | "warning_kana_residue"
+    | "warning_hangeul_residue"
+    | "warning_high_similarity"
+    | "warning_glossary_missed"
+    | "warning_quality";
   /** Block number where the event occurred (0 if not applicable) */
   block: number;
   /** Human-readable message describing the event */
@@ -443,39 +443,82 @@ function RecordDetailContent({
   return (
     <CardContent className="pt-0 border-t">
       <div className="space-y-4 pt-4">
-
         {/* ========== V2 API 统计面板 ========== */}
         {isV2 ? (
           <>
             {/* Pipeline 信息 */}
             {v2c && (
               <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm bg-muted/30 px-3 py-2 rounded-md">
-                <span className="text-muted-foreground">{lang === "en" ? "Pipeline:" : "方案:"} <span className="font-medium text-foreground ml-1">{v2c.pipelineName || v2c.pipelineId}</span></span>
-                {v2c.providerName && <span className="text-muted-foreground">{lang === "en" ? "Provider:" : "接口:"} <span className="font-medium text-foreground ml-1">{v2c.providerName}</span></span>}
-                {v2c.chunkType && <span className="text-muted-foreground">{lang === "en" ? "Mode:" : "模式:"} <span className="font-medium text-foreground ml-1">{v2c.chunkType === "line" ? (lang === "en" ? "Line" : "行翻译") : (lang === "en" ? "Block" : "块翻译")}</span></span>}
+                <span className="text-muted-foreground">
+                  {lang === "en" ? "Pipeline:" : "方案:"}{" "}
+                  <span className="font-medium text-foreground ml-1">
+                    {v2c.pipelineName || v2c.pipelineId}
+                  </span>
+                </span>
+                {v2c.providerName && (
+                  <span className="text-muted-foreground">
+                    {lang === "en" ? "Provider:" : "接口:"}{" "}
+                    <span className="font-medium text-foreground ml-1">
+                      {v2c.providerName}
+                    </span>
+                  </span>
+                )}
+                {v2c.chunkType && (
+                  <span className="text-muted-foreground">
+                    {lang === "en" ? "Mode:" : "模式:"}{" "}
+                    <span className="font-medium text-foreground ml-1">
+                      {v2c.chunkType === "line"
+                        ? lang === "en"
+                          ? "Line"
+                          : "行翻译"
+                        : lang === "en"
+                          ? "Block"
+                          : "块翻译"}
+                    </span>
+                  </span>
+                )}
               </div>
             )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {/* 翻译统计 */}
               <div className="space-y-3 bg-muted/20 p-3 rounded-lg border border-border/50">
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{lang === "en" ? "Translation Progress" : "翻译进度"}</p>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  {lang === "en" ? "Translation Progress" : "翻译进度"}
+                </p>
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   <div>
-                    <p className="text-muted-foreground text-xs">{t.historyView.stats.blocks}</p>
-                    <p className="font-medium">{fullRecord.completedBlocks}/{fullRecord.totalBlocks}</p>
+                    <p className="text-muted-foreground text-xs">
+                      {t.historyView.stats.blocks}
+                    </p>
+                    <p className="font-medium">
+                      {fullRecord.completedBlocks}/{fullRecord.totalBlocks}
+                    </p>
                   </div>
                   <div>
-                    <p className="text-muted-foreground text-xs">{t.historyView.stats.lines}</p>
-                    <p className="font-medium">{fullRecord.sourceLines || 0}/{fullRecord.totalLines || 0}</p>
+                    <p className="text-muted-foreground text-xs">
+                      {t.historyView.stats.lines}
+                    </p>
+                    <p className="font-medium">
+                      {fullRecord.sourceLines || 0}/{fullRecord.totalLines || 0}
+                    </p>
                   </div>
                   <div>
-                    <p className="text-muted-foreground text-xs">{t.historyView.stats.chars}</p>
-                    <p className="font-medium">{(fullRecord.sourceChars || 0).toLocaleString()}/{(fullRecord.totalChars || 0).toLocaleString()}</p>
+                    <p className="text-muted-foreground text-xs">
+                      {t.historyView.stats.chars}
+                    </p>
+                    <p className="font-medium">
+                      {(fullRecord.sourceChars || 0).toLocaleString()}/
+                      {(fullRecord.totalChars || 0).toLocaleString()}
+                    </p>
                   </div>
                   <div>
-                    <p className="text-muted-foreground text-xs">{t.historyView.stats.speed}</p>
-                    <p className="font-medium">{avgSpeedDisplay} {speedUnit}</p>
+                    <p className="text-muted-foreground text-xs">
+                      {t.historyView.stats.speed}
+                    </p>
+                    <p className="font-medium">
+                      {avgSpeedDisplay} {speedUnit}
+                    </p>
                   </div>
                 </div>
               </div>
@@ -483,65 +526,121 @@ function RecordDetailContent({
               {/* API 请求统计 */}
               {v2s && (
                 <div className="space-y-3 bg-muted/20 p-3 rounded-lg border border-border/50">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{lang === "en" ? "Request Telemetry" : "请求遥测"}</p>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                    {lang === "en" ? "Request Telemetry" : "请求遥测"}
+                  </p>
                   <div className="grid grid-cols-2 gap-3 text-sm">
                     <div>
-                      <p className="text-muted-foreground text-xs">{lang === "en" ? "Requests" : "发包数"}</p>
-                      <p className="font-medium">{v2s.totalRequests.toLocaleString()}</p>
+                      <p className="text-muted-foreground text-xs">
+                        {lang === "en" ? "Requests" : "发包数"}
+                      </p>
+                      <p className="font-medium">
+                        {v2s.totalRequests.toLocaleString()}
+                      </p>
                     </div>
                     <div>
-                      <p className="text-muted-foreground text-xs">{t.historyView.stats.retries}</p>
-                      <p className="font-medium">{v2s.totalRetries.toLocaleString()}</p>
+                      <p className="text-muted-foreground text-xs">
+                        {t.historyView.stats.retries}
+                      </p>
+                      <p className="font-medium">
+                        {v2s.totalRetries.toLocaleString()}
+                      </p>
                     </div>
                     <div>
-                      <p className="text-muted-foreground text-xs">{lang === "en" ? "Errors" : "报错数"}</p>
-                      <p className={`font-medium ${v2s.totalErrors > 0 ? "text-destructive" : ""}`}>{v2s.totalErrors}</p>
+                      <p className="text-muted-foreground text-xs">
+                        {lang === "en" ? "Errors" : "报错数"}
+                      </p>
+                      <p
+                        className={`font-medium ${v2s.totalErrors > 0 ? "text-destructive" : ""}`}
+                      >
+                        {v2s.totalErrors}
+                      </p>
                     </div>
                     <div>
-                      <p className="text-muted-foreground text-xs">{lang === "en" ? "Success Rate" : "请求成功率"}</p>
-                      <p className="font-medium">{v2s.totalRequests > 0 ? ((1 - v2s.totalErrors / v2s.totalRequests) * 100).toFixed(1) : "0"}%</p>
+                      <p className="text-muted-foreground text-xs">
+                        {lang === "en" ? "Success Rate" : "请求成功率"}
+                      </p>
+                      <p className="font-medium">
+                        {v2s.totalRequests > 0
+                          ? (
+                              (1 - v2s.totalErrors / v2s.totalRequests) *
+                              100
+                            ).toFixed(1)
+                          : "0"}
+                        %
+                      </p>
                     </div>
                   </div>
                 </div>
               )}
 
               {/* Token 用量 */}
-              {v2s && (v2s.totalInputTokens > 0 || v2s.totalOutputTokens > 0) && (
-                <div className="space-y-3 bg-muted/20 p-3 rounded-lg border border-border/50">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{lang === "en" ? "Token Usage" : "Token 消耗"}</p>
-                  <div className="grid grid-cols-2 gap-3 text-sm">
-                    <div>
-                      <p className="text-muted-foreground text-xs">{lang === "en" ? "Input Tokens" : "输入 Token"}</p>
-                      <p className="font-medium">{v2s.totalInputTokens.toLocaleString()}</p>
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground text-xs">{lang === "en" ? "Output Tokens" : "输出 Token"}</p>
-                      <p className="font-medium">{v2s.totalOutputTokens.toLocaleString()}</p>
-                    </div>
-                    <div className="col-span-2">
-                      <p className="text-muted-foreground text-xs">{lang === "en" ? "Total Tokens" : "开销汇总"}</p>
-                      <p className="font-medium text-primary">{(v2s.totalInputTokens + v2s.totalOutputTokens).toLocaleString()}</p>
+              {v2s &&
+                (v2s.totalInputTokens > 0 || v2s.totalOutputTokens > 0) && (
+                  <div className="space-y-3 bg-muted/20 p-3 rounded-lg border border-border/50">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                      {lang === "en" ? "Token Usage" : "Token 消耗"}
+                    </p>
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <p className="text-muted-foreground text-xs">
+                          {lang === "en" ? "Input Tokens" : "输入 Token"}
+                        </p>
+                        <p className="font-medium">
+                          {v2s.totalInputTokens.toLocaleString()}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground text-xs">
+                          {lang === "en" ? "Output Tokens" : "输出 Token"}
+                        </p>
+                        <p className="font-medium">
+                          {v2s.totalOutputTokens.toLocaleString()}
+                        </p>
+                      </div>
+                      <div className="col-span-2">
+                        <p className="text-muted-foreground text-xs">
+                          {lang === "en" ? "Total Tokens" : "开销汇总"}
+                        </p>
+                        <p className="font-medium text-primary">
+                          {(
+                            v2s.totalInputTokens + v2s.totalOutputTokens
+                          ).toLocaleString()}
+                        </p>
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
+                )}
             </div>
 
             {/* 错误状态码分布 */}
-            {v2s?.errorStatusCodes && Object.keys(v2s.errorStatusCodes).length > 0 && (
-              <div className="pt-2">
-                <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1.5"><AlertCircle className="w-3.5 h-3.5" />{lang === "en" ? "Error Status Codes" : "拦截到的异常状态码"}</p>
-                <div className="flex flex-wrap gap-2">
-                  {Object.entries(v2s.errorStatusCodes)
-                    .sort(([, a], [, b]) => b - a)
-                    .map(([code, count]) => (
-                      <span key={code} className="inline-flex items-center gap-1 text-xs bg-destructive/10 text-destructive border border-destructive/20 rounded-md px-2.5 py-1">
-                        HTTP {code}: <span className="font-semibold">{count}{lang === "en" ? "x" : " 次"}</span>
-                      </span>
-                    ))}
+            {v2s?.errorStatusCodes &&
+              Object.keys(v2s.errorStatusCodes).length > 0 && (
+                <div className="pt-2">
+                  <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    {lang === "en"
+                      ? "Error Status Codes"
+                      : "拦截到的异常状态码"}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(v2s.errorStatusCodes)
+                      .sort(([, a], [, b]) => b - a)
+                      .map(([code, count]) => (
+                        <span
+                          key={code}
+                          className="inline-flex items-center gap-1 text-xs bg-destructive/10 text-destructive border border-destructive/20 rounded-md px-2.5 py-1"
+                        >
+                          HTTP {code}:{" "}
+                          <span className="font-semibold">
+                            {count}
+                            {lang === "en" ? "x" : " 次"}
+                          </span>
+                        </span>
+                      ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
           </>
         ) : (
           /* ========== V1 原有统计面板 ========== */
@@ -549,40 +648,67 @@ function RecordDetailContent({
             {/* Stats */}
             <div className="grid grid-cols-7 gap-3 text-sm">
               <div>
-                <p className="text-muted-foreground text-xs">{t.historyView.stats.blocks}</p>
-                <p className="font-medium">{fullRecord.completedBlocks}/{fullRecord.totalBlocks}</p>
+                <p className="text-muted-foreground text-xs">
+                  {t.historyView.stats.blocks}
+                </p>
+                <p className="font-medium">
+                  {fullRecord.completedBlocks}/{fullRecord.totalBlocks}
+                </p>
               </div>
               <div>
-                <p className="text-muted-foreground text-xs">{t.historyView.stats.lines}</p>
-                <p className="font-medium">{fullRecord.sourceLines || 0}/{fullRecord.totalLines || 0}</p>
+                <p className="text-muted-foreground text-xs">
+                  {t.historyView.stats.lines}
+                </p>
+                <p className="font-medium">
+                  {fullRecord.sourceLines || 0}/{fullRecord.totalLines || 0}
+                </p>
               </div>
               <div>
-                <p className="text-muted-foreground text-xs">{t.historyView.stats.chars}</p>
-                <p className="font-medium">{(fullRecord.sourceChars || 0).toLocaleString()}/{(fullRecord.totalChars || 0).toLocaleString()}</p>
+                <p className="text-muted-foreground text-xs">
+                  {t.historyView.stats.chars}
+                </p>
+                <p className="font-medium">
+                  {(fullRecord.sourceChars || 0).toLocaleString()}/
+                  {(fullRecord.totalChars || 0).toLocaleString()}
+                </p>
               </div>
               <div>
-                <p className="text-muted-foreground text-xs">{t.historyView.stats.speed}</p>
-                <p className="font-medium">{avgSpeedDisplay} {speedUnit}</p>
+                <p className="text-muted-foreground text-xs">
+                  {t.historyView.stats.speed}
+                </p>
+                <p className="font-medium">
+                  {avgSpeedDisplay} {speedUnit}
+                </p>
               </div>
               <div>
-                <p className="text-muted-foreground text-xs">{t.historyView.stats.concurrency}</p>
+                <p className="text-muted-foreground text-xs">
+                  {t.historyView.stats.concurrency}
+                </p>
                 <p className="font-medium">{config.concurrency ?? 1}</p>
               </div>
               <div>
-                <p className="text-muted-foreground text-xs">{t.historyView.stats.temperature}</p>
-                <p className="font-medium">{formatMaybe(config.temperature, "-")}</p>
+                <p className="text-muted-foreground text-xs">
+                  {t.historyView.stats.temperature}
+                </p>
+                <p className="font-medium">
+                  {formatMaybe(config.temperature, "-")}
+                </p>
               </div>
               <div>
-                <p className="text-muted-foreground text-xs">{t.historyView.stats.retries}</p>
+                <p className="text-muted-foreground text-xs">
+                  {t.historyView.stats.retries}
+                </p>
                 <p className="font-medium">
-                  {fullRecord.triggers.filter(
-                    (tr) =>
-                      tr.type === "empty_retry" ||
-                      tr.type === "line_mismatch" ||
-                      tr.type === "anchor_missing" ||
-                      tr.type === "rep_penalty_increase" ||
-                      tr.type === "glossary_missed",
-                  ).length}
+                  {
+                    fullRecord.triggers.filter(
+                      (tr) =>
+                        tr.type === "empty_retry" ||
+                        tr.type === "line_mismatch" ||
+                        tr.type === "anchor_missing" ||
+                        tr.type === "rep_penalty_increase" ||
+                        tr.type === "glossary_missed",
+                    ).length
+                  }
                 </p>
               </div>
             </div>
@@ -591,7 +717,9 @@ function RecordDetailContent({
             {fullRecord.modelName && (
               <p className="text-xs text-muted-foreground">
                 {t.historyView.labels.model}{" "}
-                <span className="font-medium text-foreground">{fullRecord.modelName}</span>
+                <span className="font-medium text-foreground">
+                  {fullRecord.modelName}
+                </span>
               </p>
             )}
           </>
@@ -1049,11 +1177,12 @@ export function HistoryView({ lang, onNavigate }: HistoryViewProps) {
       ``,
       e.configTitle,
       `${e.temp} ${formatMaybe(config.temperature)}`,
-      `${e.lineCheck} ${config.lineCheck === undefined
-        ? t.none
-        : config.lineCheck
-          ? t.historyView.toggleOn
-          : t.historyView.toggleOff
+      `${e.lineCheck} ${
+        config.lineCheck === undefined
+          ? t.none
+          : config.lineCheck
+            ? t.historyView.toggleOn
+            : t.historyView.toggleOff
       }`,
       `${e.repPenalty} ${formatMaybe(config.repPenaltyBase)}`,
       `${e.maxRetries} ${formatMaybe(config.maxRetries)}`,

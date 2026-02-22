@@ -37,6 +37,10 @@ import {
   buildConfigSnapshot,
   parseConfigSnapshot,
 } from "../lib/configSnapshot";
+import {
+  buildV2DebugSnapshot,
+  redactSensitiveConfigData,
+} from "../lib/debugExport";
 import { LogViewerModal } from "./LogViewerModal";
 import { EnvFixerModal } from "./EnvFixerModal";
 
@@ -663,6 +667,7 @@ export function SettingsView({ lang }: { lang: Language }) {
         configData[key] = localStorage.getItem(key);
       }
     }
+    const sanitizedConfigData = redactSensitiveConfigData(configData);
 
     // Parse history
     let historyData: unknown = [];
@@ -704,10 +709,17 @@ export function SettingsView({ lang }: { lang: Language }) {
       mainProcessLogs = { error: String(e) };
     }
 
+    let v2DebugData: unknown = null;
+    try {
+      v2DebugData = await buildV2DebugSnapshot(window.api, localStorage);
+    } catch (e) {
+      v2DebugData = { error: String(e) };
+    }
+
     const debugData = {
       // Export metadata
       exportTime: new Date().toISOString(),
-      exportVersion: "1.2",
+      exportVersion: "1.3",
 
       // App info
       app: {
@@ -744,7 +756,10 @@ export function SettingsView({ lang }: { lang: Language }) {
       },
 
       // All configuration
-      config: configData,
+      config: sanitizedConfigData,
+
+      // Pipeline V2 local storage and profile snapshots (sensitive fields redacted)
+      v2: v2DebugData,
 
       // History summary
       historySummary: {

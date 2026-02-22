@@ -142,7 +142,9 @@ function AppContent() {
       {view === "glossary" && <GlossaryView lang={lang} />}
       {view === "pre" && <RuleEditor lang={lang} mode="pre" />}
       {view === "post" && <RuleEditor lang={lang} mode="post" />}
-      {view === "advanced" && <AdvancedView lang={lang} remoteRuntime={remoteRuntime} />}
+      {view === "advanced" && (
+        <AdvancedView lang={lang} remoteRuntime={remoteRuntime} />
+      )}
       {view === "api_manager" && <ApiManagerView lang={lang} />}
       {view === "history" && (
         <HistoryView lang={lang} onNavigate={handleSwitchView} />

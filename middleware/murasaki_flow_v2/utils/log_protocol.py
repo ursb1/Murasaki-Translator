@@ -17,9 +17,9 @@ import json
 import sys
 import threading
 import time
-from collections import Counter
+from collections import Counter, deque
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Deque, Dict, List, Optional, Tuple
 
 _stdout_lock = threading.Lock()
 
@@ -47,6 +47,16 @@ def emit_progress(
     api_ping: Optional[int] = None,
     api_concurrency: int = 0,
     api_url: Optional[str] = None,
+    # 实时口径（滑动窗口）
+    realtime_speed_chars: Optional[float] = None,
+    realtime_speed_lines: Optional[float] = None,
+    realtime_speed_gen: Optional[float] = None,
+    realtime_speed_eval: Optional[float] = None,
+    realtime_speed_tokens: Optional[float] = None,
+    api_rpm: Optional[float] = None,
+    total_requests: Optional[int] = None,
+    total_input_tokens: Optional[int] = None,
+    total_output_tokens: Optional[int] = None,
 ) -> None:
     """Emit JSON_PROGRESS compatible with Dashboard's progress parser."""
     percent = round(current / max(total, 1) * 100, 1)
@@ -68,6 +78,35 @@ def emit_progress(
         "api_ping": api_ping,
         "api_concurrency": api_concurrency,
         "api_url": api_url,
+        "realtime_speed_chars": (
+            round(realtime_speed_chars, 1)
+            if realtime_speed_chars is not None
+            else None
+        ),
+        "realtime_speed_lines": (
+            round(realtime_speed_lines, 2)
+            if realtime_speed_lines is not None
+            else None
+        ),
+        "realtime_speed_gen": (
+            round(realtime_speed_gen, 1)
+            if realtime_speed_gen is not None
+            else None
+        ),
+        "realtime_speed_eval": (
+            round(realtime_speed_eval, 1)
+            if realtime_speed_eval is not None
+            else None
+        ),
+        "realtime_speed_tokens": (
+            round(realtime_speed_tokens, 1)
+            if realtime_speed_tokens is not None
+            else None
+        ),
+        "api_rpm": round(api_rpm, 2) if api_rpm is not None else None,
+        "total_requests": total_requests,
+        "total_input_tokens": total_input_tokens,
+        "total_output_tokens": total_output_tokens,
     })
 
 
@@ -186,6 +225,130 @@ class ProgressTracker:
     last_ping: Optional[int] = None
     current_concurrency: int = 1
     api_url: Optional[str] = None
+    _last_emit_at: float = 0.0
+    _min_emit_interval_sec: float = 0.2
+    _speed_window_sec: float = 5.0
+    _request_window_sec: float = 60.0
+    _speed_samples: Deque[Tuple[float, int, int, int, int]] = field(
+        default_factory=deque, repr=False
+    )
+    _request_timestamps: Deque[float] = field(default_factory=deque, repr=False)
+
+    def _prune_request_timestamps_locked(self, now: float) -> None:
+        cutoff = now - self._request_window_sec
+        while self._request_timestamps and self._request_timestamps[0] < cutoff:
+            self._request_timestamps.popleft()
+
+    def _append_speed_sample_locked(self, now: float) -> None:
+        self._speed_samples.append(
+            (
+                now,
+                self.total_output_lines,
+                self.total_output_chars,
+                self.total_input_tokens,
+                self.total_output_tokens,
+            )
+        )
+        cutoff = now - self._speed_window_sec
+        while len(self._speed_samples) > 2 and self._speed_samples[0][0] < cutoff:
+            self._speed_samples.popleft()
+
+    def _build_progress_payload_locked(self, now: float) -> Dict[str, Any]:
+        self._prune_request_timestamps_locked(now)
+        self._append_speed_sample_locked(now)
+
+        elapsed = max(now - self.start_time, 0.001)
+
+        avg_speed_chars = self.total_output_chars / elapsed
+        avg_speed_lines = self.total_output_lines / elapsed
+        avg_speed_gen = self.total_output_tokens / elapsed
+        avg_speed_eval = self.total_input_tokens / elapsed
+
+        realtime_speed_chars = 0.0
+        realtime_speed_lines = 0.0
+        realtime_speed_gen = 0.0
+        realtime_speed_eval = 0.0
+        if len(self._speed_samples) >= 2:
+            t0, lines0, chars0, input0, output0 = self._speed_samples[0]
+            t1, lines1, chars1, input1, output1 = self._speed_samples[-1]
+            dt = max(t1 - t0, 0.001)
+            realtime_speed_lines = max(0.0, (lines1 - lines0) / dt)
+            realtime_speed_chars = max(0.0, (chars1 - chars0) / dt)
+            realtime_speed_eval = max(0.0, (input1 - input0) / dt)
+            realtime_speed_gen = max(0.0, (output1 - output0) / dt)
+
+        warmup_window = min(self._request_window_sec, max(elapsed, 1.0))
+        api_rpm = (len(self._request_timestamps) * 60.0) / warmup_window
+
+        return {
+            "current": self.completed_blocks,
+            "total": self.total_blocks,
+            "elapsed": elapsed,
+            # speed_* 在 V2 下改为实时口径（滑动窗口）
+            "speed_chars": realtime_speed_chars,
+            "speed_lines": realtime_speed_lines,
+            "speed_gen": realtime_speed_gen,
+            "speed_eval": realtime_speed_eval,
+            "total_lines": self.total_output_lines,
+            "total_chars": self.total_output_chars,
+            "source_lines": self.total_source_lines,
+            "source_chars": self.total_source_chars,
+            "api_ping": self.last_ping,
+            "api_concurrency": self.current_concurrency,
+            "api_url": self.api_url,
+            "realtime_speed_chars": realtime_speed_chars,
+            "realtime_speed_lines": realtime_speed_lines,
+            "realtime_speed_gen": realtime_speed_gen,
+            "realtime_speed_eval": realtime_speed_eval,
+            "realtime_speed_tokens": realtime_speed_gen + realtime_speed_eval,
+            "api_rpm": api_rpm,
+            "total_requests": self.total_requests,
+            "total_input_tokens": self.total_input_tokens,
+            "total_output_tokens": self.total_output_tokens,
+            "avg_speed_chars": avg_speed_chars,
+            "avg_speed_lines": avg_speed_lines,
+            "avg_speed_gen": avg_speed_gen,
+            "avg_speed_eval": avg_speed_eval,
+        }
+
+    def emit_progress_snapshot(self, *, force: bool = False) -> None:
+        """Emit a progress snapshot (throttled by default)."""
+        payload: Optional[Dict[str, Any]] = None
+        now = time.time()
+        with self._lock:
+            if not force and (now - self._last_emit_at) < self._min_emit_interval_sec:
+                return
+            payload = self._build_progress_payload_locked(now)
+            self._last_emit_at = now
+
+        if payload is None:
+            return
+
+        emit_progress(
+            current=int(payload["current"]),
+            total=int(payload["total"]),
+            elapsed=float(payload["elapsed"]),
+            speed_chars=float(payload["speed_chars"]),
+            speed_lines=float(payload["speed_lines"]),
+            speed_gen=float(payload["speed_gen"]),
+            speed_eval=float(payload["speed_eval"]),
+            total_lines=int(payload["total_lines"]),
+            total_chars=int(payload["total_chars"]),
+            source_lines=int(payload["source_lines"]),
+            source_chars=int(payload["source_chars"]),
+            api_ping=payload["api_ping"],
+            api_concurrency=int(payload["api_concurrency"]),
+            api_url=payload["api_url"],
+            realtime_speed_chars=float(payload["realtime_speed_chars"]),
+            realtime_speed_lines=float(payload["realtime_speed_lines"]),
+            realtime_speed_gen=float(payload["realtime_speed_gen"]),
+            realtime_speed_eval=float(payload["realtime_speed_eval"]),
+            realtime_speed_tokens=float(payload["realtime_speed_tokens"]),
+            api_rpm=float(payload["api_rpm"]),
+            total_requests=int(payload["total_requests"]),
+            total_input_tokens=int(payload["total_input_tokens"]),
+            total_output_tokens=int(payload["total_output_tokens"]),
+        )
 
     def block_done(
         self,
@@ -197,8 +360,6 @@ class ProgressTracker:
         lines_done: Optional[int] = None,
     ) -> None:
         """Record a completed block and emit progress + preview."""
-        src_lines = src_text.count("\n") + 1 if src_text else 0
-        src_chars = len(src_text)
         out_lines = lines_done if lines_done is not None else (output_text.count("\n") + 1 if output_text else 0)
         out_chars = len(output_text)
 
@@ -206,34 +367,7 @@ class ProgressTracker:
             self.completed_blocks += 1
             self.total_output_lines += out_lines
             self.total_output_chars += out_chars
-            completed = self.completed_blocks
-            _total_lines = self.total_output_lines
-            _total_chars = self.total_output_chars
-            _input_tokens = self.total_input_tokens
-            _output_tokens = self.total_output_tokens
-            elapsed = time.time() - self.start_time
-
-        speed_chars = _total_chars / max(elapsed, 0.1)
-        speed_lines = _total_lines / max(elapsed, 0.1)
-        speed_gen = _output_tokens / max(elapsed, 0.1)
-        speed_eval = _input_tokens / max(elapsed, 0.1)
-
-        emit_progress(
-            current=completed,
-            total=self.total_blocks,
-            elapsed=elapsed,
-            speed_chars=speed_chars,
-            speed_lines=speed_lines,
-            speed_gen=speed_gen,
-            speed_eval=speed_eval,
-            total_lines=_total_lines,
-            total_chars=_total_chars,
-            source_lines=self.total_source_lines,
-            source_chars=self.total_source_chars,
-            api_ping=self.last_ping,
-            api_concurrency=self.current_concurrency,
-            api_url=self.api_url,
-        )
+        self.emit_progress_snapshot(force=True)
 
         if emit_preview:
             # Truncate very long blocks for preview
@@ -250,12 +384,17 @@ class ProgressTracker:
         ping: Optional[int] = None,
     ) -> None:
         """Record a successful API request with token usage."""
+        now = time.time()
         with self._lock:
             self.total_requests += 1
             self.total_input_tokens += input_tokens
             self.total_output_tokens += output_tokens
             if ping is not None:
                 self.last_ping = ping
+            self._request_timestamps.append(now)
+            self._prune_request_timestamps_locked(now)
+        # 请求完成后即时更新一次进度（含实时 RPM / token 速度）
+        self.emit_progress_snapshot(force=False)
 
     def note_retry(self, status_code: Optional[int] = None) -> None:
         """Record a retry event."""
@@ -283,17 +422,7 @@ class ProgressTracker:
             self.completed_blocks = max(0, min(completed_blocks, self.total_blocks))
             self.total_output_lines = max(0, output_lines)
             self.total_output_chars = max(0, output_chars)
-            completed = self.completed_blocks
-        emit_progress(
-            current=completed,
-            total=self.total_blocks,
-            elapsed=0,
-            speed_chars=0,
-            total_lines=self.total_output_lines,
-            total_chars=self.total_output_chars,
-            source_lines=self.total_source_lines,
-            source_chars=self.total_source_chars,
-        )
+        self.emit_progress_snapshot(force=True)
 
     def emit_final_stats(self) -> None:
         """Emit JSON_FINAL with accumulated statistics (incl. V2 API stats)."""

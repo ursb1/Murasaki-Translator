@@ -252,15 +252,15 @@ export interface RemoteDiagnostics {
 
 export interface RemoteHfDownloadStatus {
   status:
-  | "starting"
-  | "checking"
-  | "connecting"
-  | "downloading"
-  | "resuming"
-  | "complete"
-  | "skipped"
-  | "error"
-  | "cancelled";
+    | "starting"
+    | "checking"
+    | "connecting"
+    | "downloading"
+    | "resuming"
+    | "complete"
+    | "skipped"
+    | "error"
+    | "cancelled";
   percent: number;
   speed?: string;
   downloaded?: string;
@@ -424,8 +424,20 @@ export interface ElectronAPI {
       raw_response: string;
       parsed_result: string;
       post_processed?: string;
-      pre_traces?: Array<{ rule: any, type: string, pattern: string, before: string, after: string }>;
-      post_traces?: Array<{ rule: any, type: string, pattern: string, before: string, after: string }>;
+      pre_traces?: Array<{
+        rule: any;
+        type: string;
+        pattern: string;
+        before: string;
+        after: string;
+      }>;
+      post_traces?: Array<{
+        rule: any;
+        type: string;
+        pattern: string;
+        before: string;
+        after: string;
+      }>;
       pre_rules_count?: number;
       post_rules_count?: number;
       error?: string;
@@ -458,6 +470,8 @@ export interface ElectronAPI {
     index: number;
     modelPath: string;
     config: any;
+    useV2?: boolean;
+    pipelineId?: string;
   }) => Promise<any>;
   onLogUpdate: (callback: (chunk: string) => void) => Unsubscribe;
   onPipelineV2Log: (
@@ -739,4 +753,4 @@ declare global {
   }
 }
 
-export { };
+export {};

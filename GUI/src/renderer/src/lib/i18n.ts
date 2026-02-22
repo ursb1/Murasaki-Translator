@@ -580,7 +580,8 @@ export const translations = {
       confirmRemoveDesc: "确定要从队列中移除「{name}」吗？",
       confirmClear: "确定要清空队列吗？",
       alignmentLabel: "辅助对齐",
-      alignmentTooltip: "TXT辅助对齐:辅助模型按照行数进行翻译，适用于漫画和游戏文本等对行数对齐要求程度高的文本，轻小说等连贯性文本不建议开启，可能影响翻译质量",
+      alignmentTooltip:
+        "TXT辅助对齐:辅助模型按照行数进行翻译，适用于漫画和游戏文本等对行数对齐要求程度高的文本，轻小说等连贯性文本不建议开启，可能影响翻译质量",
       cotLabel: "保存 CoT",
       cotTooltip: "另外保存一份模型CoT过程到输出目录",
       retranslate: "重翻",
@@ -807,11 +808,13 @@ export const translations = {
       unsavedChangesTitle: "有未保存的更改",
       unsavedChangesDesc: "当前更改尚未保存，确定要离开吗？",
       jsonParseErrorTitle: "JSON 解析失败",
-      jsonParseErrorDesc: "{field} 不是有效的 JSON 对象，已暂时保留上一次有效内容。",
+      jsonParseErrorDesc:
+        "{field} 不是有效的 JSON 对象，已暂时保留上一次有效内容。",
       referenceUpdateTitle: "引用已更新",
       referenceUpdateDesc: "已同步更新 {count} 个 Pipeline 引用",
       referenceUpdateMissingTitle: "引用待处理",
-      referenceUpdateMissingDesc: "未找到可替换的配置，部分 Pipeline 需要手动调整。",
+      referenceUpdateMissingDesc:
+        "未找到可替换的配置，部分 Pipeline 需要手动调整。",
       pipelineCardEdit: "编辑方案",
       pipelineCardActive: "当前使用中",
       quickEdit: "前往编辑",
@@ -941,8 +944,14 @@ export const translations = {
           label: "Google",
           desc: "Gemini 接口",
           channels: {
-            gemini: { label: "AI Studio", desc: "Gemini API / generativelanguage" },
-            vertex: { label: "Vertex AI", desc: "GCP 项目 / aiplatform OpenAPI" },
+            gemini: {
+              label: "AI Studio",
+              desc: "Gemini API / generativelanguage",
+            },
+            vertex: {
+              label: "Vertex AI",
+              desc: "GCP 项目 / aiplatform OpenAPI",
+            },
           },
         },
         openai: { label: "OpenAI", desc: "ChatGPT 接口" },
@@ -1194,7 +1203,8 @@ export const translations = {
       formHints: {
         name: "仅用于显示，不影响实际调用",
         id: "用于 Pipeline 引用，建议小写与下划线",
-        baseUrl: "请确认接口地址是否需要版本段（/v1 等前缀），已包含版本段则不会重复追加。",
+        baseUrl:
+          "请确认接口地址是否需要版本段（/v1 等前缀），已包含版本段则不会重复追加。",
         baseUrlSuffix: "已包含版本段则不会重复追加。",
         apiKey: "可留空或填写多行用于轮询",
         model: "填写实际使用的模型标识",
@@ -1291,8 +1301,7 @@ export const translations = {
       promptPreviewGlossaryLoad: "加载",
       promptPreviewGlossaryRefresh: "刷新列表",
       promptPreviewGlossaryLoading: "加载中...",
-      promptPreviewGlossaryHint:
-        "支持 JSON 字典/数组或逐行“原文: 译文”格式",
+      promptPreviewGlossaryHint: "支持 JSON 字典/数组或逐行“原文: 译文”格式",
       promptPreviewGlossaryEmpty: "未找到可用术语表",
       promptPreviewGlossaryLoadFail: "读取失败：{name}",
       promptPreviewLineIndexLabel: "源文本行索引",
@@ -1341,7 +1350,7 @@ export const translations = {
         tolerant: "允许对齐与容错",
         onMismatch: "选择行数不匹配时的处理方式",
         trim: "先裁剪空白再检测",
-        similarityThreshold: "0~1，越高越严格",
+        similarityThreshold: "0~1，越低越严格",
         sourceLang: "假名检查仅支持日语代码",
       },
       policyChecks: {
@@ -1401,8 +1410,8 @@ export const translations = {
         block: "按分块翻译",
       },
       apiTypeOptions: {
-        openai: "单接口（OpenAI 兼容）",
-        pool: "轮询池（多接口）",
+        openai: "单接口",
+        pool: "多接口轮询",
         poolRoundRobin: "轮询（顺序）",
         poolRandom: "随机（权重）",
       },
@@ -1430,7 +1439,8 @@ export const translations = {
       concurrencyAutoTestRunning: "测并发中...",
       concurrencyAutoTestOk: "建议并发 {count}",
       concurrencyAutoTestFail: "并发测试失败",
-      concurrencyAutoTestHint: "并发发送短消息进行测试，以响应状态码判断可承受并发",
+      concurrencyAutoTestHint:
+        "并发发送短消息进行测试，以响应状态码判断可承受并发",
       concurrencyAutoTestPoolHint: "轮询模式暂不支持自动测试",
       concurrencyAutoTestAuth: "鉴权失败（401/403）",
       concurrencyAutoTestRateLimited: "触发限流（429）",
@@ -1474,7 +1484,8 @@ export const translations = {
       templatesMoreDesc: "进阶或特殊场景",
       templatesManageShow: "管理",
       templatesManageHide: "收起",
-      templatesManageDesc: "选择需要显示的模板，也可保存当前 YAML 为自定义模板。",
+      templatesManageDesc:
+        "选择需要显示的模板，也可保存当前 YAML 为自定义模板。",
       templatesRemove: "删除",
       templateSaveTitle: "保存为自定义模板",
       templateSaveNameLabel: "模板名称",
@@ -1632,7 +1643,7 @@ export const translations = {
       parserRuleFunctionPlaceholder: "默认 parse(text)",
       parserRulePythonHint: "脚本需实现 parse(text)，返回字符串或行数组。",
       parserRuleExtraLabel: "额外选项 (JSON)",
-      parserRuleExtraPlaceholder: "{ \"path\": \"translation\" }",
+      parserRuleExtraPlaceholder: '{ "path": "translation" }',
       parserRuleExtraShow: "展开高级",
       parserRuleExtraHide: "收起高级",
       parserRuleExtraHint: "需要更多字段时使用 JSON 追加。",
@@ -2017,6 +2028,17 @@ export const translations = {
       retranslateConfirmTitle: "确认重翻",
       retranslateConfirmDesc:
         "确认重新翻译第 {index} 块？该操作会覆盖当前译文。",
+      v2PipelineMissingTitle: "缺少 V2 Pipeline",
+      v2PipelineMissingDesc: "当前已选择 V2，请先在首页选择可用 Pipeline。",
+      retranslateFailedLinesButton: "重翻失败/未翻 ({count})",
+      retranslateFailedLinesTitle: "失败/未翻译行",
+      retranslateFailedLinesNone: "当前没有失败或未翻译行。",
+      retranslateFailedLinesConfirmTitle: "确认批量重翻",
+      retranslateFailedLinesConfirmDesc:
+        "将重翻 {count} 行失败/未翻译内容，是否继续？",
+      retranslateFailedLinesDoneTitle: "批量重翻完成",
+      retranslateFailedLinesDoneDesc:
+        "总计 {total} 行，成功 {success} 行，失败 {failed} 行。",
       retryPanelButton: "重翻配置",
       retryPanelTitle: "重翻配置",
       retryPanelDesc: "仅影响校对页单块重翻",
@@ -3691,7 +3713,8 @@ export const translations = {
       deleteFail: "Delete Failed",
       defaultPresetDeleteFail: "Default presets cannot be deleted",
       unsavedChangesTitle: "Unsaved changes",
-      unsavedChangesDesc: "You have unsaved changes. Are you sure you want to leave?",
+      unsavedChangesDesc:
+        "You have unsaved changes. Are you sure you want to leave?",
       jsonParseErrorTitle: "Invalid JSON",
       jsonParseErrorDesc:
         "{field} is not a valid JSON object. Using the last valid value for now.",
@@ -3738,7 +3761,8 @@ export const translations = {
       validationMissingPipeline: "Scheme missing field: {field}",
       validationUnknownReference: "Unknown reference: {kind} / {id}",
       validationMissingMembers: "Rotation pool requires members list",
-      validationMissingPoolEndpoints: "Rotation pool needs at least one endpoint",
+      validationMissingPoolEndpoints:
+        "Rotation pool needs at least one endpoint",
       validationMissingPoolModel: "Rotation endpoint requires a model id",
       validationMissingPattern: "Regex Parser requires options.pattern",
       validationMissingJsonPath:
@@ -3751,8 +3775,10 @@ export const translations = {
         "Line strategy requires a line strategy configuration",
       validationLineChunkNoPolicy:
         "Line strategy has no line policy configured",
-      validationInvalidConcurrency: "Concurrency must be an integer >= 0 (0 = auto)",
-      validationInvalidMaxRetries: "Max retries must be an integer greater than or equal to 0",
+      validationInvalidConcurrency:
+        "Concurrency must be an integer >= 0 (0 = auto)",
+      validationInvalidMaxRetries:
+        "Max retries must be an integer greater than or equal to 0",
       validationInvalidRpm: "RPM must be an integer >= 1",
       validationPoolMembersUnsupported: "Pool mode does not support members",
       validationInvalidTimeout: "Timeout must be a number greater than 0",
@@ -3961,11 +3987,13 @@ export const translations = {
       pipelineOverviewTitle: "My Schemes",
       pipelineOverviewShowGuide: "Show Guide",
       pipelineOverviewManageTitle: "Scheme Management",
-      pipelineOverviewManageDesc: "Manage existing schemes or create a new configuration.",
+      pipelineOverviewManageDesc:
+        "Manage existing schemes or create a new configuration.",
       pipelineOverviewHideGuide: "Hide Guide",
       pipelineEmptyBadge: "Scheme Guide",
       pipelineEmptyTitle: "Build Your Translation Scheme",
-      pipelineEmptyDesc: "Complete these 4 steps, then return to choose a scheme.",
+      pipelineEmptyDesc:
+        "Complete these 4 steps, then return to choose a scheme.",
       pipelineEmptyFallbackTitle: "Configure Step",
       pipelineEmptyFallbackDesc: "Finish this step to continue",
       pipelineEmptyFallbackAction: "Configure",
@@ -4111,8 +4139,7 @@ export const translations = {
         timeout: "Empty uses default",
         concurrency:
           "0 enables auto mode, starting at the midpoint and adapting to responses",
-        rpm:
-          "Commercial APIs usually enforce RPM limits; local inference can be blank or higher",
+        rpm: "Commercial APIs usually enforce RPM limits; local inference can be blank or higher",
         group: "Used for UI grouping, can be overridden in YAML",
         members: "Rotation mode uses API Profile IDs (one per line)",
         strategy: "Round robin is default, random balances across nodes",
@@ -4171,7 +4198,8 @@ export const translations = {
       promptHints: {
         variables:
           "Available variables: {{source}} {{context_before}} {{context_after}} {{glossary}}",
-        context: "Line mode can use context/source lines; chunk mode can keep 0",
+        context:
+          "Line mode can use context/source lines; chunk mode can keep 0",
         sourceFormat:
           "Declare the model input format. Only JSONL currently affects parser validation.",
       },
@@ -4345,7 +4373,8 @@ export const translations = {
       concurrencyAutoTestRunning: "Testing concurrency...",
       concurrencyAutoTestOk: "Recommended concurrency {count}",
       concurrencyAutoTestFail: "Concurrency test failed",
-      concurrencyAutoTestHint: "Sends many \"\u4f60\u597d\" messages to /chat/completions and judges by status code",
+      concurrencyAutoTestHint:
+        'Sends many "\u4f60\u597d" messages to /chat/completions and judges by status code',
       concurrencyAutoTestPoolHint: "Pool mode does not support auto test",
       concurrencyAutoTestAuth: "Auth failed (401/403)",
       concurrencyAutoTestRateLimited: "Rate limited (429)",
@@ -4355,7 +4384,8 @@ export const translations = {
       concurrencyAutoTestServerError: "Server error (5xx)",
       concurrencyAutoTestNetwork: "Network error or timeout",
       testConnectionHint: "Sends a test message: hello",
-      testConnectionPoolHint: "Rotation mode: test individual endpoints instead",
+      testConnectionPoolHint:
+        "Rotation mode: test individual endpoints instead",
       channelManageShow: "Manage Channels",
       channelManageHide: "Hide",
       channelManageDesc: "Add or remove provider channels.",
@@ -4550,7 +4580,7 @@ export const translations = {
       parserRulePythonHint:
         "Script must implement parse(text) and return a string or a line array.",
       parserRuleExtraLabel: "Extra Options (JSON)",
-      parserRuleExtraPlaceholder: "{ \"path\": \"translation\" }",
+      parserRuleExtraPlaceholder: '{ "path": "translation" }',
       parserRuleExtraShow: "Show advanced",
       parserRuleExtraHide: "Hide advanced",
       parserRuleExtraHint: "Use JSON to add extra fields.",
@@ -4667,7 +4697,8 @@ export const translations = {
           concurrency:
             "Leave empty to inherit API settings; higher concurrency uses more resources.",
           modelOverride: "Use only when you must force a specific model",
-          timeout: "Leave empty to inherit API settings; too low may cause failures.",
+          timeout:
+            "Leave empty to inherit API settings; too low may cause failures.",
           modeMismatchLine:
             "Selected chunk policy is chunk mode. Use a line chunk policy or switch to line mode.",
           modeMismatchBlock:
@@ -5100,6 +5131,18 @@ export const translations = {
       retranslateConfirmTitle: "Confirm retranslate",
       retranslateConfirmDesc:
         "Retranslate block #{index}? This will overwrite the current translation.",
+      v2PipelineMissingTitle: "V2 Pipeline Missing",
+      v2PipelineMissingDesc:
+        "V2 is selected. Please choose a valid pipeline on Dashboard first.",
+      retranslateFailedLinesButton: "Retry Failed/Untranslated ({count})",
+      retranslateFailedLinesTitle: "Failed/Untranslated Lines",
+      retranslateFailedLinesNone: "No failed or untranslated lines found.",
+      retranslateFailedLinesConfirmTitle: "Confirm Batch Retranslate",
+      retranslateFailedLinesConfirmDesc:
+        "Retranslate {count} failed/untranslated lines now?",
+      retranslateFailedLinesDoneTitle: "Batch Retranslate Finished",
+      retranslateFailedLinesDoneDesc:
+        "Total {total}, success {success}, failed {failed}.",
       retryPanelButton: "Retranslation config",
       retryPanelTitle: "Retranslation config",
       retryPanelDesc: "Only affects block re-translation in Proofread.",
@@ -6594,7 +6637,8 @@ export const translations = {
       deleteFail: "削除に失敗しました",
       defaultPresetDeleteFail: "既定プリセットは削除できません",
       unsavedChangesTitle: "未保存の変更",
-      unsavedChangesDesc: "変更が保存されていません。移動してもよろしいですか？",
+      unsavedChangesDesc:
+        "変更が保存されていません。移動してもよろしいですか？",
       jsonParseErrorTitle: "JSON 解析エラー",
       jsonParseErrorDesc:
         "{field} は有効な JSON オブジェクトではありません。前回の有効値を一時的に使用します。",
@@ -6641,8 +6685,10 @@ export const translations = {
       validationMissingPipeline: "プランに必須項目がありません: {field}",
       validationUnknownReference: "参照が見つかりません: {kind} / {id}",
       validationMissingMembers: "ローテーションプールには members が必要です",
-      validationMissingPoolEndpoints: "ローテーションプールに少なくとも 1 つのエンドポイントが必要です",
-      validationMissingPoolModel: "ローテーションのエンドポイントにモデル指定が必要です",
+      validationMissingPoolEndpoints:
+        "ローテーションプールに少なくとも 1 つのエンドポイントが必要です",
+      validationMissingPoolModel:
+        "ローテーションのエンドポイントにモデル指定が必要です",
       validationMissingPattern: "Regex Parser は options.pattern が必要です",
       validationMissingJsonPath:
         "Json Object Parser は options.path または options.key が必要です",
@@ -6652,19 +6698,23 @@ export const translations = {
       validationMissingModel: "OpenAI 互換 API は model が必要です",
       validationLinePolicyRequiresLineChunk:
         "分行戦略有効時は分行戦略の設定が必要です",
-      validationLineChunkNoPolicy:
-        "分行戦略に行ポリシーが設定されていません",
-      validationInvalidConcurrency: "並列数は 0 以上の整数にしてください（0 は自動）",
-      validationInvalidMaxRetries: "最大再試行回数は 0 以上の整数にしてください",
+      validationLineChunkNoPolicy: "分行戦略に行ポリシーが設定されていません",
+      validationInvalidConcurrency:
+        "並列数は 0 以上の整数にしてください（0 は自動）",
+      validationInvalidMaxRetries:
+        "最大再試行回数は 0 以上の整数にしてください",
       validationInvalidRpm: "RPM は 1 以上の整数にしてください",
-      validationPoolMembersUnsupported: "プールモードは members をサポートしません",
+      validationPoolMembersUnsupported:
+        "プールモードは members をサポートしません",
       validationInvalidTimeout: "タイムアウトは 0 より大きい数値にしてください",
-      validationInvalidTargetChars: "目標文字数は 0 より大きい数値にしてください",
+      validationInvalidTargetChars:
+        "目標文字数は 0 より大きい数値にしてください",
       validationInvalidMaxChars:
         "最大文字数は 0 より大きく、目標文字数以上にしてください",
       validationInvalidBalanceThreshold:
         "バランス閾値は 0 〜 1 の数値にしてください",
-      validationInvalidBalanceCount: "バランス回数は 1 以上の整数にしてください",
+      validationInvalidBalanceCount:
+        "バランス回数は 1 以上の整数にしてください",
       validationInvalidSimilarityThreshold:
         "類似度閾値は 0 〜 1 の数値にしてください",
       validationProfileExists: "ID が既に存在します: {id}",
@@ -6825,7 +6875,8 @@ export const translations = {
       groupAll: "すべて",
       groupCustom: "カスタム",
       groupEmpty: "未選択",
-      kindSectionsHint: "スキーム = インターフェース + プロンプト + 分割 + パーサー",
+      kindSectionsHint:
+        "スキーム = インターフェース + プロンプト + 分割 + パーサー",
       kindSections: {
         primary: "スキーム",
         optional: "詳細設定",
@@ -6844,10 +6895,8 @@ export const translations = {
       searchPlaceholder: "設定を検索...",
       emptySelectionTitle: "設定が未選択です",
       emptySelectionDesc: "左の一覧から選択するか、新規作成してください。",
-      promptGridDesc:
-        "プロンプトの文脈結合と出力フォーマットを制御します。",
-      parserGridDesc:
-        "パーサーは出力を構造化します。カスケードを推奨。",
+      promptGridDesc: "プロンプトの文脈結合と出力フォーマットを制御します。",
+      parserGridDesc: "パーサーは出力を構造化します。カスケードを推奨。",
       strategyGridDesc:
         "テキストの分割方法と翻訳結果の検証方法を制御します。「行策略」で行単位の検証ルールを管理し、「分块策略」で分割方式を管理します。",
       parserRecommendBadge: "推奨",
@@ -6867,7 +6916,8 @@ export const translations = {
       pipelineOverviewHideGuide: "ガイドを非表示",
       pipelineEmptyBadge: "スキームガイド",
       pipelineEmptyTitle: "翻訳スキームを作成",
-      pipelineEmptyDesc: "次の 4 ステップを完了してスキームを選択してください。",
+      pipelineEmptyDesc:
+        "次の 4 ステップを完了してスキームを選択してください。",
       pipelineEmptyFallbackTitle: "設定ステップ",
       pipelineEmptyFallbackDesc: "このステップを完了してください",
       pipelineEmptyFallbackAction: "設定する",
@@ -7004,8 +7054,7 @@ export const translations = {
         id: "パイプライン参照用",
         baseUrl:
           "エンドポイントにバージョンが必要か確認してください。既に含まれている場合は追加しません。",
-        baseUrlSuffix:
-          "バージョンが含まれている場合は追加しません。",
+        baseUrlSuffix: "バージョンが含まれている場合は追加しません。",
         apiKey: "空欄または複数行でローテーション",
         model: "実際のモデル ID を入力",
         timeout: "空欄は既定値",
@@ -7242,7 +7291,8 @@ export const translations = {
       concurrencyAutoTestRunning: "並列テスト中...",
       concurrencyAutoTestOk: "推奨並列 {count}",
       concurrencyAutoTestFail: "並列テスト失敗",
-      concurrencyAutoTestHint: "/chat/completions \u306b\u300c\u4f60\u597d\u300d\u3092\u4e26\u5217\u9001\u4fe1\u3057\u3001\u30b9\u30c6\u30fc\u30bf\u30b9\u30b3\u30fc\u30c9\u3067\u5224\u5b9a\u3057\u307e\u3059",
+      concurrencyAutoTestHint:
+        "/chat/completions \u306b\u300c\u4f60\u597d\u300d\u3092\u4e26\u5217\u9001\u4fe1\u3057\u3001\u30b9\u30c6\u30fc\u30bf\u30b9\u30b3\u30fc\u30c9\u3067\u5224\u5b9a\u3057\u307e\u3059",
       concurrencyAutoTestPoolHint: "ローテーションは自動テスト非対応",
       concurrencyAutoTestAuth: "認証失敗（401/403）",
       concurrencyAutoTestRateLimited: "レート制限（429）",
@@ -7406,8 +7456,7 @@ export const translations = {
         single: "単一パーサー",
         cascade: "パーサーカスケード",
       },
-      parserModeHint:
-        "単一は1ルールのみ、カスケードは順番に試行します。",
+      parserModeHint: "単一は1ルールのみ、カスケードは順番に試行します。",
       parserRulesTitle: "解析ルール",
       parserRulesDesc: "順番に解析を試行",
       parserRuleTitle: "ルール {index}",
@@ -7448,7 +7497,7 @@ export const translations = {
       parserRulePythonHint:
         "スクリプトに parse(text) を実装し、文字列または行配列を返します。",
       parserRuleExtraLabel: "追加オプション (JSON)",
-      parserRuleExtraPlaceholder: "{ \"path\": \"translation\" }",
+      parserRuleExtraPlaceholder: '{ "path": "translation" }',
       parserRuleExtraShow: "詳細を表示",
       parserRuleExtraHide: "詳細を非表示",
       parserRuleExtraHint: "追加フィールドは JSON で指定します。",
@@ -7842,6 +7891,18 @@ export const translations = {
       retranslateConfirmTitle: "再翻訳の確認",
       retranslateConfirmDesc:
         "{index} 番目のブロックを再翻訳しますか？現在の訳文が上書きされます。",
+      v2PipelineMissingTitle: "V2 Pipeline 未選択",
+      v2PipelineMissingDesc:
+        "V2 が選択されています。先に Dashboard で Pipeline を選択してください。",
+      retranslateFailedLinesButton: "失敗/未翻訳を再翻訳 ({count})",
+      retranslateFailedLinesTitle: "失敗/未翻訳行",
+      retranslateFailedLinesNone: "失敗または未翻訳の行はありません。",
+      retranslateFailedLinesConfirmTitle: "一括再翻訳の確認",
+      retranslateFailedLinesConfirmDesc:
+        "失敗/未翻訳の {count} 行を再翻訳します。続行しますか？",
+      retranslateFailedLinesDoneTitle: "一括再翻訳が完了しました",
+      retranslateFailedLinesDoneDesc:
+        "合計 {total} 行、成功 {success} 行、失敗 {failed} 行。",
       retryPanelButton: "再翻訳設定",
       retryPanelTitle: "再翻訳設定",
       retryPanelDesc: "校正の単一ブロック再翻訳にのみ影響",
@@ -8507,7 +8568,8 @@ export const translations = {
       mirror: "ミラー",
       mirrorDesc: "直接接続が遅い場合はミラーに切り替え",
       sourceLabel: "ソース：",
-      downloadTip: "ヒント：モデルファイルは大きいため、再開ダウンロードに対応。",
+      downloadTip:
+        "ヒント：モデルファイルは大きいため、再開ダウンロードに対応。",
       tipTitle: "ダウンロードのヒント",
       vramTitle: "VRAM 要件",
       vram8b: "最小 6G / 推奨 8G+",

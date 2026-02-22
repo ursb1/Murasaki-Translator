@@ -1,13 +1,14 @@
-﻿import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+﻿import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import yaml from "js-yaml";
 import type { ComponentProps, ComponentType, ReactNode } from "react";
-import {
-  Button,
-  Input as BaseInput,
-  Label,
-  Tooltip,
-  Card,
-} from "./ui/core";
+import { Button, Input as BaseInput, Label, Tooltip, Card } from "./ui/core";
 import { translations, Language } from "../lib/i18n";
 import { emitToast } from "../lib/toast";
 import {
@@ -48,7 +49,10 @@ import { Switch } from "./ui/core";
 import { cn } from "../lib/utils";
 import { createUniqueProfileId, slugifyProfileId } from "../lib/profileId";
 import { isParserProfileBlank } from "../lib/parserProfile";
-import { buildApiPresetProfileId, normalizePresetUrl } from "../lib/apiManagerUtils";
+import {
+  buildApiPresetProfileId,
+  normalizePresetUrl,
+} from "../lib/apiManagerUtils";
 import { normalizeChunkType } from "../lib/chunkProfile";
 import {
   buildPipelineSummary,
@@ -194,7 +198,7 @@ const parseKeyValuePairs = (text: string): KeyValuePair[] => {
         ...toPairValue(value),
       }));
     }
-  } catch { }
+  } catch {}
   return [createEmptyPair()];
 };
 
@@ -204,7 +208,7 @@ const parseJsonValueMaybe = (raw: string) => {
   const looksJson =
     trimmed.startsWith("{") ||
     trimmed.startsWith("[") ||
-    trimmed.startsWith("\"") ||
+    trimmed.startsWith('"') ||
     trimmed === "true" ||
     trimmed === "false" ||
     trimmed === "null" ||
@@ -233,7 +237,9 @@ const pairsToJsonWithTypes = (pairs: KeyValuePair[]) => {
     const key = pair.key.trim();
     if (!key) continue;
     payload[key] =
-      pair.valueKind === "string" ? pair.value : parseJsonValueMaybe(pair.value);
+      pair.valueKind === "string"
+        ? pair.value
+        : parseJsonValueMaybe(pair.value);
   }
   return Object.keys(payload).length ? JSON.stringify(payload) : "";
 };
@@ -788,11 +794,7 @@ const AnthropicFaviconIcon = ({ className }: { className?: string }) => (
 );
 
 const GrokFaviconIcon = ({ className }: { className?: string }) => (
-  <img
-    src={grokLogo}
-    className={cn(className, "object-contain")}
-    alt="Grok"
-  />
+  <img src={grokLogo} className={cn(className, "object-contain")} alt="Grok" />
 );
 
 const TEMPLATE_CUSTOM_KEY = "murasaki.v2.custom_templates";
@@ -1207,7 +1209,8 @@ const formatErrorCode = (code: string, texts: any) => {
   if (code === "invalid_max_retries") return texts.validationInvalidMaxRetries;
   if (code === "invalid_rpm") return texts.validationInvalidRpm;
   if (code === "invalid_timeout") return texts.validationInvalidTimeout;
-  if (code === "invalid_target_chars") return texts.validationInvalidTargetChars;
+  if (code === "invalid_target_chars")
+    return texts.validationInvalidTargetChars;
   if (code === "invalid_max_chars") return texts.validationInvalidMaxChars;
   if (code === "invalid_balance_threshold")
     return texts.validationInvalidBalanceThreshold;
@@ -1223,8 +1226,7 @@ const formatErrorCode = (code: string, texts: any) => {
       .replace(/[:：]\s*$/, "")
       .trim();
   }
-  if (code === "concurrency_test_auth")
-    return texts.concurrencyAutoTestAuth;
+  if (code === "concurrency_test_auth") return texts.concurrencyAutoTestAuth;
   if (code === "concurrency_test_rate_limited")
     return texts.concurrencyAutoTestRateLimited;
   if (code === "concurrency_test_not_found")
@@ -1237,8 +1239,7 @@ const formatErrorCode = (code: string, texts: any) => {
     return texts.concurrencyAutoTestServerError;
   if (code === "concurrency_test_network")
     return texts.concurrencyAutoTestNetwork;
-  if (code === "concurrency_test_failed")
-    return texts.concurrencyAutoTestFail;
+  if (code === "concurrency_test_failed") return texts.concurrencyAutoTestFail;
   if (code === "line_policy_requires_line_chunk") {
     return texts.validationLinePolicyRequiresLineChunk;
   }
@@ -1352,9 +1353,7 @@ const validateProfile = (
       const endpoints = Array.isArray(data.endpoints) ? data.endpoints : [];
       const hasEndpoints = endpoints.some(
         (item: any) =>
-          item &&
-          typeof item === "object" &&
-          (item.base_url || item.baseUrl),
+          item && typeof item === "object" && (item.base_url || item.baseUrl),
       );
       const hasMembers = Boolean(
         (Array.isArray(data.members) && data.members.length > 0) ||
@@ -1396,7 +1395,11 @@ const validateProfile = (
         errors.push(texts.validationInvalidRpm);
       }
     }
-    if (data.timeout !== undefined && data.timeout !== null && data.timeout !== "") {
+    if (
+      data.timeout !== undefined &&
+      data.timeout !== null &&
+      data.timeout !== ""
+    ) {
       const timeoutValue = Number(data.timeout);
       if (!Number.isFinite(timeoutValue) || timeoutValue <= 0) {
         errors.push(texts.validationInvalidTimeout);
@@ -1443,10 +1446,20 @@ const validateProfile = (
     }
     const options = data.options || {};
     const similarityRaw =
-      options.similarity_threshold ?? options.similarity ?? options.similarityThreshold;
-    if (similarityRaw !== undefined && similarityRaw !== null && similarityRaw !== "") {
+      options.similarity_threshold ??
+      options.similarity ??
+      options.similarityThreshold;
+    if (
+      similarityRaw !== undefined &&
+      similarityRaw !== null &&
+      similarityRaw !== ""
+    ) {
       const similarityValue = Number(similarityRaw);
-      if (!Number.isFinite(similarityValue) || similarityValue <= 0 || similarityValue > 1) {
+      if (
+        !Number.isFinite(similarityValue) ||
+        similarityValue <= 0 ||
+        similarityValue > 1
+      ) {
         errors.push(texts.validationInvalidSimilarityThreshold);
       }
     }
@@ -1490,7 +1503,11 @@ const validateProfile = (
       balanceThresholdRaw !== ""
     ) {
       const balanceValue = Number(balanceThresholdRaw);
-      if (!Number.isFinite(balanceValue) || balanceValue <= 0 || balanceValue > 1) {
+      if (
+        !Number.isFinite(balanceValue) ||
+        balanceValue <= 0 ||
+        balanceValue > 1
+      ) {
         errors.push(texts.validationInvalidBalanceThreshold);
       }
     }
@@ -1564,11 +1581,14 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
   const isStrategyKind = (targetKind: ProfileKind) =>
     targetKind === "policy" || targetKind === "chunk";
 
-  const isHiddenProfile = useCallback((targetKind: ProfileKind, id?: string) => {
-    if (!id) return false;
-    const set = HIDDEN_PROFILE_IDS[targetKind];
-    return set ? set.has(String(id)) : false;
-  }, []);
+  const isHiddenProfile = useCallback(
+    (targetKind: ProfileKind, id?: string) => {
+      if (!id) return false;
+      const set = HIDDEN_PROFILE_IDS[targetKind];
+      return set ? set.has(String(id)) : false;
+    },
+    [],
+  );
 
   const getKindLabel = (targetKind: ProfileKind) =>
     isStrategyKind(targetKind)
@@ -1584,11 +1604,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       scope === "policy" || scope === "chunk" ? "strategy" : scope;
     return {
       title: labels[scope] || labels[fallbackScope] || texts.newProfile,
-      desc:
-        descs[scope] ||
-        descs[fallbackScope] ||
-        texts.newProfileDesc ||
-        "",
+      desc: descs[scope] || descs[fallbackScope] || texts.newProfileDesc || "",
     };
   };
 
@@ -1641,7 +1657,10 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     return map?.[templateId] || fallback;
   };
 
-  const getTemplateGroupKey = (templateId: string, profileKind: ProfileKind) => {
+  const getTemplateGroupKey = (
+    templateId: string,
+    profileKind: ProfileKind,
+  ) => {
     const id = templateId.toLowerCase();
     if (profileKind === "api") return "general";
     if (profileKind === "pipeline") return "general";
@@ -1683,8 +1702,8 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     const presetText = (texts.presets?.[preset.id] ||
       fallbackTexts.presets?.[preset.id]) as
       | {
-        channels?: Record<string, { label?: string; desc?: string }>;
-      }
+          channels?: Record<string, { label?: string; desc?: string }>;
+        }
       | undefined;
     const channelText = presetText?.channels?.[channelId];
     if (channelText && typeof channelText === "object") {
@@ -1768,7 +1787,8 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
   >({});
   const [pipelineIndexReady, setPipelineIndexReady] = useState(false);
   const [pipelineIndexLoading, setPipelineIndexLoading] = useState(false);
-  const [isPipelineSummaryLoading, setIsPipelineSummaryLoading] = useState(false);
+  const [isPipelineSummaryLoading, setIsPipelineSummaryLoading] =
+    useState(false);
   const [pipelineView, setPipelineView] = useState<"overview" | "editor">(
     "overview",
   );
@@ -1814,16 +1834,17 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     preset?: ApiPreset | null;
     channelId?: string;
   } | null>(null);
-  const [profileOrder, setProfileOrder] = useState<Record<ProfileKind, string[]>>(
-    () =>
-      loadJson(PROFILE_ORDER_KEY, {
-        api: [],
-        pipeline: [],
-        prompt: [],
-        parser: [],
-        policy: [],
-        chunk: [],
-      }),
+  const [profileOrder, setProfileOrder] = useState<
+    Record<ProfileKind, string[]>
+  >(() =>
+    loadJson(PROFILE_ORDER_KEY, {
+      api: [],
+      pipeline: [],
+      prompt: [],
+      parser: [],
+      policy: [],
+      chunk: [],
+    }),
   );
   const normalizeYamlText = useCallback(
     (value: string) => value.replace(/\r\n/g, "\n").trim(),
@@ -2016,7 +2037,8 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
   const activePreset = useMemo(
     () =>
       activePresetId
-        ? API_PRESETS_DATA.find((preset) => preset.id === activePresetId) || null
+        ? API_PRESETS_DATA.find((preset) => preset.id === activePresetId) ||
+          null
         : null,
     [activePresetId],
   );
@@ -2087,10 +2109,14 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     setPipelineGuideTouched(true);
   };
 
-  const [sandboxText, setSandboxText] = useState("いかに近代化が進もうとも、いかに社会規範が浸透しようとも、人間は時として合理性よりも感情を優先する愚かな存在であるということを。\n\n憎悪に囚われた人間は、打算も、合理性も、損得さえ抜きに、どこまでも抗い続けます");
+  const [sandboxText, setSandboxText] = useState(
+    "いかに近代化が進もうとも、いかに社会規範が浸透しようとも、人間は時として合理性よりも感情を優先する愚かな存在であるということを。\n\n憎悪に囚われた人間は、打算も、合理性も、損得さえ抜きに、どこまでも抗い続けます",
+  );
   const [sandboxResult, setSandboxResult] = useState<any>(null);
   const [sandboxLoading, setSandboxLoading] = useState(false);
-  const [sandboxTab, setSandboxTab] = useState<"pre" | "request" | "response" | "parsed" | "post">("parsed");
+  const [sandboxTab, setSandboxTab] = useState<
+    "pre" | "request" | "response" | "parsed" | "post"
+  >("parsed");
 
   // 清空沙盒状态
   useEffect(() => {
@@ -2155,7 +2181,9 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
 
   const [customTemplates, setCustomTemplates] = useState<
     Record<ProfileKind, TemplateEntry[]>
-  >(() => loadJson(TEMPLATE_CUSTOM_KEY, {} as Record<ProfileKind, TemplateEntry[]>));
+  >(() =>
+    loadJson(TEMPLATE_CUSTOM_KEY, {} as Record<ProfileKind, TemplateEntry[]>),
+  );
   const [hiddenTemplates, setHiddenTemplates] = useState<
     Record<ProfileKind, string[]>
   >(() => loadJson(TEMPLATE_HIDDEN_KEY, {} as Record<ProfileKind, string[]>));
@@ -2188,7 +2216,13 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     setApiTest({ status: "idle" });
     apiConcurrencySeq.current += 1;
     setApiConcurrency({ status: "idle" });
-  }, [apiForm.baseUrl, apiForm.apiKey, apiForm.timeout, apiForm.apiType, apiForm.model]);
+  }, [
+    apiForm.baseUrl,
+    apiForm.apiKey,
+    apiForm.timeout,
+    apiForm.apiType,
+    apiForm.model,
+  ]);
 
   useEffect(() => {
     persistJson(ACTIVE_PIPELINE_KEY, activePipelineId);
@@ -2219,15 +2253,10 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
   }, [visiblePipelineIds, activePipelineId]);
 
   useEffect(() => {
-    if (
-      kind === "pipeline" &&
-      selectedId &&
-      selectedId !== activePipelineId
-    ) {
+    if (kind === "pipeline" && selectedId && selectedId !== activePipelineId) {
       setActivePipelineId(selectedId);
     }
   }, [kind, selectedId, activePipelineId]);
-
 
   const resolveProfileName = (id?: string, name?: string) => {
     const safeId = id || "";
@@ -2241,9 +2270,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       (texts.profileNames as Record<string, string> | undefined) ||
       (fallbackTexts.profileNames as Record<string, string> | undefined);
     const templateItemMap =
-      (texts.templateItems as
-        | Record<string, { title?: string }>
-        | undefined) ||
+      (texts.templateItems as Record<string, { title?: string }> | undefined) ||
       (fallbackTexts.templateItems as
         | Record<string, { title?: string }>
         | undefined);
@@ -2293,7 +2320,6 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     policyForm.name,
     chunkForm.name,
   ]);
-
 
   const visibleProfileIndex = useMemo(() => {
     const next: Record<ProfileKind, string[]> = { ...profileIndex };
@@ -2465,7 +2491,11 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     const trimmed = name.trim();
     if (!trimmed) return currentId || "";
     const baseSeed = slugifyProfileId(trimmed) || `${targetKind}_profile`;
-    return createUniqueProfileId(baseSeed, getExistingIds(targetKind), currentId);
+    return createUniqueProfileId(
+      baseSeed,
+      getExistingIds(targetKind),
+      currentId,
+    );
   };
 
   const shouldAutoUpdateId = (targetKind: ProfileKind, name: string) =>
@@ -2556,9 +2586,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       }
       pendingIds.push(id);
     }
-    const commitEntries = (
-      entries: Array<[string, "" | "line" | "block"]>,
-    ) => {
+    const commitEntries = (entries: Array<[string, "" | "line" | "block"]>) => {
       if (requestId && requestId !== loadProfilesSeq.current) return;
       setChunkTypeIndex((prev) => {
         const next: Record<string, "" | "line" | "block"> = {};
@@ -2609,8 +2637,11 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     const nextMeta: Record<ProfileKind, Record<string, string>> = {
       ...profileMeta,
     };
-    let chunkList: Array<{ id?: string; chunk_type?: string; type?: string }> | null =
-      Array.isArray(preload?.chunk) ? preload?.chunk || null : null;
+    let chunkList: Array<{
+      id?: string;
+      chunk_type?: string;
+      type?: string;
+    }> | null = Array.isArray(preload?.chunk) ? preload?.chunk || null : null;
     try {
       const results = await Promise.all(
         kinds.map(async (targetKind) => {
@@ -2651,7 +2682,11 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     const shouldLoadChunkType =
       kind === "pipeline" || kind === "policy" || kind === "chunk";
     if (shouldLoadChunkType) {
-      await loadChunkTypeIndex(nextIndex.chunk, requestId, chunkList || undefined);
+      await loadChunkTypeIndex(
+        nextIndex.chunk,
+        requestId,
+        chunkList || undefined,
+      );
     }
   };
 
@@ -2753,21 +2788,27 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
         if (Array.isArray(chunkList)) preload.chunk = chunkList;
         const policyItems = Array.isArray(policyList)
           ? policyList
-            .filter((item) => !isHiddenProfile("policy", item.id))
-            .map((item) => ({
-              id: item.id,
-              name: normalizeDefaultProfileName(item.id, item.name || item.id),
-              kind: "policy" as const,
-            }))
+              .filter((item) => !isHiddenProfile("policy", item.id))
+              .map((item) => ({
+                id: item.id,
+                name: normalizeDefaultProfileName(
+                  item.id,
+                  item.name || item.id,
+                ),
+                kind: "policy" as const,
+              }))
           : [];
         const chunkItems = Array.isArray(chunkList)
           ? chunkList
-            .filter((item) => !isHiddenProfile("chunk", item.id))
-            .map((item) => ({
-              id: item.id,
-              name: normalizeDefaultProfileName(item.id, item.name || item.id),
-              kind: "chunk" as const,
-            }))
+              .filter((item) => !isHiddenProfile("chunk", item.id))
+              .map((item) => ({
+                id: item.id,
+                name: normalizeDefaultProfileName(
+                  item.id,
+                  item.name || item.id,
+                ),
+                kind: "chunk" as const,
+              }))
           : [];
         if (requestId !== loadProfilesSeq.current) return;
         setProfiles([...policyItems, ...chunkItems]);
@@ -2944,7 +2985,13 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       }
     };
     loadSummaries();
-  }, [kind, pipelineView, pipelineIndexReady, visiblePipelineIds, pipelineSummaryIndex]);
+  }, [
+    kind,
+    pipelineView,
+    pipelineIndexReady,
+    visiblePipelineIds,
+    pipelineSummaryIndex,
+  ]);
 
   useEffect(() => {
     if (kind !== "pipeline") return;
@@ -3222,7 +3269,11 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       const existingId = selectedId;
       const isRename =
         Boolean(existingId) && Boolean(parsedId) && parsedId !== existingId;
-      if (isRename && existingId && DEFAULT_PROTECTED_PROFILE_IDS.has(existingId)) {
+      if (
+        isRename &&
+        existingId &&
+        DEFAULT_PROTECTED_PROFILE_IDS.has(existingId)
+      ) {
         emitToast({
           title: texts.saveFail,
           description: texts.defaultPresetDeleteFail,
@@ -3281,7 +3332,12 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
             variant: "warning",
           });
         }
-        if (isRename && existingId && existingId !== saveId && kind !== "pipeline") {
+        if (
+          isRename &&
+          existingId &&
+          existingId !== saveId &&
+          kind !== "pipeline"
+        ) {
           const refUpdate = await updatePipelineReferences(
             kind,
             existingId,
@@ -3310,7 +3366,10 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
             ? { ...parsedData, id: parsedId }
             : parsedData;
         if (normalizedData && typeof normalizedData === "object") {
-          lastProfileDataRef.current[kind] = normalizedData as Record<string, any>;
+          lastProfileDataRef.current[kind] = normalizedData as Record<
+            string,
+            any
+          >;
         }
         await loadProfiles();
         if (kind === "api" && pendingPipelineLink) {
@@ -3337,7 +3396,9 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
           setProfileOrder((prev) => {
             const next = { ...prev };
             const existing = next[kind] ? [...next[kind]] : [];
-            next[kind] = existing.map((id) => (id === existingId ? saveId : id));
+            next[kind] = existing.map((id) =>
+              id === existingId ? saveId : id,
+            );
             return next;
           });
           if (kind === "pipeline" && activePipelineId === existingId) {
@@ -3512,10 +3573,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
 
   const handleCreate = () => handleCreateByKind(kind);
 
-  const handleSelectProfile = (
-    id: string,
-    targetKind: ProfileKind = kind,
-  ) => {
+  const handleSelectProfile = (id: string, targetKind: ProfileKind = kind) => {
     guardUnsaved(() => {
       if (targetKind !== kind) {
         setPendingSelection({ id, kind: targetKind });
@@ -3862,10 +3920,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     }
   };
 
-  const handlePresetSelect = (
-    preset: ApiPreset | null,
-    channelId?: string,
-  ) => {
+  const handlePresetSelect = (preset: ApiPreset | null, channelId?: string) => {
     lastProfileDataRef.current.api = null;
     if (preset) {
       const option = resolvePresetOption(preset, channelId);
@@ -3926,7 +3981,8 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
         pipelineId,
       );
       const data =
-        result?.data ?? (result?.yaml ? (safeLoadYaml(result.yaml) as any) : null);
+        result?.data ??
+        (result?.yaml ? (safeLoadYaml(result.yaml) as any) : null);
       const nextData: any = { ...(data || {}), id: pipelineId };
       nextData.provider = providerId;
       const fallbackPrompt = profileIndex.prompt[0] || "";
@@ -3949,7 +4005,8 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
         }
       } else {
         if (nextData.line_policy !== undefined) delete nextData.line_policy;
-        if (nextData.apply_line_policy !== undefined) delete nextData.apply_line_policy;
+        if (nextData.apply_line_policy !== undefined)
+          delete nextData.apply_line_policy;
       }
 
       const nextYaml = yaml.dump(nextData);
@@ -4037,7 +4094,6 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     if (base === "ja" || base === "jp") return base;
     return trimmed;
   };
-
 
   const normalizeParserRuleType = (value: string): ParserRuleType => {
     if (parserRuleTypes.includes(value as ParserRuleType))
@@ -4147,9 +4203,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       scriptPath:
         scriptPath !== undefined ? String(scriptPath) : rule.scriptPath,
       functionName:
-        functionName !== undefined
-          ? String(functionName)
-          : rule.functionName,
+        functionName !== undefined ? String(functionName) : rule.functionName,
       extraOptions: Object.keys(extra).length
         ? JSON.stringify(extra, null, 2)
         : "",
@@ -4177,8 +4231,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     }
     if (rule.type === "python") {
       if (rule.scriptPath.trim()) options.script = rule.scriptPath.trim();
-      if (rule.functionName.trim())
-        options.function = rule.functionName.trim();
+      if (rule.functionName.trim()) options.function = rule.functionName.trim();
     }
     if (rule.type === "regex") {
       if (rule.pattern.trim()) options.pattern = rule.pattern.trim();
@@ -4272,11 +4325,16 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
         ? JSON.stringify(remainingParams, null, 2)
         : "";
       const apiHeaders =
-        data.headers && typeof data.headers === "object" && !Array.isArray(data.headers)
+        data.headers &&
+        typeof data.headers === "object" &&
+        !Array.isArray(data.headers)
           ? data.headers
           : {};
       lastValidJsonRef.current.apiHeaders = apiHeaders as Record<string, any>;
-      lastValidJsonRef.current.apiParams = remainingParams as Record<string, any>;
+      lastValidJsonRef.current.apiParams = remainingParams as Record<
+        string,
+        any
+      >;
       const rawEndpoints = Array.isArray(data.endpoints) ? data.endpoints : [];
       const normalizedEndpoints = rawEndpoints
         .filter((item: any) => item && typeof item === "object")
@@ -4328,10 +4386,10 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
           data.rpm !== undefined && data.rpm !== null
             ? String(data.rpm)
             : data.requests_per_minute !== undefined &&
-              data.requests_per_minute !== null
+                data.requests_per_minute !== null
               ? String(data.requests_per_minute)
               : data.rate_limit_per_minute !== undefined &&
-                data.rate_limit_per_minute !== null
+                  data.rate_limit_per_minute !== null
                 ? String(data.rate_limit_per_minute)
                 : "",
         temperature: paramValue("temperature"),
@@ -4361,28 +4419,33 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       );
       const pipelineHeaders =
         data.settings?.headers &&
-          typeof data.settings.headers === "object" &&
-          !Array.isArray(data.settings.headers)
+        typeof data.settings.headers === "object" &&
+        !Array.isArray(data.settings.headers)
           ? data.settings.headers
           : {};
       const extraParamEntries = data.settings?.params
         ? Object.entries(data.settings.params).filter(
-          ([key]) =>
-            ![
-              "top_p",
-              "presence_penalty",
-              "frequency_penalty",
-              "seed",
-              "stop",
-            ].includes(key),
-        )
+            ([key]) =>
+              ![
+                "top_p",
+                "presence_penalty",
+                "frequency_penalty",
+                "seed",
+                "stop",
+              ].includes(key),
+          )
         : [];
       const extraParamObject = extraParamEntries.length
         ? Object.fromEntries(extraParamEntries)
         : {};
-      lastValidJsonRef.current.pipelineHeaders = pipelineHeaders as Record<string, any>;
-      lastValidJsonRef.current.pipelineExtraParams =
-        extraParamObject as Record<string, any>;
+      lastValidJsonRef.current.pipelineHeaders = pipelineHeaders as Record<
+        string,
+        any
+      >;
+      lastValidJsonRef.current.pipelineExtraParams = extraParamObject as Record<
+        string,
+        any
+      >;
       setPipelineComposer({
         id: data.id || "",
         name: data.name || "",
@@ -4395,17 +4458,17 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
         chunkPolicy,
         temperature:
           data.settings?.temperature !== undefined &&
-            data.settings?.temperature !== null
+          data.settings?.temperature !== null
             ? String(data.settings.temperature)
             : "",
         maxRetries:
           data.settings?.max_retries !== undefined &&
-            data.settings?.max_retries !== null
+          data.settings?.max_retries !== null
             ? String(data.settings.max_retries)
             : "",
         concurrency:
           data.settings?.concurrency !== undefined &&
-            data.settings?.concurrency !== null
+          data.settings?.concurrency !== null
             ? String(data.settings.concurrency)
             : "",
         maxTokens: String(data.settings?.max_tokens ?? ""),
@@ -4463,7 +4526,9 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
             ? data.options?.parsers || data.options?.candidates
             : [data];
         const rawRules = Array.isArray(candidates) ? candidates : [];
-        const rules = (rawRules.length ? rawRules : [data]).map(parseParserRule);
+        const rules = (rawRules.length ? rawRules : [data]).map(
+          parseParserRule,
+        );
         setParserForm({
           id: data.id || "",
           name: data.name || "",
@@ -4475,10 +4540,19 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     if (targetKind === "policy") {
       const options = data.options || {};
       const checks = normalizeChecks(options.checks);
-      const policyType: PolicyFormState["policyType"] = ["strict", "tolerant"].includes(String(data.type)) ? (String(data.type) as PolicyFormState["policyType"]) : "strict";
-      const onMismatch = ["retry", "error", "pad", "truncate", "align"].includes(
-        String(options.on_mismatch),
-      )
+      const policyType: PolicyFormState["policyType"] = [
+        "strict",
+        "tolerant",
+      ].includes(String(data.type))
+        ? (String(data.type) as PolicyFormState["policyType"])
+        : "strict";
+      const onMismatch = [
+        "retry",
+        "error",
+        "pad",
+        "truncate",
+        "align",
+      ].includes(String(options.on_mismatch))
         ? String(options.on_mismatch)
         : "retry";
       setPolicyForm({
@@ -4522,7 +4596,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       if (!data || typeof data !== "object") return;
       lastProfileDataRef.current[targetKind] = data;
       syncFormsFromData(targetKind, data);
-    } catch { }
+    } catch {}
   };
 
   const localizeTemplateName = (templateYaml: string, displayName?: string) => {
@@ -4563,10 +4637,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     return `id: ${nextId}\n${templateYaml}`;
   };
 
-  const handleApplyTemplate = (
-    templateYaml: string,
-    templateId?: string,
-  ) => {
+  const handleApplyTemplate = (templateYaml: string, templateId?: string) => {
     guardUnsaved(() => {
       setSelectedId(null);
       const displayName = templateId
@@ -4820,14 +4891,15 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
         let stopValue: any = newForm.stop.trim();
         try {
           stopValue = JSON.parse(newForm.stop);
-        } catch { }
+        } catch {}
         params.stop = stopValue;
       }
       if (Object.keys(params).length) {
         payload.params = params;
       }
 
-      if (newForm.timeout !== "") payload.timeout = parseInt(newForm.timeout, 10);
+      if (newForm.timeout !== "")
+        payload.timeout = parseInt(newForm.timeout, 10);
       if (newForm.concurrency !== "") {
         const rawConcurrency = Number.parseInt(newForm.concurrency, 10);
         if (Number.isFinite(rawConcurrency)) {
@@ -4883,7 +4955,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       }
 
       queueYamlDump(payload);
-    } catch { }
+    } catch {}
   };
 
   const fillPipelineRefs = (composer: PipelineComposerState) => ({
@@ -4899,7 +4971,9 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     const chunkType = inferChunkType(resolvedComposer.chunkPolicy);
     const isLineChunk = chunkType === "line";
     const applyLinePolicy =
-      isLineChunk && resolvedComposer.applyLinePolicy && Boolean(resolvedComposer.linePolicy);
+      isLineChunk &&
+      resolvedComposer.applyLinePolicy &&
+      Boolean(resolvedComposer.linePolicy);
     const payload: any = {
       id: resolvedComposer.id,
       name: resolvedComposer.name,
@@ -5083,7 +5157,8 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       newForm.systemTemplate,
     );
     if (preserveLegacy && promptLegacyParts) {
-      if (promptLegacyParts.persona) payload.persona = promptLegacyParts.persona;
+      if (promptLegacyParts.persona)
+        payload.persona = promptLegacyParts.persona;
       if (promptLegacyParts.styleRules)
         payload.style_rules = promptLegacyParts.styleRules;
       if (promptLegacyParts.outputRules)
@@ -5136,7 +5211,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       }
       if (Object.keys(options).length) payload.options = options;
       queueYamlDump(payload);
-    } catch { }
+    } catch {}
   };
 
   const updateYamlFromChunkForm = (newForm: ChunkFormState) => {
@@ -5145,7 +5220,8 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       const previousChunkTypeRaw =
         lastProfileDataRef.current.chunk?.chunk_type ??
         lastProfileDataRef.current.chunk?.type;
-      const resolvedChunkType = normalizeChunkType(previousChunkTypeRaw) || "block";
+      const resolvedChunkType =
+        normalizeChunkType(previousChunkTypeRaw) || "block";
       const payload: any = {
         id: newForm.id,
         name: newForm.name,
@@ -5164,7 +5240,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       if (Number.isFinite(balanceCount)) options.balance_count = balanceCount;
       if (Object.keys(options).length) payload.options = options;
       queueYamlDump(payload);
-    } catch { }
+    } catch {}
   };
 
   const updateYamlFromParserForm = (newForm: ParserFormState) => {
@@ -5201,15 +5277,21 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     queueYamlDump(payload);
   };
 
-
-
   const renderNavigationRail = () => (
     <div className="w-16 shrink-0 flex flex-col items-center py-4 bg-muted/10 border-r border-border/60 z-20 gap-4">
       <div className="flex-1 w-full px-2 space-y-2 flex flex-col items-center">
         {[
-          { kind: "pipeline" as const, icon: Workflow, label: texts.kinds.pipeline },
+          {
+            kind: "pipeline" as const,
+            icon: Workflow,
+            label: texts.kinds.pipeline,
+          },
           { kind: "api" as const, icon: Server, label: texts.kinds.api },
-          { kind: "prompt" as const, icon: MessageSquare, label: texts.kinds.prompt },
+          {
+            kind: "prompt" as const,
+            icon: MessageSquare,
+            label: texts.kinds.prompt,
+          },
         ].map(({ kind: targetKind, icon: Icon, label }) => (
           <Tooltip key={targetKind} content={label}>
             <button
@@ -5227,7 +5309,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                 "h-10 w-10 rounded-xl flex items-center justify-center transition-all duration-200",
                 kind === targetKind
                   ? "bg-muted/60 text-foreground shadow-sm scale-105 dark:bg-primary/30 dark:text-primary-foreground dark:shadow-md"
-                  : "text-muted-foreground hover:bg-muted/50 hover:text-foreground hover:scale-105 dark:hover:text-primary"
+                  : "text-muted-foreground hover:bg-muted/50 hover:text-foreground hover:scale-105 dark:hover:text-primary",
               )}
             >
               <Icon className="h-5 w-5" />
@@ -5306,7 +5388,9 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
   const renderSidePanel = () => (
     <aside className="w-72 shrink-0 bg-background/50 border-r border-border/60 flex flex-col h-full min-h-0 backdrop-blur-xl">
       <div className="p-4 pt-6 border-b border-border/40">
-        <h2 className="text-xl font-bold tracking-tight mb-1">{getKindLabel(kind)}</h2>
+        <h2 className="text-xl font-bold tracking-tight mb-1">
+          {getKindLabel(kind)}
+        </h2>
         {isStrategyKind(kind) && (
           <div className="mt-3 flex items-center gap-2">
             {(["policy", "chunk"] as const).map((targetKind) => (
@@ -5370,13 +5454,21 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                   )}
                 >
                   <div className="flex-1 min-w-0">
-                    <div className={cn("font-medium truncate transition-colors", isSelected ? "text-foreground dark:text-primary-foreground" : "text-foreground")}>
+                    <div
+                      className={cn(
+                        "font-medium truncate transition-colors",
+                        isSelected
+                          ? "text-foreground dark:text-primary-foreground"
+                          : "text-foreground",
+                      )}
+                    >
                       {resolveProfileName(p.id, p.name)}
                     </div>
                     <div
                       className={cn(
                         "text-[10px] text-muted-foreground truncate font-mono mt-0.5 h-4",
-                        HIDE_ALL_PROFILE_IDS || HIDE_PROFILE_ID_DISPLAY.has(p.id)
+                        HIDE_ALL_PROFILE_IDS ||
+                          HIDE_PROFILE_ID_DISPLAY.has(p.id)
                           ? "opacity-0"
                           : "opacity-70",
                       )}
@@ -5384,7 +5476,9 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                       {p.id}
                     </div>
                   </div>
-                  {isSelected && <ChevronRight className="h-4 w-4 opacity-50 text-muted-foreground dark:text-primary animate-in slide-in-from-left-1 duration-200" />}
+                  {isSelected && (
+                    <ChevronRight className="h-4 w-4 opacity-50 text-muted-foreground dark:text-primary animate-in slide-in-from-left-1 duration-200" />
+                  )}
                 </button>
               );
             })}
@@ -5454,48 +5548,45 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     const endpointReadyCount = apiForm.poolEndpoints.filter(
       (item) => item.baseUrl.trim() && item.model.trim(),
     ).length;
-    const poolReady =
-      endpointCount > 0 && endpointReadyCount === endpointCount;
+    const poolReady = endpointCount > 0 && endpointReadyCount === endpointCount;
     const requiredItems =
       apiForm.apiType === "openai_compat"
         ? [
-          {
-            key: "id",
-            label: texts.apiSetupItems.id,
-            ok: Boolean(apiForm.id.trim()),
-          },
-          {
-            key: "baseUrl",
-            label: texts.apiSetupItems.baseUrl,
-            ok: Boolean(apiForm.baseUrl.trim()),
-          },
-          {
-            key: "model",
-            label: texts.apiSetupItems.model,
-            ok: Boolean(apiForm.model.trim()),
-          },
-        ]
+            {
+              key: "id",
+              label: texts.apiSetupItems.id,
+              ok: Boolean(apiForm.id.trim()),
+            },
+            {
+              key: "baseUrl",
+              label: texts.apiSetupItems.baseUrl,
+              ok: Boolean(apiForm.baseUrl.trim()),
+            },
+            {
+              key: "model",
+              label: texts.apiSetupItems.model,
+              ok: Boolean(apiForm.model.trim()),
+            },
+          ]
         : [
-          {
-            key: "id",
-            label: texts.apiSetupItems.id,
-            ok: Boolean(apiForm.id.trim()),
-          },
-          {
-            key: "endpoints",
-            label: texts.apiSetupItems.endpoints,
-            ok: poolReady,
-          },
-        ];
+            {
+              key: "id",
+              label: texts.apiSetupItems.id,
+              ok: Boolean(apiForm.id.trim()),
+            },
+            {
+              key: "endpoints",
+              label: texts.apiSetupItems.endpoints,
+              ok: poolReady,
+            },
+          ];
     const requiredDone = requiredItems.filter((item) => item.ok).length;
     const requiredTotal = requiredItems.length;
     const progressText = texts.apiSetupProgress
       .replace("{done}", String(requiredDone))
       .replace("{total}", String(requiredTotal));
     const progressValue =
-      requiredTotal > 0
-        ? Math.round((requiredDone / requiredTotal) * 100)
-        : 0;
+      requiredTotal > 0 ? Math.round((requiredDone / requiredTotal) * 100) : 0;
     const setupHint =
       apiForm.apiType === "openai_compat"
         ? texts.apiSetupHintOpenAI
@@ -5761,7 +5852,6 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
               </p>
             </div>
           </div>
-
         </div>
 
         {apiForm.apiType === "openai_compat" ? (
@@ -5858,7 +5948,10 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                             "{latency}",
                             String(apiTest.latencyMs ?? "-"),
                           )
-                          .replace("{status}", String(apiTest.statusCode ?? "-"))}
+                          .replace(
+                            "{status}",
+                            String(apiTest.statusCode ?? "-"),
+                          )}
                       </span>
                     )}
                     {apiTest.status === "error" && (
@@ -5878,14 +5971,16 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                   </div>
                 </div>
                 <Button
-                  variant={apiTest.status === "success" ? "outline" : "secondary"}
+                  variant={
+                    apiTest.status === "success" ? "outline" : "secondary"
+                  }
                   size="sm"
                   className={cn(
                     "gap-2 min-w-[120px] justify-center ml-auto",
                     apiTest.status === "success" &&
-                    "border-green-500/50 text-green-600 dark:text-green-400 bg-green-500/10",
+                      "border-green-500/50 text-green-600 dark:text-green-400 bg-green-500/10",
                     apiTest.status === "error" &&
-                    "border-red-500/50 text-red-600 dark:text-red-400 bg-red-500/10",
+                      "border-red-500/50 text-red-600 dark:text-red-400 bg-red-500/10",
                   )}
                   onClick={handleTestApi}
                   disabled={apiTest.status === "testing"}
@@ -5925,7 +6020,8 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                     )}
                     {apiConcurrency.status === "error" && (
                       <span className="text-destructive">
-                        {apiConcurrency.message || texts.concurrencyAutoTestFail}
+                        {apiConcurrency.message ||
+                          texts.concurrencyAutoTestFail}
                       </span>
                     )}
                     {apiConcurrency.status === "idle" && (
@@ -5938,15 +6034,17 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                 </div>
                 <Button
                   variant={
-                    apiConcurrency.status === "success" ? "outline" : "secondary"
+                    apiConcurrency.status === "success"
+                      ? "outline"
+                      : "secondary"
                   }
                   size="sm"
                   className={cn(
                     "gap-2 min-w-[120px] justify-center ml-auto",
                     apiConcurrency.status === "success" &&
-                    "border-green-500/50 text-green-600 dark:text-green-400 bg-green-500/10",
+                      "border-green-500/50 text-green-600 dark:text-green-400 bg-green-500/10",
                     apiConcurrency.status === "error" &&
-                    "border-red-500/50 text-red-600 dark:text-red-400 bg-red-500/10",
+                      "border-red-500/50 text-red-600 dark:text-red-400 bg-red-500/10",
                   )}
                   onClick={handleTestConcurrency}
                   disabled={apiConcurrency.status === "testing"}
@@ -6018,9 +6116,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                 </div>
               )}
               <div className="space-y-1 text-xs text-muted-foreground">
-                {!canFetchModelList && (
-                  <p>{texts.modelListUnsupported}</p>
-                )}
+                {!canFetchModelList && <p>{texts.modelListUnsupported}</p>}
                 {!modelListRequested && modelList.length === 0 && (
                   <p>{texts.modelHintCombined}</p>
                 )}
@@ -6084,9 +6180,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                             updateYamlFromApiForm({
                               ...apiForm,
                               poolEndpoints:
-                                next.length > 0
-                                  ? next
-                                  : [createPoolEndpoint()],
+                                next.length > 0 ? next : [createPoolEndpoint()],
                             });
                           }}
                         >
@@ -6232,26 +6326,25 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                   { key: "sampling", label: texts.apiAdvancedTabs.sampling },
                   { key: "headers", label: texts.apiAdvancedTabs.headers },
                   { key: "extras", label: texts.apiAdvancedTabs.extras },
-                ]
-                  .map((tab) => (
-                    <button
-                      key={tab.key}
-                      type="button"
-                      onClick={() =>
-                        setApiAdvancedTab(
-                          tab.key as "sampling" | "headers" | "extras",
-                        )
-                      }
-                      className={cn(
-                        "px-3 py-1.5 text-xs font-medium rounded-md transition-colors",
-                        apiAdvancedTab === tab.key
-                          ? "bg-background text-foreground shadow-sm"
-                          : "text-muted-foreground hover:text-foreground",
-                      )}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
+                ].map((tab) => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() =>
+                      setApiAdvancedTab(
+                        tab.key as "sampling" | "headers" | "extras",
+                      )
+                    }
+                    className={cn(
+                      "px-3 py-1.5 text-xs font-medium rounded-md transition-colors",
+                      apiAdvancedTab === tab.key
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
               </div>
 
               {apiAdvancedTab === "extras" && (
@@ -6403,24 +6496,23 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                 </div>
               )}
 
-              {apiAdvancedTab === "headers" &&
-                (
-                  <div className="space-y-4">
-                    <KVEditor
-                      label={texts.formFields.headersLabel}
-                      pairs={headerPairs}
-                      onChange={applyHeaderPairs}
-                      strings={kvStrings}
-                      showHint={false}
-                    />
-                    <KVEditor
-                      label={texts.formFields.paramsLabel}
-                      pairs={paramPairs}
-                      onChange={applyParamPairs}
-                      strings={kvStrings}
-                    />
-                  </div>
-                )}
+              {apiAdvancedTab === "headers" && (
+                <div className="space-y-4">
+                  <KVEditor
+                    label={texts.formFields.headersLabel}
+                    pairs={headerPairs}
+                    onChange={applyHeaderPairs}
+                    strings={kvStrings}
+                    showHint={false}
+                  />
+                  <KVEditor
+                    label={texts.formFields.paramsLabel}
+                    pairs={paramPairs}
+                    onChange={applyParamPairs}
+                    strings={kvStrings}
+                  />
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -6431,7 +6523,9 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
   const renderPromptForm = () => {
     const showPromptId = showIdField.prompt;
     const isJsonlPrompt =
-      String(promptForm.sourceFormat || "").trim().toLowerCase() === "jsonl";
+      String(promptForm.sourceFormat || "")
+        .trim()
+        .toLowerCase() === "jsonl";
     const resolvedSourceFormat = String(promptForm.sourceFormat || "").trim();
     const baseSourceFormatOptions = [
       { value: "", label: texts.promptOptions.sourceFormat.auto },
@@ -6440,18 +6534,20 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     ];
     const hasCustomSourceFormat =
       resolvedSourceFormat &&
-      !baseSourceFormatOptions.some((option) => option.value === resolvedSourceFormat);
+      !baseSourceFormatOptions.some(
+        (option) => option.value === resolvedSourceFormat,
+      );
     const sourceFormatOptions = hasCustomSourceFormat
       ? [
-        {
-          value: resolvedSourceFormat,
-          label: texts.promptOptions.sourceFormat.custom.replace(
-            "{value}",
-            resolvedSourceFormat,
-          ),
-        },
-        ...baseSourceFormatOptions,
-      ]
+          {
+            value: resolvedSourceFormat,
+            label: texts.promptOptions.sourceFormat.custom.replace(
+              "{value}",
+              resolvedSourceFormat,
+            ),
+          },
+          ...baseSourceFormatOptions,
+        ]
       : baseSourceFormatOptions;
     return (
       <div className="space-y-5">
@@ -6891,7 +6987,9 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                 }
               >
                 <option value="single">{texts.parserModeOptions.single}</option>
-                <option value="cascade">{texts.parserModeOptions.cascade}</option>
+                <option value="cascade">
+                  {texts.parserModeOptions.cascade}
+                </option>
               </SelectField>
               <p className="text-xs text-muted-foreground">
                 {texts.parserModeHint}
@@ -6931,7 +7029,9 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                           <Button
                             size="sm"
                             variant="ghost"
-                            onClick={() => moveRule(globalIndex, globalIndex - 1)}
+                            onClick={() =>
+                              moveRule(globalIndex, globalIndex - 1)
+                            }
                             disabled={globalIndex === 0}
                           >
                             {texts.parserRuleMoveUp}
@@ -6939,8 +7039,12 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                           <Button
                             size="sm"
                             variant="ghost"
-                            onClick={() => moveRule(globalIndex, globalIndex + 1)}
-                            disabled={globalIndex === parserForm.rules.length - 1}
+                            onClick={() =>
+                              moveRule(globalIndex, globalIndex + 1)
+                            }
+                            disabled={
+                              globalIndex === parserForm.rules.length - 1
+                            }
                           >
                             {texts.parserRuleMoveDown}
                           </Button>
@@ -6965,7 +7069,10 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                         onChange={(e) =>
                           updateRuleAt(
                             globalIndex,
-                            applyParserRuleType(rule, e.target.value as ParserRuleType),
+                            applyParserRuleType(
+                              rule,
+                              e.target.value as ParserRuleType,
+                            ),
                           )
                         }
                       >
@@ -7014,7 +7121,8 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                           value={rule.multiLine}
                           onChange={(e) =>
                             updateRuleAt(globalIndex, {
-                              multiLine: e.target.value as ParserRuleForm["multiLine"],
+                              multiLine: e.target
+                                .value as ParserRuleForm["multiLine"],
                             })
                           }
                         >
@@ -7081,33 +7189,29 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                       <div className="space-y-2 col-span-2">
                         <Label>{texts.parserRuleRegexFlagsLabel}</Label>
                         <div className="grid grid-cols-3 gap-2">
-                          {(
-                            [
-                              "multiline",
-                              "dotall",
-                              "ignorecase",
-                            ] as const
-                          ).map((flag) => (
-                            <label
-                              key={flag}
-                              className="flex items-center gap-2 text-sm"
-                            >
-                              <input
-                                type="checkbox"
-                                className="h-4 w-4 rounded border-border/60"
-                                checked={rule.regexFlags[flag]}
-                                onChange={(e) =>
-                                  updateRuleAt(globalIndex, {
-                                    regexFlags: {
-                                      ...rule.regexFlags,
-                                      [flag]: e.target.checked,
-                                    },
-                                  })
-                                }
-                              />
-                              <span>{texts.parserRuleRegexFlags[flag]}</span>
-                            </label>
-                          ))}
+                          {(["multiline", "dotall", "ignorecase"] as const).map(
+                            (flag) => (
+                              <label
+                                key={flag}
+                                className="flex items-center gap-2 text-sm"
+                              >
+                                <input
+                                  type="checkbox"
+                                  className="h-4 w-4 rounded border-border/60"
+                                  checked={rule.regexFlags[flag]}
+                                  onChange={(e) =>
+                                    updateRuleAt(globalIndex, {
+                                      regexFlags: {
+                                        ...rule.regexFlags,
+                                        [flag]: e.target.checked,
+                                      },
+                                    })
+                                  }
+                                />
+                                <span>{texts.parserRuleRegexFlags[flag]}</span>
+                              </label>
+                            ),
+                          )}
                         </div>
                       </div>
                     </div>
@@ -7224,19 +7328,21 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
           "relative flex flex-col rounded-xl border transition-all duration-200",
           checked
             ? "border-primary/40 bg-primary/[0.03]"
-            : "border-border/60 bg-card hover:bg-accent/40"
+            : "border-border/60 bg-card hover:bg-accent/40",
         )}
       >
         <div
           onClick={() => onChange(!checked)}
           className="flex items-start gap-4 p-4 cursor-pointer select-none"
         >
-          <div className={cn(
-            "mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-all duration-300",
-            checked
-              ? "bg-primary border-primary text-white scale-110"
-              : "border-muted-foreground/30 bg-transparent"
-          )}>
+          <div
+            className={cn(
+              "mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-all duration-300",
+              checked
+                ? "bg-primary border-primary text-white scale-110"
+                : "border-muted-foreground/30 bg-transparent",
+            )}
+          >
             {checked && <Check className="h-3 w-3 stroke-[3]" />}
           </div>
           <div className="space-y-1 flex-1">
@@ -7292,7 +7398,9 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
           </div>
 
           <div className="space-y-3 pt-2">
-            <Label className="text-base">{texts.policyFields.policyTypeLabel}</Label>
+            <Label className="text-base">
+              {texts.policyFields.policyTypeLabel}
+            </Label>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div
                 onClick={() => updatePolicy({ policyType: "strict" })}
@@ -7300,12 +7408,16 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                   "cursor-pointer rounded-xl border p-4 transition-all hover:shadow-md",
                   policyForm.policyType === "strict"
                     ? "border-border/70 bg-muted/40 ring-1 ring-border/40 dark:bg-primary/15 dark:border-primary/40 dark:ring-primary/20"
-                    : "border-border/60 bg-card hover:bg-muted/30"
+                    : "border-border/60 bg-card hover:bg-muted/30",
                 )}
               >
                 <div className="flex items-center justify-between mb-2">
-                  <div className="font-semibold text-foreground">{texts.policyOptions.strict}</div>
-                  {policyForm.policyType === "strict" && <CheckCircle2 className="w-5 h-5 text-foreground dark:text-primary" />}
+                  <div className="font-semibold text-foreground">
+                    {texts.policyOptions.strict}
+                  </div>
+                  {policyForm.policyType === "strict" && (
+                    <CheckCircle2 className="w-5 h-5 text-foreground dark:text-primary" />
+                  )}
                 </div>
                 <p className="text-xs text-muted-foreground leading-relaxed">
                   {texts.policyHints.strict}
@@ -7318,12 +7430,16 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                   "cursor-pointer rounded-xl border p-4 transition-all hover:shadow-md",
                   policyForm.policyType === "tolerant"
                     ? "border-border/70 bg-muted/40 ring-1 ring-border/40 dark:bg-primary/15 dark:border-primary/40 dark:ring-primary/20"
-                    : "border-border/60 bg-card hover:bg-muted/30"
+                    : "border-border/60 bg-card hover:bg-muted/30",
                 )}
               >
                 <div className="flex items-center justify-between mb-2">
-                  <div className="font-semibold text-foreground">{texts.policyOptions.tolerant}</div>
-                  {policyForm.policyType === "tolerant" && <CheckCircle2 className="w-5 h-5 text-foreground dark:text-primary" />}
+                  <div className="font-semibold text-foreground">
+                    {texts.policyOptions.tolerant}
+                  </div>
+                  {policyForm.policyType === "tolerant" && (
+                    <CheckCircle2 className="w-5 h-5 text-foreground dark:text-primary" />
+                  )}
                 </div>
                 <p className="text-xs text-muted-foreground leading-relaxed">
                   {texts.policyHints.tolerant}
@@ -7348,16 +7464,27 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                   value={policyForm.onMismatch}
                   onChange={(e) =>
                     updatePolicy({
-                      onMismatch: e.target.value as PolicyFormState["onMismatch"],
+                      onMismatch: e.target
+                        .value as PolicyFormState["onMismatch"],
                     })
                   }
                   className="h-10"
                 >
-                  <option value="retry">{texts.policyOptions.onMismatchRetry}</option>
-                  <option value="error">{texts.policyOptions.onMismatchError}</option>
-                  <option value="pad">{texts.policyOptions.onMismatchPad}</option>
-                  <option value="truncate">{texts.policyOptions.onMismatchTruncate}</option>
-                  <option value="align">{texts.policyOptions.onMismatchAlign}</option>
+                  <option value="retry">
+                    {texts.policyOptions.onMismatchRetry}
+                  </option>
+                  <option value="error">
+                    {texts.policyOptions.onMismatchError}
+                  </option>
+                  <option value="pad">
+                    {texts.policyOptions.onMismatchPad}
+                  </option>
+                  <option value="truncate">
+                    {texts.policyOptions.onMismatchTruncate}
+                  </option>
+                  <option value="align">
+                    {texts.policyOptions.onMismatchAlign}
+                  </option>
                 </SelectField>
                 <p className="text-xs text-muted-foreground">
                   {texts.policyHints.onMismatch}
@@ -7376,8 +7503,12 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
           {/* Section 3: Quality Checks (In-Card Expansion) */}
           <div className="pt-8 border-t border-primary/5 space-y-4">
             <div className="space-y-1">
-              <div className="text-sm font-semibold text-foreground/80">{texts.policySections.checksTitle}</div>
-              <p className="text-xs text-muted-foreground">{texts.policySections.checksDesc}</p>
+              <div className="text-sm font-semibold text-foreground/80">
+                {texts.policySections.checksTitle}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {texts.policySections.checksDesc}
+              </p>
             </div>
             <div className="grid grid-cols-1 gap-4">
               {/* Empty Line Check - No extra settings */}
@@ -7398,7 +7529,9 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                 <div className="space-y-4 pt-2">
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <Label>{texts.policyFields.similarityThresholdLabel}</Label>
+                      <Label>
+                        {texts.policyFields.similarityThresholdLabel}
+                      </Label>
                       <span className="text-xs font-mono bg-background border rounded px-1.5 py-0.5 shadow-sm">
                         {policyForm.similarityThreshold}
                       </span>
@@ -7409,14 +7542,16 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                       max="1.0"
                       step="0.05"
                       value={policyForm.similarityThreshold}
-                      onChange={(e) => updatePolicy({ similarityThreshold: e.target.value })}
+                      onChange={(e) =>
+                        updatePolicy({ similarityThreshold: e.target.value })
+                      }
                       className="w-full h-2 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
                     />
                     <p className="text-xs text-muted-foreground">
                       {texts.policyHints.similarityThreshold}
                     </p>
                   </div>
-                </div>
+                </div>,
               )}
 
               {/* Kana Check - Has Language Setting */}
@@ -7431,21 +7566,30 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                     <Label>{texts.policyFields.sourceLangLabel}</Label>
                     <SelectField
                       value={policyForm.sourceLang}
-                      onChange={(e) => updatePolicy({ sourceLang: e.target.value })}
+                      onChange={(e) =>
+                        updatePolicy({ sourceLang: e.target.value })
+                      }
                     >
                       {customSourceLang && (
                         <option value={customSourceLang}>
-                          {texts.policyOptions.sourceLangCustom.replace("{code}", customSourceLang)}
+                          {texts.policyOptions.sourceLangCustom.replace(
+                            "{code}",
+                            customSourceLang,
+                          )}
                         </option>
                       )}
-                      <option value="">{texts.policyOptions.sourceLangAuto}</option>
-                      <option value="ja">{texts.policyOptions.sourceLangJa}</option>
+                      <option value="">
+                        {texts.policyOptions.sourceLangAuto}
+                      </option>
+                      <option value="ja">
+                        {texts.policyOptions.sourceLangJa}
+                      </option>
                     </SelectField>
                     <p className="text-xs text-muted-foreground">
                       {texts.policyHints.sourceLang}
                     </p>
                   </div>
-                </div>
+                </div>,
               )}
             </div>
           </div>
@@ -7467,21 +7611,25 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       hint?: string,
       children?: React.ReactNode,
     ) => (
-      <div className={cn(
-        "relative flex flex-col rounded-xl border transition-all duration-200",
-        checked
-          ? "border-primary/40 bg-primary/[0.03]"
-          : "border-border/60 bg-card hover:bg-accent/40"
-      )}>
-        <div className="flex items-center justify-between p-4 cursor-pointer select-none" onClick={() => onChange(!checked)}>
+      <div
+        className={cn(
+          "relative flex flex-col rounded-xl border transition-all duration-200",
+          checked
+            ? "border-primary/40 bg-primary/[0.03]"
+            : "border-border/60 bg-card hover:bg-accent/40",
+        )}
+      >
+        <div
+          className="flex items-center justify-between p-4 cursor-pointer select-none"
+          onClick={() => onChange(!checked)}
+        >
           <div className="space-y-0.5">
             <div className="text-sm font-medium text-foreground">{label}</div>
-            {hint && <div className="text-xs text-muted-foreground">{hint}</div>}
+            {hint && (
+              <div className="text-xs text-muted-foreground">{hint}</div>
+            )}
           </div>
-          <Switch
-            checked={checked}
-            onCheckedChange={onChange}
-          />
+          <Switch checked={checked} onCheckedChange={onChange} />
         </div>
 
         {checked && children && (
@@ -7611,7 +7759,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                       {texts.chunkHints.balanceCount}
                     </p>
                   </div>
-                </div>
+                </div>,
               )}
             </div>
           </div>
@@ -7624,12 +7772,18 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     if (!sandboxText.trim()) return;
 
     // Validate required fields
-    if (!pipelineComposer.provider || !pipelineComposer.prompt || !pipelineComposer.parser || (!pipelineComposer.chunkPolicy && !pipelineComposer.linePolicy)) {
+    if (
+      !pipelineComposer.provider ||
+      !pipelineComposer.prompt ||
+      !pipelineComposer.parser ||
+      (!pipelineComposer.chunkPolicy && !pipelineComposer.linePolicy)
+    ) {
       setSandboxResult({
         type: "error",
-        error: lang === "en"
-          ? "Please ensure a Provider, Prompt, Parser, and Strategy are selected."
-          : "请确保已选择完整的大模型、提示词、解析器和拆分策略配置。"
+        error:
+          lang === "en"
+            ? "Please ensure a Provider, Prompt, Parser, and Strategy are selected."
+            : "请确保已选择完整的大模型、提示词、解析器和拆分策略配置。",
       });
       return;
     }
@@ -7638,21 +7792,31 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     setSandboxResult(null);
     try {
       const procConfig = (pipelineComposer as any).processing || {};
-      const rulesPreLocal = JSON.parse(localStorage.getItem("config_rules_pre") || "[]");
-      const rulesPostLocal = JSON.parse(localStorage.getItem("config_rules_post") || "[]");
+      const rulesPreLocal = JSON.parse(
+        localStorage.getItem("config_rules_pre") || "[]",
+      );
+      const rulesPostLocal = JSON.parse(
+        localStorage.getItem("config_rules_post") || "[]",
+      );
       const pipelineConfig = {
         ...pipelineComposer,
         provider: pipelineComposer.provider,
         prompt: pipelineComposer.prompt,
         parser: pipelineComposer.parser,
         processing: {
-          rules_pre: (procConfig.rules_pre && procConfig.rules_pre.length > 0) ? procConfig.rules_pre : rulesPreLocal,
-          rules_post: (procConfig.rules_post && procConfig.rules_post.length > 0) ? procConfig.rules_post : rulesPostLocal,
+          rules_pre:
+            procConfig.rules_pre && procConfig.rules_pre.length > 0
+              ? procConfig.rules_pre
+              : rulesPreLocal,
+          rules_post:
+            procConfig.rules_post && procConfig.rules_post.length > 0
+              ? procConfig.rules_post
+              : rulesPostLocal,
           glossary: procConfig.glossary || [],
           source_lang: "ja",
           enable_quality: procConfig.enable_quality,
-          text_protect: procConfig.text_protect
-        }
+          text_protect: procConfig.text_protect,
+        },
       };
       const res = await window.api?.pipelineV2SandboxTest?.({
         text: sandboxText,
@@ -7663,10 +7827,18 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
         if (res.data.ok) {
           setSandboxResult({ type: "success", data: res.data });
         } else {
-          setSandboxResult({ type: "error", error: res.data.error || "Sandbox payload returned error", data: res.data });
+          setSandboxResult({
+            type: "error",
+            error: res.data.error || "Sandbox payload returned error",
+            data: res.data,
+          });
         }
       } else {
-        setSandboxResult({ type: "error", error: res?.error || "Unknown Error", data: res?.data });
+        setSandboxResult({
+          type: "error",
+          error: res?.error || "Unknown Error",
+          data: res?.data,
+        });
       }
     } catch (err: any) {
       setSandboxResult({ type: "error", error: err?.message || String(err) });
@@ -7724,15 +7896,23 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
           </div>
 
           {sandboxResult && (
-            <div className={cn(
-              "mt-4 rounded-xl border flex flex-col shadow-sm overflow-hidden animate-in fade-in slide-in-from-top-2",
-              sandboxResult.type === "error" ? "border-red-500/30" : "border-emerald-500/30"
-            )}>
+            <div
+              className={cn(
+                "mt-4 rounded-xl border flex flex-col shadow-sm overflow-hidden animate-in fade-in slide-in-from-top-2",
+                sandboxResult.type === "error"
+                  ? "border-red-500/30"
+                  : "border-emerald-500/30",
+              )}
+            >
               {/* Header Banner */}
-              <div className={cn(
-                "flex items-center px-4 py-2.5 text-sm font-semibold border-b",
-                sandboxResult.type === "error" ? "bg-red-500/10 border-red-500/20 text-red-600 dark:text-red-400" : "bg-emerald-500/10 border-emerald-500/20 text-emerald-700 dark:text-emerald-400"
-              )}>
+              <div
+                className={cn(
+                  "flex items-center px-4 py-2.5 text-sm font-semibold border-b",
+                  sandboxResult.type === "error"
+                    ? "bg-red-500/10 border-red-500/20 text-red-600 dark:text-red-400"
+                    : "bg-emerald-500/10 border-emerald-500/20 text-emerald-700 dark:text-emerald-400",
+                )}
+              >
                 <div className="flex items-center gap-2">
                   {sandboxResult.type === "error" ? (
                     <AlertTriangle className="h-4 w-4" />
@@ -7741,8 +7921,12 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                   )}
                   <span>
                     {sandboxResult.type === "error"
-                      ? (lang === "en" ? "Execution Failed" : "沙盒测试失败")
-                      : (lang === "en" ? "Execution Successful" : "沙盒测试成功")}
+                      ? lang === "en"
+                        ? "Execution Failed"
+                        : "沙盒测试失败"
+                      : lang === "en"
+                        ? "Execution Successful"
+                        : "沙盒测试成功"}
                   </span>
                 </div>
               </div>
@@ -7760,12 +7944,27 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
               <div className="flex flex-col bg-background">
                 <div className="flex items-end border-b border-border/60 bg-muted/20 pt-1.5 px-2 gap-1 overflow-x-auto custom-scrollbar">
                   {[
-                    { id: "pre", label: lang === "en" ? "Pre-process" : "预处理" },
-                    { id: "request", label: lang === "en" ? "Raw Request" : "请求体" },
-                    { id: "response", label: lang === "en" ? "Raw Response" : "模型原响应" },
-                    { id: "parsed", label: lang === "en" ? "Parsed Result" : "解析提取结果" },
-                    { id: "post", label: lang === "en" ? "Post-process" : "后处理" }
-                  ].map(tab => (
+                    {
+                      id: "pre",
+                      label: lang === "en" ? "Pre-process" : "预处理",
+                    },
+                    {
+                      id: "request",
+                      label: lang === "en" ? "Raw Request" : "请求体",
+                    },
+                    {
+                      id: "response",
+                      label: lang === "en" ? "Raw Response" : "模型原响应",
+                    },
+                    {
+                      id: "parsed",
+                      label: lang === "en" ? "Parsed Result" : "解析提取结果",
+                    },
+                    {
+                      id: "post",
+                      label: lang === "en" ? "Post-process" : "后处理",
+                    },
+                  ].map((tab) => (
                     <button
                       key={tab.id}
                       type="button"
@@ -7774,7 +7973,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                         "px-4 py-2 text-[13px] font-medium rounded-t-lg transition-colors border -mb-px outline-none whitespace-nowrap",
                         sandboxTab === tab.id
                           ? "bg-background border-border/60 border-b-background text-foreground shadow-[0_-2px_0_inset_hsl(var(--primary))]"
-                          : "border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                          : "border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground",
                       )}
                     >
                       {tab.label}
@@ -7784,60 +7983,100 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                 <div className="w-full h-[350px] overflow-y-auto bg-zinc-50 dark:bg-zinc-950/50 p-0 text-[13px] font-mono whitespace-pre-wrap break-all text-foreground/90 leading-relaxed custom-scrollbar selection:bg-primary/20 flex flex-col">
                   {sandboxTab === "pre" && (
                     <div className="flex flex-col p-4 w-full h-full gap-4">
-                      <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Final Result</div>
+                      <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">
+                        Final Result
+                      </div>
                       <div className="bg-background border border-border/50 rounded-md p-3">
-                        {sandboxResult.data?.pre_processed || (sandboxResult.type === "error" ? "N/A (Failed before this step)" : "N/A")}
+                        {sandboxResult.data?.pre_processed ||
+                          (sandboxResult.type === "error"
+                            ? "N/A (Failed before this step)"
+                            : "N/A")}
                       </div>
 
-                      {sandboxResult.data?.pre_traces && sandboxResult.data.pre_traces.length > 0 ? (
+                      {sandboxResult.data?.pre_traces &&
+                      sandboxResult.data.pre_traces.length > 0 ? (
                         <div className="flex flex-col mt-2 gap-3">
                           <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold flex items-center justify-between">
-                            <span>Processing Traces ({sandboxResult.data.pre_traces.length} steps applied / {sandboxResult.data.pre_rules_count || 0} total rules)</span>
+                            <span>
+                              Processing Traces (
+                              {sandboxResult.data.pre_traces.length} steps
+                              applied /{" "}
+                              {sandboxResult.data.pre_rules_count || 0} total
+                              rules)
+                            </span>
                           </div>
 
                           <div className="flex flex-col gap-3 relative before:absolute before:inset-y-0 before:left-3.5 before:w-px before:bg-border/60">
-                            {sandboxResult.data.pre_traces.map((trace: any, idx: number) => (
-                              <div key={idx} className="relative flex gap-4 pr-2">
-                                <div className="z-10 bg-background flex items-center justify-center w-7 h-7 rounded-full border border-border/60 shadow-sm text-xs text-muted-foreground shrink-0 mt-1">
-                                  {idx + 1}
-                                </div>
-                                <div className="flex-1 bg-background border border-border/50 rounded-lg overflow-hidden shadow-sm flex flex-col transiton-all group">
-                                  <div className="bg-muted/30 px-3 py-2 border-b border-border/50 flex items-center justify-between">
-                                    <div className="flex items-center gap-2 font-semibold text-foreground/80">
-                                      <span className={cn(
-                                        "px-1.5 py-0.5 rounded text-[10px] uppercase font-bold text-white",
-                                        trace.type === 'replace' ? "bg-blue-500" :
-                                          trace.type === 'regex' ? "bg-violet-500" :
-                                            trace.type === 'python' ? "bg-amber-500" : "bg-emerald-500"
-                                      )}>
-                                        {trace.type}
-                                      </span>
-                                      <span className="truncate max-w-[200px]" title={trace.pattern}>{trace.pattern || 'N/A'}</span>
+                            {sandboxResult.data.pre_traces.map(
+                              (trace: any, idx: number) => (
+                                <div
+                                  key={idx}
+                                  className="relative flex gap-4 pr-2"
+                                >
+                                  <div className="z-10 bg-background flex items-center justify-center w-7 h-7 rounded-full border border-border/60 shadow-sm text-xs text-muted-foreground shrink-0 mt-1">
+                                    {idx + 1}
+                                  </div>
+                                  <div className="flex-1 bg-background border border-border/50 rounded-lg overflow-hidden shadow-sm flex flex-col transiton-all group">
+                                    <div className="bg-muted/30 px-3 py-2 border-b border-border/50 flex items-center justify-between">
+                                      <div className="flex items-center gap-2 font-semibold text-foreground/80">
+                                        <span
+                                          className={cn(
+                                            "px-1.5 py-0.5 rounded text-[10px] uppercase font-bold text-white",
+                                            trace.type === "replace"
+                                              ? "bg-blue-500"
+                                              : trace.type === "regex"
+                                                ? "bg-violet-500"
+                                                : trace.type === "python"
+                                                  ? "bg-amber-500"
+                                                  : "bg-emerald-500",
+                                          )}
+                                        >
+                                          {trace.type}
+                                        </span>
+                                        <span
+                                          className="truncate max-w-[200px]"
+                                          title={trace.pattern}
+                                        >
+                                          {trace.pattern || "N/A"}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    <div className="p-3 bg-red-500/5 border-b border-border/30 line-through text-red-700/80 dark:text-red-400/80">
+                                      {trace.before}
+                                    </div>
+                                    <div className="p-3 bg-emerald-500/5 text-emerald-700/80 dark:text-emerald-400/80">
+                                      {trace.after}
                                     </div>
                                   </div>
-                                  <div className="p-3 bg-red-500/5 border-b border-border/30 line-through text-red-700/80 dark:text-red-400/80">
-                                    {trace.before}
-                                  </div>
-                                  <div className="p-3 bg-emerald-500/5 text-emerald-700/80 dark:text-emerald-400/80">
-                                    {trace.after}
-                                  </div>
                                 </div>
-                              </div>
-                            ))}
+                              ),
+                            )}
                           </div>
                         </div>
                       ) : (
                         <div className="flex flex-col mt-2 gap-3">
                           <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold flex items-center justify-between">
-                            <span>Processing Traces (0 steps applied / {sandboxResult.data?.pre_rules_count || 0} total rules)</span>
+                            <span>
+                              Processing Traces (0 steps applied /{" "}
+                              {sandboxResult.data?.pre_rules_count || 0} total
+                              rules)
+                            </span>
                           </div>
                           {(sandboxResult.data?.pre_rules_count || 0) > 0 ? (
                             <div className="text-center p-6 bg-background border border-border/50 border-dashed rounded-lg">
-                              <p className="text-sm text-muted-foreground">{lang === "en" ? "Rules were loaded but text was unaffected." : "已加载规则，但无任何规则被触发修改文本。"}</p>
+                              <p className="text-sm text-muted-foreground">
+                                {lang === "en"
+                                  ? "Rules were loaded but text was unaffected."
+                                  : "已加载规则，但无任何规则被触发修改文本。"}
+                              </p>
                             </div>
                           ) : (
                             <div className="text-center p-6 bg-background border border-border/50 border-dashed rounded-lg">
-                              <p className="text-sm text-muted-foreground">{lang === "en" ? "No pre-processing rules configured." : "暂未配置任何预处理规则。"}</p>
+                              <p className="text-sm text-muted-foreground">
+                                {lang === "en"
+                                  ? "No pre-processing rules configured."
+                                  : "暂未配置任何预处理规则。"}
+                              </p>
                             </div>
                           )}
                         </div>
@@ -7846,71 +8085,126 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                   )}
 
                   {sandboxTab === "request" && (
-                    <div className="p-4">{sandboxResult.data?.raw_request || (sandboxResult.type === "error" ? "N/A (Failed before this step)" : "N/A")}</div>
+                    <div className="p-4">
+                      {sandboxResult.data?.raw_request ||
+                        (sandboxResult.type === "error"
+                          ? "N/A (Failed before this step)"
+                          : "N/A")}
+                    </div>
                   )}
                   {sandboxTab === "response" && (
-                    <div className="p-4">{sandboxResult.data?.raw_response || (sandboxResult.type === "error" ? "N/A (Failed before this step)" : "N/A")}</div>
+                    <div className="p-4">
+                      {sandboxResult.data?.raw_response ||
+                        (sandboxResult.type === "error"
+                          ? "N/A (Failed before this step)"
+                          : "N/A")}
+                    </div>
                   )}
                   {sandboxTab === "parsed" && (
-                    <div className="p-4">{sandboxResult.data?.parsed_result || (sandboxResult.type === "error" ? "N/A (Failed before this step)" : "N/A")}</div>
+                    <div className="p-4">
+                      {sandboxResult.data?.parsed_result ||
+                        (sandboxResult.type === "error"
+                          ? "N/A (Failed before this step)"
+                          : "N/A")}
+                    </div>
                   )}
 
                   {sandboxTab === "post" && (
                     <div className="flex flex-col p-4 w-full h-full gap-4">
-                      <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Final Result</div>
+                      <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">
+                        Final Result
+                      </div>
                       <div className="bg-background border border-border/50 rounded-md p-3">
-                        {sandboxResult.data?.post_processed || (sandboxResult.type === "error" ? "N/A (Failed before this step)" : "N/A")}
+                        {sandboxResult.data?.post_processed ||
+                          (sandboxResult.type === "error"
+                            ? "N/A (Failed before this step)"
+                            : "N/A")}
                       </div>
 
-                      {sandboxResult.data?.post_traces && sandboxResult.data.post_traces.length > 0 ? (
+                      {sandboxResult.data?.post_traces &&
+                      sandboxResult.data.post_traces.length > 0 ? (
                         <div className="flex flex-col mt-2 gap-3">
                           <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold flex items-center justify-between">
-                            <span>Processing Traces ({sandboxResult.data.post_traces.length} steps applied / {sandboxResult.data.post_rules_count || 0} total rules)</span>
+                            <span>
+                              Processing Traces (
+                              {sandboxResult.data.post_traces.length} steps
+                              applied /{" "}
+                              {sandboxResult.data.post_rules_count || 0} total
+                              rules)
+                            </span>
                           </div>
 
                           <div className="flex flex-col gap-3 relative before:absolute before:inset-y-0 before:left-3.5 before:w-px before:bg-border/60">
-                            {sandboxResult.data.post_traces.map((trace: any, idx: number) => (
-                              <div key={idx} className="relative flex gap-4 pr-2">
-                                <div className="z-10 bg-background flex items-center justify-center w-7 h-7 rounded-full border border-border/60 shadow-sm text-xs text-muted-foreground shrink-0 mt-1">
-                                  {idx + 1}
-                                </div>
-                                <div className="flex-1 bg-background border border-border/50 rounded-lg overflow-hidden shadow-sm flex flex-col transiton-all group">
-                                  <div className="bg-muted/30 px-3 py-2 border-b border-border/50 flex items-center justify-between">
-                                    <div className="flex items-center gap-2 font-semibold text-foreground/80">
-                                      <span className={cn(
-                                        "px-1.5 py-0.5 rounded text-[10px] uppercase font-bold text-white",
-                                        trace.type === 'replace' ? "bg-blue-500" :
-                                          trace.type === 'regex' ? "bg-violet-500" :
-                                            trace.type === 'python' ? "bg-amber-500" : "bg-emerald-500"
-                                      )}>
-                                        {trace.type}
-                                      </span>
-                                      <span className="truncate max-w-[200px]" title={trace.pattern}>{trace.pattern || 'N/A'}</span>
+                            {sandboxResult.data.post_traces.map(
+                              (trace: any, idx: number) => (
+                                <div
+                                  key={idx}
+                                  className="relative flex gap-4 pr-2"
+                                >
+                                  <div className="z-10 bg-background flex items-center justify-center w-7 h-7 rounded-full border border-border/60 shadow-sm text-xs text-muted-foreground shrink-0 mt-1">
+                                    {idx + 1}
+                                  </div>
+                                  <div className="flex-1 bg-background border border-border/50 rounded-lg overflow-hidden shadow-sm flex flex-col transiton-all group">
+                                    <div className="bg-muted/30 px-3 py-2 border-b border-border/50 flex items-center justify-between">
+                                      <div className="flex items-center gap-2 font-semibold text-foreground/80">
+                                        <span
+                                          className={cn(
+                                            "px-1.5 py-0.5 rounded text-[10px] uppercase font-bold text-white",
+                                            trace.type === "replace"
+                                              ? "bg-blue-500"
+                                              : trace.type === "regex"
+                                                ? "bg-violet-500"
+                                                : trace.type === "python"
+                                                  ? "bg-amber-500"
+                                                  : "bg-emerald-500",
+                                          )}
+                                        >
+                                          {trace.type}
+                                        </span>
+                                        <span
+                                          className="truncate max-w-[200px]"
+                                          title={trace.pattern}
+                                        >
+                                          {trace.pattern || "N/A"}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    <div className="p-3 bg-red-500/5 border-b border-border/30 line-through text-red-700/80 dark:text-red-400/80">
+                                      {trace.before}
+                                    </div>
+                                    <div className="p-3 bg-emerald-500/5 text-emerald-700/80 dark:text-emerald-400/80">
+                                      {trace.after}
                                     </div>
                                   </div>
-                                  <div className="p-3 bg-red-500/5 border-b border-border/30 line-through text-red-700/80 dark:text-red-400/80">
-                                    {trace.before}
-                                  </div>
-                                  <div className="p-3 bg-emerald-500/5 text-emerald-700/80 dark:text-emerald-400/80">
-                                    {trace.after}
-                                  </div>
                                 </div>
-                              </div>
-                            ))}
+                              ),
+                            )}
                           </div>
                         </div>
                       ) : (
                         <div className="flex flex-col mt-2 gap-3">
                           <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold flex items-center justify-between">
-                            <span>Processing Traces (0 steps applied / {sandboxResult.data?.post_rules_count || 0} total rules)</span>
+                            <span>
+                              Processing Traces (0 steps applied /{" "}
+                              {sandboxResult.data?.post_rules_count || 0} total
+                              rules)
+                            </span>
                           </div>
                           {(sandboxResult.data?.post_rules_count || 0) > 0 ? (
                             <div className="text-center p-6 bg-background border border-border/50 border-dashed rounded-lg">
-                              <p className="text-sm text-muted-foreground">{lang === "en" ? "Rules were loaded but text was unaffected." : "已加载规则，但无任何规则被触发修改文本。"}</p>
+                              <p className="text-sm text-muted-foreground">
+                                {lang === "en"
+                                  ? "Rules were loaded but text was unaffected."
+                                  : "已加载规则，但无任何规则被触发修改文本。"}
+                              </p>
                             </div>
                           ) : (
                             <div className="text-center p-6 bg-background border border-border/50 border-dashed rounded-lg">
-                              <p className="text-sm text-muted-foreground">{lang === "en" ? "No post-processing rules configured." : "暂未配置任何后处理规则。"}</p>
+                              <p className="text-sm text-muted-foreground">
+                                {lang === "en"
+                                  ? "No post-processing rules configured."
+                                  : "暂未配置任何后处理规则。"}
+                              </p>
                             </div>
                           )}
                         </div>
@@ -7977,8 +8271,14 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       pipelineComposer.linePolicy || strategyPolicyIds[0] || "";
 
     const buildStrategyOptions = () => {
-      const options: Array<{ value: string; label: string; disabled?: boolean }> = [];
-      const lineCandidates = strategyPolicyIds.length ? strategyPolicyIds : [""];
+      const options: Array<{
+        value: string;
+        label: string;
+        disabled?: boolean;
+      }> = [];
+      const lineCandidates = strategyPolicyIds.length
+        ? strategyPolicyIds
+        : [""];
       const lineFallback = resolveLinePolicyFallback();
       strategyChunkIds.forEach((chunkId) => {
         const chunkType = inferChunkType(chunkId);
@@ -8009,19 +8309,20 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       ? encodeStrategyCombo(normalizedLinePolicy, pipelineComposer.chunkPolicy)
       : "";
     const hasStrategyValue =
-      !strategyValue || strategyOptions.some((item) => item.value === strategyValue);
+      !strategyValue ||
+      strategyOptions.some((item) => item.value === strategyValue);
     const strategyOptionsFinal = hasStrategyValue
       ? strategyOptions
       : [
-        {
-          value: strategyValue,
-          label: getStrategyLabel(
-            normalizedLinePolicy,
-            pipelineComposer.chunkPolicy,
-          ),
-        },
-        ...strategyOptions,
-      ];
+          {
+            value: strategyValue,
+            label: getStrategyLabel(
+              normalizedLinePolicy,
+              pipelineComposer.chunkPolicy,
+            ),
+          },
+          ...strategyOptions,
+        ];
 
     const handleStrategyChange = (value: string) => {
       if (!value) {
@@ -8036,7 +8337,10 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       const chunkType = inferChunkType(chunkPolicy);
       if (chunkType === "line") {
         const nextLinePolicy =
-          linePolicy || pipelineComposer.linePolicy || strategyPolicyIds[0] || "";
+          linePolicy ||
+          pipelineComposer.linePolicy ||
+          strategyPolicyIds[0] ||
+          "";
         applyPipelineChange({
           linePolicy: nextLinePolicy,
           chunkPolicy,
@@ -8062,11 +8366,19 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                 onChange={(e) => {
                   const nextName = e.target.value;
                   const nextId = shouldAutoUpdateId("pipeline", nextName)
-                    ? buildAutoProfileId("pipeline", nextName, pipelineComposer.id)
+                    ? buildAutoProfileId(
+                        "pipeline",
+                        nextName,
+                        pipelineComposer.id,
+                      )
                     : pipelineComposer.id;
                   applyPipelineChange({ name: nextName, id: nextId });
                 }}
-                placeholder={lang === "en" ? "Give this plan a name..." : "为方案起个名字..."}
+                placeholder={
+                  lang === "en"
+                    ? "Give this plan a name..."
+                    : "为方案起个名字..."
+                }
               />
             </div>
           </div>
@@ -8205,7 +8517,11 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     );
   };
 
-  const renderGenericEmptyState = (title: string, desc: string, icon: ComponentType<{ className?: string }>) => {
+  const renderGenericEmptyState = (
+    title: string,
+    desc: string,
+    icon: ComponentType<{ className?: string }>,
+  ) => {
     const Icon = icon;
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground bg-background/50 p-4">
@@ -8218,7 +8534,11 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
         <p className="text-sm max-w-sm text-center opacity-70 mb-10 leading-relaxed">
           {desc}
         </p>
-        <Button onClick={handleCreate} size="lg" className="gap-2 px-8 py-6 rounded-xl shadow-xl hover:shadow-primary/20 hover:-translate-y-0.5 transition-all active:scale-95 bg-primary text-primary-foreground font-semibold">
+        <Button
+          onClick={handleCreate}
+          size="lg"
+          className="gap-2 px-8 py-6 rounded-xl shadow-xl hover:shadow-primary/20 hover:-translate-y-0.5 transition-all active:scale-95 bg-primary text-primary-foreground font-semibold"
+        >
           <Plus className="h-5 w-5" />
           {texts.newProfile}
         </Button>
@@ -8543,7 +8863,9 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                     <div
                       className={cn(
                         "absolute top-4 right-4 transition-all duration-300 z-10",
-                        isSelected ? "opacity-100 scale-100" : "opacity-0 scale-90",
+                        isSelected
+                          ? "opacity-100 scale-100"
+                          : "opacity-0 scale-90",
                       )}
                     >
                       <div className="flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-bold tracking-wide uppercase bg-muted-foreground/80 text-background shadow-sm dark:bg-primary dark:text-primary-foreground">
@@ -8688,7 +9010,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                     "group relative flex flex-col justify-between p-6 rounded-2xl border cursor-pointer transition-all duration-300 ease-out select-none min-h-[180px]",
                     isSelected
                       ? "bg-muted/40 border-border/70 shadow-[0_0_0_1px_rgba(0,0,0,0.04)] dark:bg-primary/15 dark:border-primary/40"
-                      : "bg-card border-border/60 hover:border-border/80 hover:shadow-lg hover:-translate-y-1"
+                      : "bg-card border-border/60 hover:border-border/80 hover:shadow-lg hover:-translate-y-1",
                   )}
                 >
                   {/* Selected Badge */}
@@ -8697,7 +9019,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                       "absolute top-4 right-4 transition-all duration-300 z-10",
                       isSelected
                         ? "opacity-100 scale-100"
-                        : "opacity-0 scale-90"
+                        : "opacity-0 scale-90",
                     )}
                   >
                     <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wide uppercase bg-muted-foreground/80 text-background shadow-sm dark:bg-primary dark:text-primary-foreground">
@@ -8766,8 +9088,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     const visiblePresets = API_PRESETS_DATA.slice(0, 11);
 
     const renderPresetCard = (preset: ApiPreset) => {
-      const presetText =
-        texts.presets?.[preset.id] ||
+      const presetText = texts.presets?.[preset.id] ||
         fallbackTexts.presets?.[preset.id] || {
           label: preset.id,
           desc: "",
@@ -8783,7 +9104,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
             className={cn(
               "w-10 h-10 rounded-lg flex items-center justify-center shrink-0 transition-colors",
               "text-muted-foreground/70 dark:text-primary",
-              "bg-muted/50 border border-border/60 dark:bg-primary/15 dark:border-primary/30 group-hover:bg-muted/60 dark:group-hover:bg-primary/25"
+              "bg-muted/50 border border-border/60 dark:bg-primary/15 dark:border-primary/30 group-hover:bg-muted/60 dark:group-hover:bg-primary/25",
             )}
           >
             <Icon className="h-5 w-5" />
@@ -8803,7 +9124,6 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     return (
       <div className="flex-1 overflow-y-auto bg-background/50">
         <div className="p-6 lg:p-10 max-w-[1800px] mx-auto space-y-12">
-
           {/* Section 1: My API Interface */}
           <div className="space-y-6">
             <div className="flex items-center gap-2 border-b border-border/40 pb-4">
@@ -8829,7 +9149,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                       "group relative flex flex-col justify-between p-6 rounded-2xl border cursor-pointer transition-all duration-300 ease-out select-none min-h-[160px]",
                       isSelected
                         ? "bg-muted/40 border-border/70 shadow-[0_0_0_1px_rgba(0,0,0,0.04)] dark:bg-primary/15 dark:border-primary/40"
-                        : "bg-card border-border/60 hover:border-border/80 hover:shadow-lg hover:-translate-y-1"
+                        : "bg-card border-border/60 hover:border-border/80 hover:shadow-lg hover:-translate-y-1",
                     )}
                   >
                     {/* Selected Badge */}
@@ -8838,7 +9158,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                         "absolute top-4 right-4 transition-all duration-300 z-10",
                         isSelected
                           ? "opacity-100 scale-100"
-                          : "opacity-0 scale-90"
+                          : "opacity-0 scale-90",
                       )}
                     >
                       <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wide uppercase bg-muted-foreground/80 text-background shadow-sm dark:bg-primary dark:text-primary-foreground">
@@ -8879,9 +9199,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                 <div className="col-span-full py-10 flex flex-col items-center justify-center text-center text-muted-foreground border-2 border-dashed border-border/50 rounded-2xl bg-muted/20">
                   <Server className="w-10 h-10 mb-3 opacity-20" />
                   <p>{texts.apiGridEmptyTitle}</p>
-                  <p className="text-sm opacity-60">
-                    {texts.apiGridEmptyDesc}
-                  </p>
+                  <p className="text-sm opacity-60">{texts.apiGridEmptyDesc}</p>
                 </div>
               )}
             </div>
@@ -8901,7 +9219,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
               <div
                 className={cn(
                   "p-2 rounded-lg bg-muted/30 group-hover:bg-muted/60 transition-colors",
-                  presetsOpen ? "rotate-180" : ""
+                  presetsOpen ? "rotate-180" : "",
                 )}
               >
                 <ChevronDown className="w-5 h-5 text-muted-foreground" />
@@ -8920,7 +9238,9 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                   <div className="w-10 h-10 rounded-lg bg-muted/50 border border-border/60 flex items-center justify-center shrink-0 transition-colors text-muted-foreground">
                     <Plus className="h-5 w-5" />
                   </div>
-                  <h3 className="font-semibold text-sm">{texts.customCardTitle}</h3>
+                  <h3 className="font-semibold text-sm">
+                    {texts.customCardTitle}
+                  </h3>
                 </Card>
               </div>
             )}
@@ -8937,7 +9257,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     const hiddenSet = new Set(hiddenTemplates[kind] || []);
     const templates = [...builtInTemplates, ...customForKind];
     const visibleTemplates = templates.filter(
-      (item) => !hiddenSet.has(item.id) && !isHiddenProfile(kind, item.id)
+      (item) => !hiddenSet.has(item.id) && !isHiddenProfile(kind, item.id),
     );
     return visibleTemplates.map((item) => {
       const meta = getTemplateMeta(item.id, item.meta);
@@ -9063,7 +9383,6 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     return (
       <div className="flex-1 overflow-y-auto bg-background/50">
         <div className="p-6 lg:p-10 max-w-[1800px] mx-auto space-y-10">
-
           {/* Header */}
           <div className="space-y-6 animate-in slide-in-from-top-2 fade-in duration-300">
             <div className="flex items-center justify-between">
@@ -9087,25 +9406,29 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
 
   const renderParserGrid = () => {
     // 1. Get User's Existing Parsers + System Defaults (Show ALL)
-    const builtInIds = new Set((TEMPLATE_LIBRARY.parser || []).map(t => t.id));
+    const builtInIds = new Set(
+      (TEMPLATE_LIBRARY.parser || []).map((t) => t.id),
+    );
     const CASCADE_ID = "parser_any_default";
 
     // items = User Parsers + System Parsers (that are not hidden by user preference)
     // We want to SHOW built-in parsers too, so we removed the !builtInIds.has(id) filter
-    const items = orderProfileIds("parser", profileIndex.parser).filter((id) => {
-      if (id === CASCADE_ID) return true; // Always show Cascade Parser
-      return !isHiddenProfile("parser", id);
-    });
+    const items = orderProfileIds("parser", profileIndex.parser).filter(
+      (id) => {
+        if (id === CASCADE_ID) return true; // Always show Cascade Parser
+        return !isHiddenProfile("parser", id);
+      },
+    );
 
     // Sort: Cascade first, then by recommended usage order, user profiles last
     const PARSER_ORDER: string[] = [
-      CASCADE_ID,               // 级联解析 (always first)
-      "parser_json_object",     // JSON 对象解析
-      "parser_json_array",      // JSON 数组解析
-      "parser_tagged_line",     // 行号标记解析
-      "parser_regex_custom",    // 正则提取解析
-      "parser_line_strict",     // 行严格解析
-      "parser_plain",           // 纯文本解析 (always last among system)
+      CASCADE_ID, // 级联解析 (always first)
+      "parser_json_object", // JSON 对象解析
+      "parser_json_array", // JSON 数组解析
+      "parser_tagged_line", // 行号标记解析
+      "parser_regex_custom", // 正则提取解析
+      "parser_line_strict", // 行严格解析
+      "parser_plain", // 纯文本解析 (always last among system)
     ];
     items.sort((a, b) => {
       const ai = PARSER_ORDER.indexOf(a);
@@ -9186,7 +9509,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                       isSelected
                         ? "bg-muted/40 border-border/70 shadow-[0_0_0_1px_rgba(0,0,0,0.04)] dark:bg-primary/15 dark:border-primary/40"
                         : "bg-card border-border/60 hover:border-border/80 hover:shadow-lg hover:-translate-y-1",
-                      isCascade && !isSelected && "border-border/70"
+                      isCascade && !isSelected && "border-border/70",
                     )}
                   >
                     {/* Selected Badge */}
@@ -9195,7 +9518,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                         "absolute top-3 right-3 transition-all duration-300 z-10",
                         isSelected
                           ? "opacity-100 scale-100"
-                          : "opacity-0 scale-90"
+                          : "opacity-0 scale-90",
                       )}
                     >
                       <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-bold tracking-wide uppercase bg-muted-foreground/80 text-background shadow-sm dark:bg-primary dark:text-primary-foreground">
@@ -9206,13 +9529,19 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
 
                     {/* Header */}
                     <div className="flex items-start gap-4">
-                      <div className={cn(
-                        "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-sm border group-hover:scale-105 transition-transform duration-300",
-                        isCascade
-                          ? "bg-muted/60 text-foreground border-border/60 shadow-sm dark:bg-primary/25 dark:text-primary-foreground dark:border-primary/30"
-                          : "bg-muted/50 text-muted-foreground border-border/60 dark:bg-primary/15 dark:text-primary/80 dark:border-primary/30"
-                      )}>
-                        {isCascade ? <Workflow className="w-5 h-5" /> : <FileJson className="w-5 h-5" />}
+                      <div
+                        className={cn(
+                          "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-sm border group-hover:scale-105 transition-transform duration-300",
+                          isCascade
+                            ? "bg-muted/60 text-foreground border-border/60 shadow-sm dark:bg-primary/25 dark:text-primary-foreground dark:border-primary/30"
+                            : "bg-muted/50 text-muted-foreground border-border/60 dark:bg-primary/15 dark:text-primary/80 dark:border-primary/30",
+                        )}
+                      >
+                        {isCascade ? (
+                          <Workflow className="w-5 h-5" />
+                        ) : (
+                          <FileJson className="w-5 h-5" />
+                        )}
                       </div>
                       <div className="space-y-1">
                         <h3 className="font-bold text-base leading-tight line-clamp-2 text-foreground/90 group-hover:text-foreground dark:group-hover:text-primary transition-colors">
@@ -9279,7 +9608,11 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       return renderLoadingState();
     }
 
-    if (kind === "pipeline" && pipelineView === "editor" && !pipelineIndexReady) {
+    if (
+      kind === "pipeline" &&
+      pipelineView === "editor" &&
+      !pipelineIndexReady
+    ) {
       return renderLoadingState();
     }
 
@@ -9305,7 +9638,10 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
 
     // If no selection and no YAML text (meaning we are not creating/editing ANY profile)
     if (!selectedId && !yamlText) {
-      const emptyConfig: Record<ProfileKind, { title: string; desc: string; icon: any }> = {
+      const emptyConfig: Record<
+        ProfileKind,
+        { title: string; desc: string; icon: any }
+      > = {
         prompt: {
           title: texts.kinds.prompt,
           desc: texts.promptSections.templateDesc,
@@ -9346,8 +9682,6 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
 
       return renderGenericEmptyState(cfg.title, cfg.desc, cfg.icon);
     }
-
-
 
     return (
       <main className="flex-1 flex flex-col h-full min-h-0 relative bg-background/30 backdrop-blur-3xl">
@@ -9704,7 +10038,12 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     <>
       <div className="flex h-full w-full min-h-0 bg-background/95 backdrop-blur-3xl overflow-hidden">
         {renderNavigationRail()}
-        {kind !== "pipeline" && kind !== "prompt" && kind !== "api" && kind !== "parser" && !isStrategyKind(kind) && renderSidePanel()}
+        {kind !== "pipeline" &&
+          kind !== "prompt" &&
+          kind !== "api" &&
+          kind !== "parser" &&
+          !isStrategyKind(kind) &&
+          renderSidePanel()}
         {renderContent()}
         <TemplateSelector
           open={templateSelectorOpen}
@@ -9725,107 +10064,85 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
           }}
           managerOpen={templateManagerOpen}
           onToggleManager={() => setTemplateManagerOpen((prev) => !prev)}
-          managerContent={
-            (() => {
-              // Determine templates for manager view
-              const builtInTemplates = TEMPLATE_LIBRARY[kind] || [];
-              const customForKind = customTemplates[kind] || [];
-              const hiddenSet = new Set(hiddenTemplates[kind] || []);
-              const templates = [...builtInTemplates, ...customForKind];
+          managerContent={(() => {
+            // Determine templates for manager view
+            const builtInTemplates = TEMPLATE_LIBRARY[kind] || [];
+            const customForKind = customTemplates[kind] || [];
+            const hiddenSet = new Set(hiddenTemplates[kind] || []);
+            const templates = [...builtInTemplates, ...customForKind];
 
-              return (
-                <>
-                  <div className="text-xs text-muted-foreground">
-                    {texts.templatesManageDesc}
+            return (
+              <>
+                <div className="text-xs text-muted-foreground">
+                  {texts.templatesManageDesc}
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {templates.map((item) => {
+                    const meta = getTemplateMeta(item.id, item.meta);
+                    const hidden = hiddenSet.has(item.id);
+                    return (
+                      <label
+                        key={item.id}
+                        className="flex items-center justify-between gap-2 rounded-md border border-border/60 px-2.5 py-2 text-xs"
+                      >
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={!hidden}
+                            onChange={() => toggleTemplateHidden(item.id)}
+                          />
+                          <span>
+                            {meta?.title || item.id}
+                            {item.custom ? ` (${texts.customTag})` : ""}
+                          </span>
+                        </div>
+                        {item.custom && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleRemoveCustomTemplate(item.id)}
+                          >
+                            {texts.templatesRemove}
+                          </Button>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="space-y-2">
+                  <div className="text-xs font-medium">
+                    {texts.templateSaveTitle}
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    {templates.map((item) => {
-                      const meta = getTemplateMeta(
-                        item.id,
-                        item.meta,
-                      );
-                      const hidden = hiddenSet.has(item.id);
-                      return (
-                        <label
-                          key={item.id}
-                          className="flex items-center justify-between gap-2 rounded-md border border-border/60 px-2.5 py-2 text-xs"
-                        >
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="checkbox"
-                              checked={!hidden}
-                              onChange={() =>
-                                toggleTemplateHidden(item.id)
-                              }
-                            />
-                            <span>
-                              {meta?.title || item.id}
-                              {item.custom
-                                ? ` (${texts.customTag})`
-                                : ""}
-                            </span>
-                          </div>
-                          {item.custom && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() =>
-                                handleRemoveCustomTemplate(item.id)
-                              }
-                            >
-                              {texts.templatesRemove}
-                            </Button>
-                          )}
-                        </label>
-                      );
-                    })}
-                  </div>
-                  <div className="space-y-2">
-                    <div className="text-xs font-medium">
-                      {texts.templateSaveTitle}
+                    <div className="space-y-1">
+                      <Label>{texts.templateSaveNameLabel}</Label>
+                      <Input
+                        value={templateDraftName}
+                        onChange={(e) => setTemplateDraftName(e.target.value)}
+                        placeholder={texts.templateSaveNamePlaceholder}
+                      />
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      <div className="space-y-1">
-                        <Label>{texts.templateSaveNameLabel}</Label>
-                        <Input
-                          value={templateDraftName}
-                          onChange={(e) =>
-                            setTemplateDraftName(e.target.value)
-                          }
-                          placeholder={
-                            texts.templateSaveNamePlaceholder
-                          }
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label>{texts.templateSaveDescLabel}</Label>
-                        <Input
-                          value={templateDraftDesc}
-                          onChange={(e) =>
-                            setTemplateDraftDesc(e.target.value)
-                          }
-                          placeholder={
-                            texts.templateSaveDescPlaceholder
-                          }
-                        />
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        size="sm"
-                        onClick={handleSaveCustomTemplate}
-                      >
-                        {texts.templateSaveAction}
-                      </Button>
-                      <span className="text-xs text-muted-foreground">
-                        {texts.templateSaveHint}
-                      </span>
+                    <div className="space-y-1">
+                      <Label>{texts.templateSaveDescLabel}</Label>
+                      <Input
+                        value={templateDraftDesc}
+                        onChange={(e) => setTemplateDraftDesc(e.target.value)}
+                        placeholder={texts.templateSaveDescPlaceholder}
+                      />
                     </div>
                   </div>
-                </>
-              );
-            })()
-          }
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" onClick={handleSaveCustomTemplate}>
+                      {texts.templateSaveAction}
+                    </Button>
+                    <span className="text-xs text-muted-foreground">
+                      {texts.templateSaveHint}
+                    </span>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
         />
       </div>
       <AlertModal {...alertProps} />

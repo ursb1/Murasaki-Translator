@@ -154,6 +154,34 @@ class PipelineRunner:
                 block.prompt_text = text[:-1]
 
     @staticmethod
+    def _should_use_double_newline_separator(
+        post_rules: List[Dict[str, Any]],
+    ) -> bool:
+        for rule in post_rules or []:
+            if not isinstance(rule, dict):
+                continue
+            if not rule.get("active", True):
+                continue
+            pattern = str(rule.get("pattern") or "").strip().lower()
+            if pattern == "ensure_double_newline":
+                return True
+        return False
+
+    @staticmethod
+    def _save_txt_blocks(
+        output_path: str,
+        blocks: List[TextBlock],
+        *,
+        separator: str,
+    ) -> None:
+        normalized_separator = "\n\n" if separator == "\n\n" else "\n"
+        with open(output_path, "w", encoding="utf-8") as f:
+            for block in blocks:
+                text = str(getattr(block, "prompt_text", "") or "")
+                f.write(text)
+                f.write(normalized_separator)
+
+    @staticmethod
     def _ensure_line_chunk_keeps_empty(doc: object, chunk_policy: Any) -> None:
         if not isinstance(chunk_policy, LineChunkPolicy):
             return
@@ -423,8 +451,8 @@ class PipelineRunner:
         apply_line_policy = self._should_apply_line_policy(
             pipeline, line_policy, chunk_type
         )
-        line_policy_errors: List[Dict[str, Any]] = []
-        _lpe_lock = threading.Lock()
+        failed_line_entries: List[Dict[str, Any]] = []
+        _failed_line_lock = threading.Lock()
 
         doc = DocumentFactory.get_document(input_path)
         self._ensure_line_chunk_keeps_empty(doc, chunk_policy)
@@ -479,6 +507,8 @@ class PipelineRunner:
         adaptive: Optional[AdaptiveConcurrency] = None
 
         processing_processor = None
+        pre_rules: List[Dict[str, Any]] = []
+        post_rules: List[Dict[str, Any]] = []
         rules_pre_spec = processing_cfg.get("rules_pre")
         rules_post_spec = processing_cfg.get("rules_post")
         if rules_pre_spec is None:
@@ -575,6 +605,25 @@ class PipelineRunner:
             total_source_chars=sum(len(l) for l in source_lines),
             api_url=_provider_url if _provider_url else None,
         )
+        # V2 API 模式采用后台心跳持续上报，避免仅在 block 完成时刷新导致“实时曲线卡住”。
+        progress_heartbeat_stop = threading.Event()
+        progress_heartbeat_thread: Optional[threading.Thread] = None
+
+        def _progress_heartbeat() -> None:
+            while not progress_heartbeat_stop.wait(0.5):
+                try:
+                    tracker.emit_progress_snapshot(force=False)
+                except Exception:
+                    # 进度上报失败不应影响主翻译流程
+                    pass
+
+        progress_heartbeat_thread = threading.Thread(
+            target=_progress_heartbeat,
+            name="flow-v2-progress-heartbeat",
+            daemon=True,
+        )
+        progress_heartbeat_thread.start()
+        tracker.emit_progress_snapshot(force=True)
 
         translated_blocks: List[Optional[TextBlock]] = [None] * len(blocks)
         resume_completed = 0
@@ -680,7 +729,6 @@ class PipelineRunner:
 
             attempt = 0
             last_error: Optional[str] = None
-            last_translation: Optional[str] = None
             while attempt <= max_retries:
                 try:
                     request = provider.build_request(messages, settings)
@@ -710,7 +758,6 @@ class PipelineRunner:
                             src_text=block.prompt_text,
                             protector=protector,
                         )
-                    last_translation = translated
                     if (
                         apply_line_policy
                         and line_policy
@@ -733,7 +780,6 @@ class PipelineRunner:
                                 "LinePolicy: unexpected line count"
                             )
                         translated = checked[0]
-                        last_translation = translated
                     write_temp_entry(idx, block.prompt_text, translated)
                     return idx, TextBlock(
                         id=idx + 1,
@@ -760,21 +806,32 @@ class PipelineRunner:
                     tracker.note_retry(_status_code)
                     emit_retry(idx + 1, attempt, error_type)
                     if attempt > max_retries:
-                        if (
-                            isinstance(exc, LinePolicyError)
-                            and apply_line_policy
+                        can_fallback_to_source = (
+                            chunk_type == "line"
                             and line_index is not None
                             and line_index < len(source_lines)
-                        ):
-                            with _lpe_lock:
-                                line_policy_errors.append(
-                                    {"line": line_index + 1, "error": last_error}
+                        )
+                        if can_fallback_to_source:
+                            fallback_text = source_lines[line_index]
+                            with _failed_line_lock:
+                                failed_line_entries.append(
+                                    {
+                                        "index": idx,
+                                        "line": line_index + 1,
+                                        "error": last_error,
+                                        "type": error_type,
+                                        "status": "untranslated_fallback",
+                                    }
                                 )
-                            fallback_text = (
-                                last_translation
-                                if last_translation is not None
-                                else source_lines[line_index]
-                            )
+                            try:
+                                emit_warning(
+                                    line_index + 1,
+                                    "fallback_to_source_after_max_retries",
+                                    "untranslated_fallback",
+                                )
+                            except Exception:
+                                pass
+                            tracker.note_error(_status_code)
                             write_temp_entry(idx, block.prompt_text, fallback_text)
                             return idx, TextBlock(
                                 id=idx + 1,
@@ -872,6 +929,12 @@ class PipelineRunner:
                                     pending.cancel()
                                 raise
         finally:
+            progress_heartbeat_stop.set()
+            if progress_heartbeat_thread and progress_heartbeat_thread.is_alive():
+                try:
+                    progress_heartbeat_thread.join(timeout=1.0)
+                except Exception:
+                    pass
             if temp_progress_file:
                 try:
                     temp_progress_file.close()
@@ -924,27 +987,46 @@ class PipelineRunner:
                         except Exception:
                             continue
 
-        if line_policy_errors:
+        if failed_line_entries:
             error_path = f"{output_path}.line_errors.jsonl"
             try:
                 with open(error_path, "w", encoding="utf-8") as f:
-                    for entry in line_policy_errors:
+                    for entry in failed_line_entries:
                         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
                 print(
-                    f"[LinePolicy] {len(line_policy_errors)} lines failed checks. Saved to {error_path}"
+                    f"[LineFallback] {len(failed_line_entries)} lines fell back to source text. Saved to {error_path}"
                 )
             except Exception:
                 pass
 
         if isinstance(doc, TxtDocument):
             self._normalize_txt_blocks(translated_blocks)
-
-        doc.save(output_path, translated_blocks)
+            separator = (
+                "\n\n"
+                if (
+                    chunk_type == "chunk"
+                    or self._should_use_double_newline_separator(post_rules)
+                )
+                else "\n"
+            )
+            self._save_txt_blocks(
+                output_path,
+                translated_blocks,
+                separator=separator,
+            )
+        else:
+            doc.save(output_path, translated_blocks)
 
         if save_cache:
             resolved_cache_dir = (
                 cache_dir if cache_dir and os.path.isdir(cache_dir) else None
             )
+            fallback_indices = {
+                int(entry.get("index"))
+                for entry in failed_line_entries
+                if entry.get("status") == "untranslated_fallback"
+                and entry.get("index") is not None
+            }
             translation_cache = TranslationCache(
                 output_path,
                 custom_cache_dir=resolved_cache_dir,
@@ -954,11 +1036,21 @@ class PipelineRunner:
                 translated_block = translated_blocks[idx]
                 if translated_block is None:
                     continue
+                warnings = (
+                    ["untranslated_fallback"] if idx in fallback_indices else None
+                )
                 translation_cache.add_block(
                     idx,
                     block.prompt_text,
                     translated_block.prompt_text,
+                    warnings=warnings,
                 )
+                if idx in fallback_indices:
+                    translation_cache.update_block(
+                        idx,
+                        status="none",
+                        warnings=["untranslated_fallback"],
+                    )
             provider_model = str(provider.profile.get("model") or "").strip()
             model_name = (
                 provider_model or provider_ref or pipeline_id or "unknown"

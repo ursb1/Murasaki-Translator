@@ -38,12 +38,12 @@ const extractFirstJsonBlock = (text: string) => {
         escape = false;
       } else if (ch === "\\") {
         escape = true;
-      } else if (ch === "\"") {
+      } else if (ch === '"') {
         inStr = false;
       }
       continue;
     }
-    if (ch === "\"") {
+    if (ch === '"') {
       inStr = true;
       continue;
     }
@@ -343,8 +343,12 @@ export const parseTaggedLinePreviewLines = (
         const intB = Number.parseInt(rawB, 10);
         const hasIntA = Number.isFinite(intA);
         const hasIntB = Number.isFinite(intB);
-        const keyA = hasIntA ? `0-${String(intA).padStart(8, "0")}` : `1-${rawA}`;
-        const keyB = hasIntB ? `0-${String(intB).padStart(8, "0")}` : `1-${rawB}`;
+        const keyA = hasIntA
+          ? `0-${String(intA).padStart(8, "0")}`
+          : `1-${rawA}`;
+        const keyB = hasIntB
+          ? `0-${String(intB).padStart(8, "0")}`
+          : `1-${rawB}`;
         return keyA.localeCompare(keyB);
       });
     }

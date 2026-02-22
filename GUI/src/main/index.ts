@@ -413,7 +413,7 @@ function cleanupTempDirectory(): void {
       for (const file of files) {
         try {
           fs.unlinkSync(join(tempDir, file));
-        } catch (_) { }
+        } catch (_) {}
       }
       console.log(`[App] Cleaned ${files.length} temp files`);
     }
@@ -434,7 +434,7 @@ function cleanupTempDirectory(): void {
           continue;
         try {
           fs.unlinkSync(join(middlewareDir, file));
-        } catch { }
+        } catch {}
       }
     }
   } catch (e) {
@@ -462,8 +462,7 @@ app.whenReady().then(() => {
   createWindow();
   const resolveProfilesDir = () => {
     const envDir =
-      process.env.MURASAKI_PROFILES_DIR ||
-      process.env.PIPELINE_V2_PROFILES_DIR;
+      process.env.MURASAKI_PROFILES_DIR || process.env.PIPELINE_V2_PROFILES_DIR;
     if (envDir && envDir.trim()) return resolve(envDir.trim());
     return getPipelineV2ProfilesDir();
   };
@@ -591,17 +590,17 @@ const getScriptPythonPath = (): string => {
   const middlewarePythonCandidates =
     process.platform === "win32"
       ? [
-        join(middlewarePath, ".venv", "Scripts", "python.exe"),
-        join(middlewarePath, "python_env", "python.exe"),
-      ]
+          join(middlewarePath, ".venv", "Scripts", "python.exe"),
+          join(middlewarePath, "python_env", "python.exe"),
+        ]
       : [
-        join(middlewarePath, ".venv", "bin", "python3"),
-        join(middlewarePath, ".venv", "bin", "python"),
-        join(middlewarePath, "python_env", "bin", "python3"),
-        join(middlewarePath, "python_env", "bin", "python"),
-        join(middlewarePath, "python_env", "python3"),
-        join(middlewarePath, "python_env", "python"),
-      ];
+          join(middlewarePath, ".venv", "bin", "python3"),
+          join(middlewarePath, ".venv", "bin", "python"),
+          join(middlewarePath, "python_env", "bin", "python3"),
+          join(middlewarePath, "python_env", "bin", "python"),
+          join(middlewarePath, "python_env", "python3"),
+          join(middlewarePath, "python_env", "python"),
+        ];
 
   if (is.dev) {
     if (process.env.ELECTRON_PYTHON_PATH)
@@ -735,10 +734,10 @@ const spawnPythonProcess = (
     cwd: string;
     env?: NodeJS.ProcessEnv;
     stdio?:
-    | "pipe"
-    | "inherit"
-    | "ignore"
-    | Array<"pipe" | "inherit" | "ignore" | "ipc" | null>;
+      | "pipe"
+      | "inherit"
+      | "ignore"
+      | Array<"pipe" | "inherit" | "ignore" | "ipc" | null>;
   },
 ) => {
   // 1. Base Environment
@@ -1068,12 +1067,12 @@ const remoteNetworkStats = {
   lastEventAt: undefined as number | undefined,
   lastError: undefined as
     | {
-      at: number;
-      kind: "connection" | "http" | "upload" | "download" | "retry" | "ws";
-      message: string;
-      path?: string;
-      statusCode?: number;
-    }
+        at: number;
+        kind: "connection" | "http" | "upload" | "download" | "retry" | "ws";
+        message: string;
+        path?: string;
+        statusCode?: number;
+      }
     | undefined,
   lastSyncAt: undefined as number | undefined,
 };
@@ -1266,7 +1265,7 @@ const appendRemoteEvent = (event: RemoteNetworkEvent) => {
     remoteNetworkStats.latencyCount += 1;
     remoteNetworkStats.avgLatencyMs = Math.round(
       remoteNetworkStats.latencyTotalMs /
-      Math.max(1, remoteNetworkStats.latencyCount),
+        Math.max(1, remoteNetworkStats.latencyCount),
     );
   }
 
@@ -1381,9 +1380,9 @@ const formatRemoteError = (error: unknown) => {
           : lower.includes("invalid response")
             ? "REMOTE_PROTOCOL"
             : lower.includes("network") ||
-              lower.includes("fetch failed") ||
-              lower.includes("econnreset") ||
-              lower.includes("etimedout")
+                lower.includes("fetch failed") ||
+                lower.includes("econnreset") ||
+                lower.includes("etimedout")
               ? "REMOTE_NETWORK"
               : "REMOTE_UNKNOWN";
 
@@ -1422,10 +1421,10 @@ const buildRemoteErrorResponse = (error: unknown, fallbackMessage?: string) => {
 const getSanitizedRemoteSession = () =>
   remoteSession
     ? {
-      url: remoteSession.url,
-      connectedAt: remoteSession.connectedAt,
-      source: remoteSession.source,
-    }
+        url: remoteSession.url,
+        connectedAt: remoteSession.connectedAt,
+        source: remoteSession.source,
+      }
     : null;
 
 const buildRemoteNetworkStatus = () => ({
@@ -2139,7 +2138,7 @@ ipcMain.handle("get-system-diagnostics", async () => {
           }
         }
       }
-    } catch { }
+    } catch {}
 
     try {
       const { stdout } = await execWithTimeout(
@@ -2161,7 +2160,7 @@ ipcMain.handle("get-system-diagnostics", async () => {
           return;
         }
       }
-    } catch { }
+    } catch {}
 
     if (process.platform === "win32") {
       try {
@@ -2187,7 +2186,7 @@ ipcMain.handle("get-system-diagnostics", async () => {
           result.gpu = { name, driver: driver || undefined, vram };
           return;
         }
-      } catch { }
+      } catch {}
 
       try {
         const { stdout } = await execWithTimeout(
@@ -2212,7 +2211,7 @@ ipcMain.handle("get-system-diagnostics", async () => {
           result.gpu = { name, driver: driver || undefined, vram };
           return;
         }
-      } catch { }
+      } catch {}
     }
 
     if (process.platform === "darwin") {
@@ -2237,7 +2236,7 @@ ipcMain.handle("get-system-diagnostics", async () => {
           result.gpu = { name: String(name), driver: "METAL", vram };
           return;
         }
-      } catch { }
+      } catch {}
     }
 
     if (process.platform === "linux") {
@@ -2261,7 +2260,7 @@ ipcMain.handle("get-system-diagnostics", async () => {
             return;
           }
         }
-      } catch { }
+      } catch {}
 
       try {
         const { stdout } = await execWithTimeout("lspci", 4000);
@@ -2275,7 +2274,7 @@ ipcMain.handle("get-system-diagnostics", async () => {
           };
           return;
         }
-      } catch { }
+      } catch {}
 
       try {
         const { stdout } = await execWithTimeout("glxinfo -B", 4000);
@@ -2288,7 +2287,7 @@ ipcMain.handle("get-system-diagnostics", async () => {
             driver: "Detected via glxinfo",
           };
         }
-      } catch { }
+      } catch {}
     }
   })();
 
@@ -2318,7 +2317,7 @@ ipcMain.handle("get-system-diagnostics", async () => {
           result.python = { version, path: executable };
           return;
         }
-      } catch { }
+      } catch {}
     }
 
     if (primary.type === "bundle" && fs.existsSync(primary.path)) {
@@ -2351,7 +2350,7 @@ ipcMain.handle("get-system-diagnostics", async () => {
           result.cuda = { version: `driver ${first}`, available: true };
           return;
         }
-      } catch { }
+      } catch {}
       result.cuda = { version: "N/A", available: false };
     }
   })();
@@ -2381,7 +2380,7 @@ ipcMain.handle("get-system-diagnostics", async () => {
           version: versionMatch ? versionMatch[1] : undefined,
         };
         return;
-      } catch { }
+      } catch {}
       result.vulkan = { available: false };
     }
   })();
@@ -3446,12 +3445,176 @@ ipcMain.handle("rebuild-doc", async (_event, { cachePath, outputPath }) => {
 // 单块重翻（用于校对界面）
 ipcMain.handle(
   "retranslate-block",
-  async (event, { src, index, modelPath, config }) => {
+  async (
+    event,
+    {
+      src,
+      index,
+      modelPath,
+      config,
+      useV2,
+      pipelineId,
+    }: {
+      src: string;
+      index: number;
+      modelPath: string;
+      config: any;
+      useV2?: boolean;
+      pipelineId?: string;
+    },
+  ) => {
     const middlewareDir = getMiddlewarePath();
     const tempArtifacts: string[] = [];
-    const scriptPath = join(middlewareDir, "murasaki_translator", "main.py");
     const pythonCmd = getPythonPath(); // Use the same python as main translation
 
+    const cleanupTempArtifacts = () => {
+      for (const artifactPath of tempArtifacts) {
+        try {
+          fs.unlinkSync(artifactPath);
+        } catch (_) {}
+      }
+    };
+
+    const shouldUseV2 = Boolean(useV2);
+    const resolvedPipelineId = String(pipelineId || "").trim();
+    if (shouldUseV2) {
+      if (!resolvedPipelineId) {
+        return { success: false, error: "pipeline_id_required" };
+      }
+      const scriptPathV2 = join(middlewareDir, "murasaki_flow_v2", "main.py");
+      if (!fs.existsSync(scriptPathV2)) {
+        return { success: false, error: `Script not found` };
+      }
+
+      const envProfilesDir =
+        process.env.MURASAKI_PROFILES_DIR ||
+        process.env.PIPELINE_V2_PROFILES_DIR ||
+        "";
+      const profilesDir = envProfilesDir.trim()
+        ? resolve(envProfilesDir.trim())
+        : getPipelineV2ProfilesDir();
+      try {
+        fs.mkdirSync(profilesDir, { recursive: true });
+      } catch (_) {}
+
+      const tempDir = join(getUserDataPath(), "temp");
+      try {
+        fs.mkdirSync(tempDir, { recursive: true });
+      } catch (_) {}
+      const uid = randomUUID().slice(0, 8);
+      const inputPath = join(tempDir, `proofread_v2_${uid}.txt`);
+      const outputPath = join(tempDir, `proofread_v2_${uid}_out.txt`);
+      fs.writeFileSync(inputPath, String(src || ""), "utf8");
+      tempArtifacts.push(inputPath, outputPath);
+
+      const args = [
+        scriptPathV2,
+        "--file",
+        inputPath,
+        "--pipeline",
+        resolvedPipelineId,
+        "--profiles-dir",
+        profilesDir,
+        "--output",
+        outputPath,
+      ];
+
+      if (config?.glossaryPath && fs.existsSync(config.glossaryPath)) {
+        args.push("--glossary", config.glossaryPath);
+      }
+      if (config?.textProtect === true) {
+        args.push("--text-protect");
+      } else if (config?.textProtect === false) {
+        args.push("--no-text-protect");
+      }
+      if (Array.isArray(config?.rulesPre) && config.rulesPre.length > 0) {
+        const rulesPrePath = join(
+          middlewareDir,
+          `temp_rules_pre_${randomUUID().slice(0, 8)}.json`,
+        );
+        fs.writeFileSync(rulesPrePath, JSON.stringify(config.rulesPre), "utf8");
+        args.push("--rules-pre", rulesPrePath);
+        tempArtifacts.push(rulesPrePath);
+      }
+      if (Array.isArray(config?.rulesPost) && config.rulesPost.length > 0) {
+        const rulesPostPath = join(
+          middlewareDir,
+          `temp_rules_post_${randomUUID().slice(0, 8)}.json`,
+        );
+        fs.writeFileSync(
+          rulesPostPath,
+          JSON.stringify(config.rulesPost),
+          "utf8",
+        );
+        args.push("--rules-post", rulesPostPath);
+        tempArtifacts.push(rulesPostPath);
+      }
+
+      return new Promise((resolve) => {
+        const proc = spawnPythonProcess(pythonCmd, args, {
+          cwd: middlewareDir,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        let stdoutBuffer = "";
+        let stderrBuffer = "";
+
+        if (proc.stdout) {
+          proc.stdout.on("data", (data: Buffer) => {
+            const str = data.toString();
+            stdoutBuffer += str;
+            event.sender.send("retranslate-log", { index, text: str });
+          });
+        }
+        if (proc.stderr) {
+          proc.stderr.on("data", (data: Buffer) => {
+            const str = data.toString();
+            stderrBuffer += str;
+            event.sender.send("retranslate-log", {
+              index,
+              text: str,
+              isError: true,
+            });
+          });
+        }
+
+        proc.on("close", (code) => {
+          if (code !== 0) {
+            cleanupTempArtifacts();
+            resolve({
+              success: false,
+              error:
+                stderrBuffer ||
+                stdoutBuffer ||
+                `Process exited with code ${code}`,
+            });
+            return;
+          }
+          try {
+            if (!fs.existsSync(outputPath)) {
+              cleanupTempArtifacts();
+              resolve({ success: false, error: "v2_output_not_found" });
+              return;
+            }
+            const dstRaw = fs.readFileSync(outputPath, "utf8");
+            const dst = dstRaw.replace(/\r?\n$/, "");
+            cleanupTempArtifacts();
+            resolve({
+              success: true,
+              src,
+              dst,
+            });
+          } catch (e: unknown) {
+            cleanupTempArtifacts();
+            resolve({
+              success: false,
+              error: e instanceof Error ? e.message : String(e),
+            });
+          }
+        });
+      });
+    }
+
+    const scriptPath = join(middlewareDir, "murasaki_translator", "main.py");
     if (!fs.existsSync(scriptPath)) {
       return { success: false, error: `Script not found` };
     }
@@ -3658,11 +3821,7 @@ ipcMain.handle(
       }
 
       proc.on("close", (code) => {
-        for (const path of tempArtifacts) {
-          try {
-            fs.unlinkSync(path);
-          } catch (_) { }
-        }
+        cleanupTempArtifacts();
         if (code !== 0) {
           resolve({
             success: false,
@@ -4368,7 +4527,7 @@ const runTranslationViaRemoteApi = async (
       if (!logsContainProgress && !recentlySawProgress) {
         const percentRaw =
           typeof status.progress === "number" &&
-            Number.isFinite(status.progress)
+          Number.isFinite(status.progress)
             ? status.progress <= 1
               ? status.progress * 100
               : status.progress
@@ -5145,7 +5304,7 @@ ipcMain.on(
         for (const tmpFile of tempRuleFiles) {
           try {
             fs.unlinkSync(tmpFile);
-          } catch (_) { }
+          } catch (_) {}
         }
       });
     } catch (e: unknown) {
@@ -5184,13 +5343,13 @@ ipcMain.on("stop-translation", () => {
         // Fallback
         try {
           pythonProcess?.kill();
-        } catch (_) { }
+        } catch (_) {}
       });
       // 超时兜底：3s 后若进程仍然存活
       setTimeout(() => {
         try {
           pythonProcess?.kill("SIGKILL");
-        } catch (_) { }
+        } catch (_) {}
       }, 3000);
     } else {
       pythonProcess.kill();
@@ -5281,7 +5440,7 @@ ipcMain.handle(
           if (tempFile && fs.existsSync(tempFile)) {
             try {
               fs.unlinkSync(tempFile);
-            } catch (_) { }
+            } catch (_) {}
           }
 
           if (code === 0) {
@@ -5589,7 +5748,7 @@ ipcMain.handle("hf-download-cancel", async () => {
       } catch {
         try {
           hfDownloadProcess.kill();
-        } catch { }
+        } catch {}
       }
     } else {
       hfDownloadProcess.kill("SIGTERM");

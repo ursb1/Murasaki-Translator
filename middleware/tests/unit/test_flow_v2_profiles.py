@@ -1,4 +1,7 @@
+from pathlib import Path
+
 import pytest
+import yaml
 
 from murasaki_flow_v2.registry.profile_store import ProfileStore
 from murasaki_flow_v2.parsers.registry import ParserRegistry
@@ -50,3 +53,17 @@ def test_profile_store_list_chunk_type(tmp_path):
     profiles = store.list_profiles("chunk")
     assert len(profiles) == 1
     assert profiles[0].chunk_type == "line"
+
+
+@pytest.mark.unit
+def test_default_line_tolerant_profile_checks_enabled():
+    profile_path = (
+        Path(__file__).resolve().parents[2]
+        / "murasaki_flow_v2"
+        / "profiles"
+        / "policy"
+        / "tolerant_line.yaml"
+    )
+    data = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
+    checks = data.get("options", {}).get("checks", [])
+    assert checks == ["empty_line", "similarity", "kana_trace"]

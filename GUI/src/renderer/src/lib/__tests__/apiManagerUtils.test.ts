@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { buildApiPresetProfileId, normalizePresetUrl } from "../apiManagerUtils";
+import {
+  buildApiPresetProfileId,
+  normalizePresetUrl,
+} from "../apiManagerUtils";
 
 describe("normalizePresetUrl", () => {
   it("appends /v1 when no version segment is present", () => {
@@ -46,10 +49,7 @@ describe("buildApiPresetProfileId", () => {
 
   it("skips used suffixes", () => {
     expect(
-      buildApiPresetProfileId("openai", [
-        "openai_client",
-        "openai_client_2",
-      ]),
+      buildApiPresetProfileId("openai", ["openai_client", "openai_client_2"]),
     ).toBe("openai_client_3");
   });
 });

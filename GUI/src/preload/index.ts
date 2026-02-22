@@ -63,10 +63,8 @@ const api = {
       runId,
     }),
   pipelineV2ProfilesPath: () => ipcRenderer.invoke("pipelinev2-profiles-path"),
-  pipelineV2ProfilesList: (
-    kind: string,
-    options?: { preferLocal?: boolean },
-  ) => ipcRenderer.invoke("pipelinev2-profiles-list", kind, options),
+  pipelineV2ProfilesList: (kind: string, options?: { preferLocal?: boolean }) =>
+    ipcRenderer.invoke("pipelinev2-profiles-list", kind, options),
   pipelineV2ProfilesLoad: (kind: string, id: string) =>
     ipcRenderer.invoke("pipelinev2-profiles-load", kind, id),
   pipelineV2ProfilesLoadBatch: (kind: string, ids: string[]) =>

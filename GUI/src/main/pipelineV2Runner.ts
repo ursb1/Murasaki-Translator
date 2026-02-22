@@ -162,10 +162,19 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
       }
 
       let activeRulesPrePath = rulesPrePath;
-      if (!activeRulesPrePath && rulesPre && Array.isArray(rulesPre) && rulesPre.length > 0) {
+      if (
+        !activeRulesPrePath &&
+        rulesPre &&
+        Array.isArray(rulesPre) &&
+        rulesPre.length > 0
+      ) {
         const uid = require("crypto").randomUUID().slice(0, 8);
         activeRulesPrePath = join(middlewarePath, `temp_rules_pre_${uid}.json`);
-        require("fs").writeFileSync(activeRulesPrePath, JSON.stringify(rulesPre), "utf8");
+        require("fs").writeFileSync(
+          activeRulesPrePath,
+          JSON.stringify(rulesPre),
+          "utf8",
+        );
       }
       if (activeRulesPrePath) {
         scriptArgs.push("--rules-pre", activeRulesPrePath);
@@ -173,10 +182,22 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
       }
 
       let activeRulesPostPath = rulesPostPath;
-      if (!activeRulesPostPath && rulesPost && Array.isArray(rulesPost) && rulesPost.length > 0) {
+      if (
+        !activeRulesPostPath &&
+        rulesPost &&
+        Array.isArray(rulesPost) &&
+        rulesPost.length > 0
+      ) {
         const uid = require("crypto").randomUUID().slice(0, 8);
-        activeRulesPostPath = join(middlewarePath, `temp_rules_post_${uid}.json`);
-        require("fs").writeFileSync(activeRulesPostPath, JSON.stringify(rulesPost), "utf8");
+        activeRulesPostPath = join(
+          middlewarePath,
+          `temp_rules_post_${uid}.json`,
+        );
+        require("fs").writeFileSync(
+          activeRulesPostPath,
+          JSON.stringify(rulesPost),
+          "utf8",
+        );
       }
       if (activeRulesPostPath) {
         scriptArgs.push("--rules-post", activeRulesPostPath);
@@ -238,12 +259,12 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
           python.type === "bundle"
             ? spawn(python.path, scriptArgs.slice(1))
             : spawn(python.path, moduleArgs, {
-              cwd: middlewarePath,
-              env: {
-                ...process.env,
-                PYTHONIOENCODING: "utf-8",
-              },
-            });
+                cwd: middlewarePath,
+                env: {
+                  ...process.env,
+                  PYTHONIOENCODING: "utf-8",
+                },
+              });
         activeChild = child;
 
         let stdoutBuffer = "";

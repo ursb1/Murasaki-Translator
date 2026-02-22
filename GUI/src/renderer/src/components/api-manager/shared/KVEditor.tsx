@@ -86,14 +86,18 @@ export function KVEditor({
   showNote = false,
   noteText = "",
 }: KVEditorProps) {
-  const handleChange = (index: number, field: "key" | "value", value: string) => {
+  const handleChange = (
+    index: number,
+    field: "key" | "value",
+    value: string,
+  ) => {
     const next = pairs.map((pair, idx) =>
       idx === index
         ? {
-          ...pair,
-          [field]: value,
-          ...(field === "value" ? { valueKind: undefined } : {}),
-        }
+            ...pair,
+            [field]: value,
+            ...(field === "value" ? { valueKind: undefined } : {}),
+          }
         : pair,
     );
     onChange(ensurePairs(next));
@@ -172,7 +176,10 @@ export function KVEditor({
 
       <div className="space-y-2">
         {pairs.map((pair, index) => (
-          <div key={`${label}_${index}`} className="group flex items-center gap-2">
+          <div
+            key={`${label}_${index}`}
+            className="group flex items-center gap-2"
+          >
             <div className="flex-1 flex items-center gap-2 rounded-md border border-input bg-muted/10 px-2 py-1 shadow-sm focus-within:ring-1 focus-within:ring-ring">
               <span className="text-[10px] uppercase text-muted-foreground">
                 {strings.keyLabel}
