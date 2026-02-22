@@ -95,6 +95,21 @@ def _validate_prompt_parser(
             result.errors.append("parser_requires_jsonl_prompt")
 
 
+def _has_python_parser(parser: Any) -> bool:
+    if not isinstance(parser, dict):
+        return False
+    parser_type = str(parser.get("type") or "").strip().lower()
+    if parser_type == "python":
+        return True
+    if parser_type != "any":
+        return False
+    options = parser.get("options") or {}
+    candidates = options.get("parsers") or options.get("candidates")
+    if not isinstance(candidates, list):
+        return False
+    return any(_has_python_parser(item) for item in candidates)
+
+
 def validate_profile(
     kind: str,
     data: Dict[str, Any],
@@ -180,6 +195,8 @@ def validate_profile(
             options = data.get("options") or {}
             if not options.get("script") and not options.get("path"):
                 result.errors.append("missing_script")
+        if _has_python_parser(data):
+            result.warnings.append("security_custom_parser_script")
 
     if kind == "prompt":
         if not _prompt_has_source(data):
@@ -284,6 +301,8 @@ def validate_profile(
                     if not _prompt_has_source(prompt_profile):
                         result.errors.append("prompt_missing_source")
                     _validate_prompt_parser(prompt_profile, parser_profile, result)
+                    if _has_python_parser(parser_profile):
+                        result.warnings.append("security_custom_parser_script")
                 except Exception:
                     pass
 

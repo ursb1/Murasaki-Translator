@@ -29,7 +29,8 @@ import {
   getPipelineV2ProfilesDir,
   registerPipelineV2Profiles,
 } from "./pipelineV2Profiles";
-import { registerPipelineV2Runner } from "./pipelineV2Runner";
+import { stopPipelineV2Server } from "./pipelineV2Server";
+import { registerPipelineV2Runner, stopPipelineV2Runner } from "./pipelineV2Runner";
 
 let pythonProcess: ChildProcess | null = null;
 let translationStopRequested = false;
@@ -384,6 +385,18 @@ async function cleanupProcesses(): Promise<void> {
       console.error("[App] Error killing python process:", e);
     }
     pythonProcess = null;
+  }
+
+  try {
+    stopPipelineV2Runner();
+  } catch (e) {
+    console.error("[App] Error stopping pipeline v2 runner:", e);
+  }
+
+  try {
+    stopPipelineV2Server();
+  } catch (e) {
+    console.error("[App] Error stopping pipeline v2 server:", e);
   }
 
   // 停止 ServerManager 管理的 llama-server
@@ -3557,6 +3570,18 @@ ipcMain.handle(
         });
         let stdoutBuffer = "";
         let stderrBuffer = "";
+        let settled = false;
+        const finish = (payload: {
+          success: boolean;
+          error?: string;
+          src?: string;
+          dst?: string;
+        }) => {
+          if (settled) return;
+          settled = true;
+          cleanupTempArtifacts();
+          resolve(payload);
+        };
 
         if (proc.stdout) {
           proc.stdout.on("data", (data: Buffer) => {
@@ -3577,10 +3602,17 @@ ipcMain.handle(
           });
         }
 
+        proc.on("error", (err) => {
+          finish({
+            success: false,
+            error: err?.message || String(err),
+          });
+        });
+
         proc.on("close", (code) => {
+          if (settled) return;
           if (code !== 0) {
-            cleanupTempArtifacts();
-            resolve({
+            finish({
               success: false,
               error:
                 stderrBuffer ||
@@ -3591,21 +3623,18 @@ ipcMain.handle(
           }
           try {
             if (!fs.existsSync(outputPath)) {
-              cleanupTempArtifacts();
-              resolve({ success: false, error: "v2_output_not_found" });
+              finish({ success: false, error: "v2_output_not_found" });
               return;
             }
             const dstRaw = fs.readFileSync(outputPath, "utf8");
             const dst = dstRaw.replace(/\r?\n$/, "");
-            cleanupTempArtifacts();
-            resolve({
+            finish({
               success: true,
               src,
               dst,
             });
           } catch (e: unknown) {
-            cleanupTempArtifacts();
-            resolve({
+            finish({
               success: false,
               error: e instanceof Error ? e.message : String(e),
             });
@@ -3780,6 +3809,13 @@ ipcMain.handle(
 
       let outputBuffer = "";
       let errorBuffer = "";
+      let settled = false;
+      const finish = (payload: any) => {
+        if (settled) return;
+        settled = true;
+        cleanupTempArtifacts();
+        resolve(payload);
+      };
 
       if (proc.stdout) {
         proc.stdout.on("data", (data) => {
@@ -3820,10 +3856,17 @@ ipcMain.handle(
         });
       }
 
+      proc.on("error", (err) => {
+        finish({
+          success: false,
+          error: err?.message || String(err),
+        });
+      });
+
       proc.on("close", (code) => {
-        cleanupTempArtifacts();
+        if (settled) return;
         if (code !== 0) {
-          resolve({
+          finish({
             success: false,
             error: errorBuffer || `Process exited with code ${code}`,
           });
@@ -3845,18 +3888,18 @@ ipcMain.handle(
 
           if (jsonStr) {
             const result = JSON.parse(jsonStr);
-            resolve(result);
+            finish(result);
           } else {
             // Fallback: try to find the last non-empty line if it looks like the result (legacy)
             // But we used --json-output so it should be there.
-            resolve({
+            finish({
               success: false,
               error: "No JSON result found in output",
             });
           }
         } catch (e: unknown) {
           const errorMsg = e instanceof Error ? e.message : String(e);
-          resolve({ success: false, error: errorMsg });
+          finish({ success: false, error: errorMsg });
         }
       });
     });
@@ -4685,6 +4728,15 @@ ipcMain.on(
 
     const middlewareDir = getMiddlewarePath();
     const tempRuleFiles: string[] = [];
+    const cleanupTempRuleFiles = () => {
+      for (const tmpFile of tempRuleFiles.splice(0)) {
+        try {
+          fs.unlinkSync(tmpFile);
+        } catch {
+          // ignore cleanup failures
+        }
+      }
+    };
     // Use the proper translator script
     const scriptPath = join(middlewareDir, "murasaki_translator", "main.py");
 
@@ -5256,8 +5308,10 @@ ipcMain.on(
           `CRITICAL ERROR: Failed to spawn python. ${err.message}`,
           { level: "critical", source: "main" },
         );
+        cleanupTempRuleFiles();
         translationStopRequested = false;
         pythonProcess = null;
+        activeRunId = null;
       });
 
       if (pythonProcess.stdout) {
@@ -5300,12 +5354,7 @@ ipcMain.on(
         });
         pythonProcess = null;
         activeRunId = null;
-        // 清理临时规则文件
-        for (const tmpFile of tempRuleFiles) {
-          try {
-            fs.unlinkSync(tmpFile);
-          } catch (_) {}
-        }
+        cleanupTempRuleFiles();
       });
     } catch (e: unknown) {
       const errorMsg = e instanceof Error ? e.message : String(e);
@@ -5313,6 +5362,8 @@ ipcMain.on(
         level: "error",
         source: "main",
       });
+      cleanupTempRuleFiles();
+      activeRunId = null;
       console.error(e);
     }
   },

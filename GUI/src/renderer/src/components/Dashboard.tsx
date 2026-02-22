@@ -64,7 +64,10 @@ import {
 import type { ProcessExitPayload } from "../types/api";
 import { FileConfigModal } from "./LibraryView";
 import { stripSystemMarkersForDisplay } from "../lib/displayText";
-import { shouldIgnoreEngineModeToggle } from "../lib/engineModeSwitch";
+import {
+  resolveQueueItemEngineMode,
+  shouldIgnoreEngineModeToggle,
+} from "../lib/engineModeSwitch";
 import type { UseRemoteRuntimeResult } from "../hooks/useRemoteRuntime";
 import { resolveRuleListForRun } from "../lib/rulesConfig";
 
@@ -284,43 +287,63 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       if (engineMode !== "v2" || !v2PipelineId || !active) return;
 
       let isSubscribed = true;
-      const loadProviderInfo = async () => {
+      const loadProviderInfo = async (probeLatency: boolean) => {
         try {
-          const pipeData = await window.api?.pipelineV2ProfilesGet?.(
+          const pipeProfile = await window.api?.pipelineV2ProfilesLoad?.(
             "pipeline",
             v2PipelineId,
           );
-          if (!pipeData || !pipeData.provider || !isSubscribed) return;
+          const pipeData = pipeProfile?.data;
+          const providerId = String(pipeData?.provider || "").trim();
+          if (!providerId || !isSubscribed) return;
 
-          const provData = await window.api?.pipelineV2ProfilesGet?.(
-            "provider",
-            pipeData.provider,
+          const provProfile = await window.api?.pipelineV2ProfilesLoad?.(
+            "api",
+            providerId,
           );
+          const provData = provProfile?.data;
           if (
             !provData ||
-            (!provData.url && !provData.baseUrl) ||
+            (!provData.url && !provData.baseUrl && !provData.base_url) ||
             !isSubscribed
           )
             return;
 
-          const targetUrl = provData.url || provData.baseUrl;
+          const targetUrl = (
+            provData.base_url ||
+            provData.baseUrl ||
+            provData.url ||
+            ""
+          ).trim();
+          const apiKey = (
+            provData.api_key ||
+            provData.apiKey ||
+            ""
+          ).trim();
+          const rawConcurrency =
+            pipeData?.settings?.concurrency ?? pipeData?.concurrency ?? 0;
+          const resolvedConcurrency = Number.isFinite(Number(rawConcurrency))
+            ? Number(rawConcurrency)
+            : 0;
           setApiMonitorData((prev) => ({
             ...prev,
             url: targetUrl,
-            concurrency: pipeData.concurrency || 0,
+            concurrency: resolvedConcurrency,
           }));
 
-          // Test ping
-          const pingRes = await window.api?.pipelineV2ApiTest?.({
+          if (!probeLatency) return;
+
+          const startAt = Date.now();
+          const pingRes = await window.api?.pipelineV2ApiModels?.({
             baseUrl: targetUrl,
-            apiKey: provData.api_key || provData.apiKey,
+            apiKey: apiKey || undefined,
             timeoutMs: 5000,
           });
 
-          if (isSubscribed && pingRes) {
+          if (isSubscribed) {
             setApiMonitorData((prev) => ({
               ...prev,
-              ping: pingRes.latencyMs ?? null,
+              ping: pingRes?.ok ? Math.max(0, Date.now() - startAt) : null,
             }));
           }
         } catch (e) {
@@ -328,11 +351,11 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         }
       };
 
-      loadProviderInfo();
+      loadProviderInfo(isRunning);
 
       const intervalId = setInterval(() => {
         if (!isRunning) return;
-        loadProviderInfo();
+        loadProviderInfo(true);
       }, 30000);
 
       return () => {
@@ -618,6 +641,15 @@ export const Dashboard = forwardRef<any, DashboardProps>(
     const checkAndStartRef = useRef<
       (inputPath: string, index: number) => Promise<void>
     >(() => Promise.resolve());
+    const currentRunEngineModeRef = useRef<"v1" | "v2" | null>(null);
+
+    const resolveEngineModeForQueueIndex = useCallback(
+      (index: number): "v1" | "v2" => {
+        const queueItem = queueRef.current[index];
+        return resolveQueueItemEngineMode(queueItem, engineModeRef.current);
+      },
+      [],
+    );
 
     // Auto-scroll ref
     const activeQueueItemRef = useRef<HTMLDivElement>(null);
@@ -810,6 +842,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       const signal = payload?.signal ?? null;
       const stopRequested = payload?.stopRequested === true;
       setIsRunning(false);
+      currentRunEngineModeRef.current = null;
       const success = code === 0;
       const finalStatus: TranslationRecord["status"] = success
         ? "completed"
@@ -1350,12 +1383,17 @@ export const Dashboard = forwardRef<any, DashboardProps>(
             // Quality check warnings from backend
             try {
               const data = JSON.parse(log.substring("JSON_WARNING:".length));
+              const warningBlock =
+                typeof data.block === "number" ? data.block : 0;
+              const warningLine =
+                typeof data.line === "number" ? data.line : undefined;
               triggersBufferRef.current.push({
                 time: new Date().toISOString(),
                 type: (data.type
                   ? `warning_${data.type}`
                   : "warning_quality") as any,
-                block: data.block || 0,
+                block: warningBlock,
+                line: warningLine,
                 message: data.message || "",
               });
             } catch (e) {
@@ -1884,6 +1922,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       forceResume?: boolean,
       glossaryOverride?: string,
     ) => {
+      currentRunEngineModeRef.current = "v1";
       setIsRunning(true);
       setDisplayElapsed(0);
       setDisplayRemaining(0);
@@ -1971,6 +2010,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           t.dashboard.selectModelDesc,
         );
         setIsRunning(false);
+        currentRunEngineModeRef.current = null;
         activeRunIdRef.current = null;
         return;
       }
@@ -2264,6 +2304,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         return;
       }
 
+      currentRunEngineModeRef.current = "v2";
       setIsRunning(true);
       setDisplayElapsed(0);
       setDisplayRemaining(0);
@@ -2445,6 +2486,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         // 捕获预检或主进程级别返回的错误（如果后端发了 process-exit 这里其实会被状态机捕获，但这层防护更稳妥）
         if (result && !result.ok) {
           setIsRunning(false);
+          currentRunEngineModeRef.current = null;
           setRunNotice({
             type: "error",
             message: t.dashboard.runFailed,
@@ -2452,6 +2494,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         }
       } catch (err) {
         setIsRunning(false);
+        currentRunEngineModeRef.current = null;
       }
     };
 
@@ -2469,18 +2512,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
 
     const handleStartQueue = async () => {
       if (queue.length === 0) return;
-
-      if (engineMode === "v2") {
-        // V2 模式直接启动，不需要模型检查
-        const inputPath = queue[0].path;
-        await checkAndStartV2(inputPath, 0);
-        return;
-      }
-
-      // V1 原有逻辑
       const targetIndex = 0;
       const inputPath = queue[targetIndex].path;
-      await checkAndStart(inputPath, targetIndex);
+      await checkAndStartRef.current(inputPath, targetIndex);
     };
 
     useEffect(() => {
@@ -2544,7 +2578,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
             index < queue.length - 1
               ? () => {
                   setConfirmModal(null);
-                  checkAndStartV2(queue[index + 1].path, index + 1);
+                  checkAndStartRef.current(queue[index + 1].path, index + 1);
                 }
               : undefined,
           onStopAll: () => {
@@ -2642,7 +2676,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
               ? () => {
                   setConfirmModal(null);
                   resetEphemeralGlossarySelection();
-                  checkAndStart(queue[index + 1].path, index + 1);
+                  checkAndStartRef.current(queue[index + 1].path, index + 1);
                 }
               : undefined,
           onStopAll: () => {
@@ -2666,7 +2700,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
     // Keep checkAndStartRef in sync for use in stale-closure contexts
     useEffect(() => {
       checkAndStartRef.current = (inputPath: string, index: number) => {
-        if (engineModeRef.current === "v2") {
+        const resolvedMode = resolveEngineModeForQueueIndex(index);
+        if (resolvedMode === "v2") {
           return checkAndStartV2(inputPath, index);
         }
         return checkAndStart(inputPath, index);
@@ -2674,10 +2709,11 @@ export const Dashboard = forwardRef<any, DashboardProps>(
     });
 
     const handleStop = () => {
+      const runningMode = currentRunEngineModeRef.current || engineModeRef.current;
       console.log(
-        `[Dashboard] User requested stop (mode=${engineModeRef.current})`,
+        `[Dashboard] User requested stop (mode=${runningMode})`,
       );
-      if (engineModeRef.current === "v2") {
+      if (runningMode === "v2") {
         window.api?.pipelineV2Stop?.();
       } else {
         window.api?.stopTranslation();
@@ -2685,6 +2721,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       // 立即更新 UI 状态(后端也会发送 process-exit 事件)
       setIsRunning(false);
       setCurrentQueueIndex(-1);
+      currentRunEngineModeRef.current = null;
     };
 
     const requestStop = () => {

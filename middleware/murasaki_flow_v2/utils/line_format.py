@@ -10,10 +10,19 @@ import re
 
 _CODE_FENCE_MARKERS = ("```", "'''", '"""')
 _TAGGED_LINE_PATTERN = re.compile(r"^@@(?P<id>\d+)@@(?P<text>.*)$")
+_CODE_FENCE_BLOCK_PATTERNS = (
+    re.compile(r"```(?:jsonl|json|text)?\s*([\s\S]*?)```", re.IGNORECASE),
+    re.compile(r"'''(?:jsonl|json|text)?\s*([\s\S]*?)'''", re.IGNORECASE),
+    re.compile(r'"""(?:jsonl|json|text)?\s*([\s\S]*?)"""', re.IGNORECASE),
+)
 
 
 def _strip_code_fence(text: str) -> str:
     cleaned = text.strip()
+    for pattern in _CODE_FENCE_BLOCK_PATTERNS:
+        match = pattern.search(cleaned)
+        if match:
+            return match.group(1).strip()
     for marker in _CODE_FENCE_MARKERS:
         if cleaned.startswith(marker) and cleaned.endswith(marker):
             return cleaned[len(marker) : -len(marker)].strip()
@@ -151,10 +160,16 @@ def parse_tagged_entries(text: str, pattern: Optional[str] = None) -> Dict[str, 
         if not match:
             continue
         group_dict = match.groupdict() if match.groupdict() else {}
+        positional = match.groups()
         line_id = group_dict.get("id")
-        if line_id is None:
+        text_value = group_dict.get("text")
+        if line_id is None and len(positional) >= 1:
+            line_id = positional[0]
+        if text_value is None and len(positional) >= 2:
+            text_value = positional[1]
+        if line_id is None or text_value is None:
             continue
-        entries[str(line_id)] = match.group("text")
+        entries[str(line_id)] = str(text_value)
     return entries
 
 

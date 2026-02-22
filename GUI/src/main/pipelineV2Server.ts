@@ -52,17 +52,36 @@ export const markPipelineV2Local = (error: string, detail?: string) => {
   markLocalFail(error, detail);
 };
 
+const terminateProcessTree = (proc: ChildProcessWithoutNullStreams) => {
+  if (process.platform === "win32" && proc.pid) {
+    try {
+      spawn("taskkill", ["/pid", proc.pid.toString(), "/f", "/t"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      return;
+    } catch {
+      // fallback below
+    }
+  }
+  try {
+    proc.kill("SIGTERM");
+  } catch {
+    // ignore
+  }
+};
+
 const resetServerState = () => {
   if (state.proc && !state.proc.killed) {
-    try {
-      state.proc.kill();
-    } catch {
-      // ignore
-    }
+    terminateProcessTree(state.proc);
   }
   state.proc = undefined;
   state.baseUrl = undefined;
   state.starting = undefined;
+};
+
+export const stopPipelineV2Server = () => {
+  resetServerState();
 };
 
 const pickFreePort = (): Promise<number> =>

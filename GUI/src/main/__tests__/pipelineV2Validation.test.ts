@@ -55,6 +55,22 @@ describe("pipelineV2Validation", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.errors).toContain("missing_script");
+    expect(result.warnings).toContain("security_custom_parser_script");
+  });
+
+  it("warns when parser profile contains executable python script", async () => {
+    const profilesDir = await createProfilesDir();
+    const result = await validateProfileLocal(
+      "parser",
+      {
+        id: "parser_py_safe",
+        type: "python",
+        options: { script: "./safe.py" },
+      },
+      profilesDir,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.warnings).toContain("security_custom_parser_script");
   });
 
   it("ignores invalid max_retries in pipeline settings", async () => {
@@ -264,6 +280,38 @@ describe("pipelineV2Validation", () => {
     expect(result.errors).toContain("missing_reference:prompt:prompt_missing");
     expect(result.errors).toContain("missing_reference:parser:parser_missing");
     expect(result.errors).toContain("missing_reference:chunk:chunk_missing");
+  });
+
+  it("warns when pipeline references a python parser", async () => {
+    const profilesDir = await createProfilesDir();
+    await writeProfile(profilesDir, "api", "api_demo", {
+      type: "openai_compat",
+      base_url: "http://localhost",
+      model: "demo",
+    });
+    await writeProfile(profilesDir, "prompt", "prompt_demo", {
+      user_template: "Use {{source}}",
+    });
+    await writeProfile(profilesDir, "parser", "parser_py", {
+      type: "python",
+      options: { script: "./parser.py" },
+    });
+    await writeProfile(profilesDir, "chunk", "chunk_demo", {
+      chunk_type: "block",
+    });
+    const result = await validateProfileLocal(
+      "pipeline",
+      {
+        id: "pipeline_python_parser",
+        provider: "api_demo",
+        prompt: "prompt_demo",
+        parser: "parser_py",
+        chunk_policy: "chunk_demo",
+      },
+      profilesDir,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.warnings).toContain("security_custom_parser_script");
   });
 
   it("enforces line policy rules for pipeline profiles", async () => {

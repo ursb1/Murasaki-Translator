@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import json
 import os
 import threading
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from murasaki_translator.documents.factory import DocumentFactory
@@ -50,8 +51,13 @@ class PipelineRunner:
         if not spec:
             return []
         if isinstance(spec, str):
+            normalized = spec.strip()
+            if not normalized:
+                return []
+            if os.path.exists(normalized):
+                return v2_processing.load_rules(normalized)
             try:
-                profile = self.store.load_profile("rule", spec)
+                profile = self.store.load_profile("rule", normalized)
                 return profile.get("rules", [])
             except Exception:
                 return []
@@ -61,8 +67,14 @@ class PipelineRunner:
                 if isinstance(item, dict):
                     resolved.append(item)
                 elif isinstance(item, str):
+                    normalized = item.strip()
+                    if not normalized:
+                        continue
+                    if os.path.exists(normalized):
+                        resolved.extend(v2_processing.load_rules(normalized))
+                        continue
                     try:
-                        profile = self.store.load_profile("rule", item)
+                        profile = self.store.load_profile("rule", normalized)
                         resolved.extend(profile.get("rules", []))
                     except Exception:
                         pass
@@ -130,6 +142,21 @@ class PipelineRunner:
         return (min(indices), max(indices) + 1)
 
     @staticmethod
+    def _resolve_warning_block(blocks: List[TextBlock], line_number: int) -> int:
+        """Map global 1-based line number to 1-based block index."""
+        if line_number <= 0:
+            return 0
+        target_line_index = line_number - 1
+        for idx, block in enumerate(blocks):
+            metadata = block.metadata or []
+            int_meta = [meta for meta in metadata if isinstance(meta, int)]
+            if int_meta and target_line_index in int_meta:
+                return idx + 1
+        if 0 <= target_line_index < len(blocks):
+            return target_line_index + 1
+        return 0
+
+    @staticmethod
     def _filter_target_line_ids(
         metadata: List[Any], start: int, end: int
     ) -> List[int]:
@@ -152,6 +179,41 @@ class PipelineRunner:
             text = block.prompt_text
             if text.endswith("\n"):
                 block.prompt_text = text[:-1]
+
+    @staticmethod
+    def _sanitize_post_rules_for_input(
+        post_rules: List[Dict[str, Any]],
+        input_path: str,
+    ) -> List[Dict[str, Any]]:
+        lower_input = str(input_path or "").lower()
+        if not lower_input.endswith((".srt", ".ass", ".ssa")):
+            return list(post_rules or [])
+        melt_patterns = {
+            "ensure_single_newline",
+            "ensure_double_newline",
+            "clean_empty_lines",
+            "merge_short_lines",
+        }
+        sanitized: List[Dict[str, Any]] = []
+        for rule in post_rules or []:
+            if not isinstance(rule, dict):
+                continue
+            pattern = str(rule.get("pattern") or "").strip().lower()
+            if pattern in melt_patterns:
+                continue
+            sanitized.append(rule)
+        return sanitized
+
+    @staticmethod
+    def _resolve_protect_patterns_base(input_path: str) -> Optional[List[str]]:
+        lower_input = str(input_path or "").lower()
+        if lower_input.endswith((".srt", ".ass", ".ssa")):
+            from murasaki_translator.core.text_protector import TextProtector
+
+            return list(TextProtector.SUBTITLE_PATTERNS)
+        if lower_input.endswith(".epub"):
+            return [r"@id=\d+@", r"@end=\d+@", r"<[^>]+>"]
+        return None
 
     @staticmethod
     def _should_use_double_newline_separator(
@@ -180,6 +242,36 @@ class PipelineRunner:
                 text = str(getattr(block, "prompt_text", "") or "")
                 f.write(text)
                 f.write(normalized_separator)
+
+    @staticmethod
+    def _resolve_output_path(
+        input_path: str,
+        output_path: Optional[str],
+        provider: Any,
+        provider_ref: str,
+        pipeline_id: str,
+    ) -> str:
+        if output_path:
+            return output_path
+        base, ext = os.path.splitext(input_path)
+        provider_model = str(
+            (getattr(provider, "profile", {}) or {}).get("model") or ""
+        ).strip()
+        model_name = provider_model or provider_ref or pipeline_id or "translated"
+        safe_model_name = re.sub(r'[\\/*?:"<>|]', "_", model_name)
+        return f"{base}_{safe_model_name}{ext}"
+
+    @staticmethod
+    def _collect_quality_output_lines(blocks: List[TextBlock]) -> List[str]:
+        lines: List[str] = []
+        for block in blocks:
+            text = str(getattr(block, "prompt_text", "") or "")
+            split_lines = text.splitlines()
+            if split_lines:
+                lines.extend(split_lines)
+            else:
+                lines.append(text)
+        return lines
 
     @staticmethod
     def _ensure_line_chunk_keeps_empty(doc: object, chunk_policy: Any) -> None:
@@ -416,6 +508,7 @@ class PipelineRunner:
         cache_dir: Optional[str] = None,
     ) -> str:
         pipeline = self.pipeline
+        pipeline_id = str(pipeline.get("id") or "")
         provider_ref = str(pipeline.get("provider") or "")
         prompt_ref = str(pipeline.get("prompt") or "")
         parser_ref = str(pipeline.get("parser") or "")
@@ -436,6 +529,14 @@ class PipelineRunner:
             or chunk_policy.profile.get("type")
             or ""
         )
+        output_path = self._resolve_output_path(
+            input_path,
+            output_path,
+            provider,
+            provider_ref,
+            pipeline_id,
+        )
+        emit_output_path(output_path)
         context_cfg = prompt_profile.get("context") or {}
         source_format = str(context_cfg.get("source_format") or "").strip().lower()
         parser_type = ""
@@ -460,8 +561,7 @@ class PipelineRunner:
         source_lines = self._extract_source_lines(items)
         blocks = chunk_policy.chunk(items)
 
-        temp_progress_path = f"{output_path}.temp.jsonl" if output_path else f"{input_path}.temp.jsonl"
-        pipeline_id = str(pipeline.get("id") or "")
+        temp_progress_path = f"{output_path}.temp.jsonl"
         fingerprint = {
             "type": "fingerprint",
             "version": 1,
@@ -492,6 +592,67 @@ class PipelineRunner:
         if glossary_spec is None:
             glossary_spec = pipeline.get("glossary")
         glossary_text = self._load_glossary(glossary_spec)
+        resolved_cache_dir = (
+            cache_dir if cache_dir and os.path.isdir(cache_dir) else None
+        )
+        realtime_cache: Optional[TranslationCache] = (
+            TranslationCache(
+                output_path,
+                custom_cache_dir=resolved_cache_dir,
+                source_path=input_path,
+            )
+            if save_cache
+            else None
+        )
+        realtime_cache_lock = threading.Lock()
+        realtime_model_name = (
+            str(provider.profile.get("model") or "").strip()
+            or provider_ref
+            or pipeline_id
+            or "unknown"
+        )
+        realtime_glossary_path = (
+            str(glossary_spec)
+            if isinstance(glossary_spec, str)
+            else ""
+        )
+        if realtime_cache and getattr(realtime_cache, "cache_path", ""):
+            emit_cache_path(realtime_cache.cache_path)
+
+        def flush_realtime_cache_locked() -> None:
+            if not realtime_cache:
+                return
+            realtime_cache.save(
+                model_name=realtime_model_name,
+                glossary_path=realtime_glossary_path,
+                concurrency=1,
+            )
+
+        def upsert_realtime_cache(
+            idx: int,
+            src_text: str,
+            dst_text: str,
+            *,
+            warnings: Optional[List[str]] = None,
+            flush: bool = True,
+        ) -> None:
+            if not realtime_cache:
+                return
+            with realtime_cache_lock:
+                realtime_cache.add_block(
+                    idx,
+                    src_text,
+                    dst_text,
+                    warnings=warnings or [],
+                )
+                if warnings:
+                    realtime_cache.update_block(
+                        idx,
+                        status="none",
+                        warnings=warnings,
+                    )
+                if flush:
+                    flush_realtime_cache_locked()
 
         settings = pipeline.get("settings") or {}
         try:
@@ -533,8 +694,10 @@ class PipelineRunner:
         strict_line_count = bool(processing_cfg.get("strict_line_count"))
 
         if processing_enabled:
-            pre_rules = v2_processing.load_rules(self._resolve_rules(rules_pre_spec))
-            post_rules = v2_processing.load_rules(self._resolve_rules(rules_post_spec))
+            pre_rules = self._resolve_rules(rules_pre_spec)
+            post_rules = self._resolve_rules(rules_post_spec)
+            post_rules = self._sanitize_post_rules_for_input(post_rules, input_path)
+            protect_patterns_base = self._resolve_protect_patterns_base(input_path)
             glossary_dict = v2_processing.load_glossary(glossary_spec)
             if (
                 pre_rules
@@ -552,6 +715,7 @@ class PipelineRunner:
                         strict_line_count=strict_line_count,
                         enable_quality=bool(enable_quality),
                         enable_text_protect=bool(enable_text_protect),
+                        protect_patterns_base=protect_patterns_base,
                     )
                 )
 
@@ -581,7 +745,20 @@ class PipelineRunner:
         except Exception:
             temp_progress_file = None
 
-        def write_temp_entry(idx: int, src_text: str, dst_text: str) -> None:
+        def write_temp_entry(
+            idx: int,
+            src_text: str,
+            dst_text: str,
+            *,
+            warnings: Optional[List[str]] = None,
+        ) -> None:
+            upsert_realtime_cache(
+                idx,
+                src_text,
+                dst_text,
+                warnings=warnings,
+                flush=True,
+            )
             if not temp_progress_file:
                 return
             payload = {
@@ -640,11 +817,20 @@ class PipelineRunner:
                     prompt_text=dst_text,
                     metadata=block.metadata,
                 )
+                upsert_realtime_cache(
+                    idx,
+                    block.prompt_text,
+                    dst_text,
+                    flush=False,
+                )
                 resume_completed += 1
                 if dst_text:
                     resume_output_lines += dst_text.count("\n") + 1
                     resume_output_chars += len(dst_text)
             if resume_completed > 0:
+                if realtime_cache:
+                    with realtime_cache_lock:
+                        flush_realtime_cache_locked()
                 tracker.seed_progress(
                     completed_blocks=resume_completed,
                     output_lines=resume_output_lines,
@@ -694,9 +880,23 @@ class PipelineRunner:
                 source_text = protector.protect(source_text)
 
             if use_jsonl and active_source_lines:
-                start, end = self._resolve_source_window(
-                    active_source_lines, fallback_index, context_cfg
-                )
+                if block.metadata:
+                    target_line_ids = self._filter_target_line_ids(
+                        block.metadata,
+                        0,
+                        len(active_source_lines),
+                    )
+                if target_line_ids:
+                    target_line_ids = sorted(set(target_line_ids))
+                else:
+                    safe_fallback = min(
+                        max(fallback_index, 0),
+                        len(active_source_lines) - 1,
+                    )
+                    target_line_ids = [safe_fallback]
+
+                start = max(0, min(target_line_ids))
+                end = min(len(active_source_lines), max(target_line_ids) + 1)
                 before_count = max(0, int(context_cfg.get("before_lines") or 0))
                 after_count = max(0, int(context_cfg.get("after_lines") or 0))
                 before_start = max(0, start - before_count)
@@ -711,12 +911,6 @@ class PipelineRunner:
                     active_source_lines, start, end, protector
                 )
                 source_text = self._build_jsonl_range(protected_lines, start, end)
-                if block.metadata:
-                    target_line_ids = self._filter_target_line_ids(
-                        block.metadata, start, end
-                    )
-                if not target_line_ids:
-                    target_line_ids = [fallback_index]
 
             messages = build_messages(
                 prompt_profile,
@@ -806,40 +1000,47 @@ class PipelineRunner:
                     tracker.note_retry(_status_code)
                     emit_retry(idx + 1, attempt, error_type)
                     if attempt > max_retries:
-                        can_fallback_to_source = (
-                            chunk_type == "line"
-                            and line_index is not None
-                            and line_index < len(source_lines)
+                        fallback_line = (
+                            line_index + 1
+                            if line_index is not None and line_index < len(source_lines)
+                            else None
                         )
-                        if can_fallback_to_source:
-                            fallback_text = source_lines[line_index]
-                            with _failed_line_lock:
-                                failed_line_entries.append(
-                                    {
-                                        "index": idx,
-                                        "line": line_index + 1,
-                                        "error": last_error,
-                                        "type": error_type,
-                                        "status": "untranslated_fallback",
-                                    }
-                                )
-                            try:
-                                emit_warning(
-                                    line_index + 1,
-                                    "fallback_to_source_after_max_retries",
-                                    "untranslated_fallback",
-                                )
-                            except Exception:
-                                pass
-                            tracker.note_error(_status_code)
-                            write_temp_entry(idx, block.prompt_text, fallback_text)
-                            return idx, TextBlock(
-                                id=idx + 1,
-                                prompt_text=fallback_text,
-                                metadata=block.metadata,
+                        fallback_text = (
+                            source_lines[line_index]
+                            if line_index is not None and line_index < len(source_lines)
+                            else block.prompt_text
+                        )
+                        with _failed_line_lock:
+                            failed_line_entries.append(
+                                {
+                                    "index": idx,
+                                    "line": fallback_line,
+                                    "error": last_error,
+                                    "type": error_type,
+                                    "status": "untranslated_fallback",
+                                }
                             )
+                        try:
+                            emit_warning(
+                                idx + 1,
+                                "fallback_to_source_after_max_retries",
+                                "untranslated_fallback",
+                                line=fallback_line,
+                            )
+                        except Exception:
+                            pass
                         tracker.note_error(_status_code)
-                        raise
+                        write_temp_entry(
+                            idx,
+                            block.prompt_text,
+                            fallback_text,
+                            warnings=["untranslated_fallback"],
+                        )
+                        return idx, TextBlock(
+                            id=idx + 1,
+                            prompt_text=fallback_text,
+                            metadata=block.metadata,
+                        )
             if last_error:
                 raise RuntimeError(last_error)
             raise RuntimeError("unknown_error")
@@ -940,29 +1141,21 @@ class PipelineRunner:
                     temp_progress_file.close()
                 except Exception:
                     pass
+            if realtime_cache:
+                try:
+                    with realtime_cache_lock:
+                        flush_realtime_cache_locked()
+                except Exception:
+                    pass
 
         if any(block is None for block in translated_blocks):
             raise RuntimeError("translation_incomplete")
 
         translated_blocks = [block for block in translated_blocks if block is not None]
 
-        if not output_path:
-            base, ext = os.path.splitext(input_path)
-            provider_model = str(provider.profile.get("model") or "").strip()
-            # fallback cascade: Try getting provider model -> provider ref -> pipeline id
-            model_name = (
-                provider_model or provider_ref or pipeline_id or "translated"
-            )
-            # sanitize for filename
-            import re
-            safe_model_name = re.sub(r'[\\/*?:"<>|]', '_', model_name)
-            output_path = f"{base}_{safe_model_name}{ext}"
-
-        emit_output_path(output_path)
-
         if processing_processor and processing_processor.options.enable_quality:
-            output_lines = [b.prompt_text for b in translated_blocks]
-            if source_lines and len(output_lines) == len(source_lines):
+            output_lines = self._collect_quality_output_lines(translated_blocks)
+            if source_lines:
                 warnings = processing_processor.check_quality(
                     source_lines, output_lines
                 )
@@ -979,10 +1172,16 @@ class PipelineRunner:
                         pass
                     for entry in warnings:
                         try:
+                            warning_line = int(entry.get("line", 0) or 0)
+                            warning_block = self._resolve_warning_block(
+                                blocks,
+                                warning_line,
+                            )
                             emit_warning(
-                                int(entry.get("line", 0) or 0),
+                                warning_block,
                                 str(entry.get("message", "")),
                                 str(entry.get("type", "quality") or "quality"),
+                                line=warning_line if warning_line > 0 else None,
                             )
                         except Exception:
                             continue

@@ -126,6 +126,20 @@ const validatePromptParserPair = (
   }
 };
 
+const hasPythonParser = (parser: unknown): boolean => {
+  if (!parser || typeof parser !== "object") return false;
+  const profile = parser as Record<string, any>;
+  const parserType = String(profile.type || "")
+    .trim()
+    .toLowerCase();
+  if (parserType === "python") return true;
+  if (parserType !== "any") return false;
+  const options = profile.options || {};
+  const candidates = options.parsers || options.candidates;
+  if (!Array.isArray(candidates)) return false;
+  return candidates.some((item) => hasPythonParser(item));
+};
+
 export const validateProfileLocal = async (
   kind: ProfileKind,
   data: Record<string, any>,
@@ -230,6 +244,9 @@ export const validateProfileLocal = async (
       if (!data.options?.script && !data.options?.path) {
         result.errors.push("missing_script");
       }
+    }
+    if (hasPythonParser(data)) {
+      result.warnings.push("security_custom_parser_script");
     }
   }
 
@@ -373,6 +390,9 @@ export const validateProfileLocal = async (
           parserProfile.data,
           result,
         );
+        if (hasPythonParser(parserProfile.data)) {
+          result.warnings.push("security_custom_parser_script");
+        }
       }
     }
   }

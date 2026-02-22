@@ -1204,6 +1204,8 @@ const formatErrorCode = (code: string, texts: any) => {
   if (code === "missing_pattern") return texts.validationMissingPattern;
   if (code === "missing_json_path") return texts.validationMissingJsonPath;
   if (code === "missing_script") return texts.validationMissingScript;
+  if (code === "security_custom_parser_script")
+    return texts.validationPythonScriptRisk;
   if (code === "missing_any_parsers") return texts.validationMissingParsers;
   if (code === "invalid_concurrency") return texts.validationInvalidConcurrency;
   if (code === "invalid_max_retries") return texts.validationInvalidMaxRetries;

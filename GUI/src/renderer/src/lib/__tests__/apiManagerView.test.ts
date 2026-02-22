@@ -448,6 +448,7 @@ const requiredPaths: Array<string[]> = [
   ["apiManager", "validationError"],
   ["apiManager", "validationWarn"],
   ["apiManager", "validationMissingScript"],
+  ["apiManager", "validationPythonScriptRisk"],
   ["apiManager", "composer", "title"],
   ["apiManager", "composer", "desc"],
   ["apiManager", "composer", "badge"],
@@ -640,6 +641,15 @@ describe("apiManager view i18n", () => {
     expect(translations.jp.apiManager.scheme.placeholders.strategy).toBe(
       "分割戦略を選択",
     );
+  });
+
+  it("keeps english composer penalty labels in english", () => {
+    expect(
+      translations.en.apiManager.composer.fields.presencePenaltyLabel,
+    ).toBe("Presence Penalty");
+    expect(
+      translations.en.apiManager.composer.fields.frequencyPenaltyLabel,
+    ).toBe("Frequency Penalty");
   });
 
   it("removes references to default api/pipeline ids", () => {

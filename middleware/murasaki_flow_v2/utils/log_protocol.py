@@ -185,13 +185,22 @@ def emit_retry(
     emit("JSON_RETRY", payload)
 
 
-def emit_warning(block: int, message: str, warn_type: str = "quality") -> None:
+def emit_warning(
+    block: int,
+    message: str,
+    warn_type: str = "quality",
+    *,
+    line: Optional[int] = None,
+) -> None:
     """Emit JSON_WARNING for quality check warnings."""
-    emit("JSON_WARNING", {
+    payload: Dict[str, Any] = {
         "block": block,
         "type": warn_type,
         "message": message,
-    })
+    }
+    if line is not None and int(line) > 0:
+        payload["line"] = int(line)
+    emit("JSON_WARNING", payload)
 
 
 def emit_error(message: str, title: str = "Pipeline V2 Error") -> None:

@@ -45,3 +45,25 @@ def test_extract_line_for_policy_tagged():
     text = "@@1@@LineA\n@@2@@LineB"
     assert extract_line_for_policy(text, 0) == "LineA"
     assert extract_line_for_policy(text, 1) == "LineB"
+
+
+@pytest.mark.unit
+def test_extract_line_for_policy_tagged_positional_groups():
+    text = "@@1@@LineA\n@@2@@LineB"
+    assert extract_line_for_policy(text, 0, tagged_pattern=r"^@@(\d+)@@(.*)$") == "LineA"
+    assert extract_line_for_policy(text, 1, tagged_pattern=r"^@@(\d+)@@(.*)$") == "LineB"
+
+
+@pytest.mark.unit
+def test_parse_jsonl_entries_extracts_code_fence_from_verbose_output():
+    payload = (
+        "Here is the result:\n"
+        "```jsonl\n"
+        '{"1":"A"}\n'
+        '{"2":"B"}\n'
+        "```\n"
+        "Hope this helps."
+    )
+    entries, ordered = parse_jsonl_entries(payload)
+    assert entries == {"1": "A", "2": "B"}
+    assert ordered == []

@@ -280,3 +280,46 @@ def test_flow_v2_validation_parser_missing_python_script():
         {"id": "parser_python", "type": "python", "options": {}},
     )
     assert "missing_script" in result.errors
+    assert "security_custom_parser_script" in result.warnings
+
+
+@pytest.mark.unit
+def test_flow_v2_validation_parser_python_script_warning():
+    result = validate_profile(
+        "parser",
+        {"id": "parser_python", "type": "python", "options": {"script": "./safe.py"}},
+    )
+    assert not result.errors
+    assert "security_custom_parser_script" in result.warnings
+
+
+@pytest.mark.unit
+def test_flow_v2_validation_pipeline_warns_for_python_parser(tmp_path):
+    store = ProfileStore(str(tmp_path))
+    store.ensure_dirs(["api", "prompt", "parser", "policy", "chunk", "pipeline"])
+    (tmp_path / "api" / "api1.yaml").write_text(
+        "id: api1\ntype: openai_compat\nbase_url: https://api.example.com/v1\nmodel: demo\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "prompt" / "prompt1.yaml").write_text(
+        "id: prompt1\nuser_template: \"{{source}}\"\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "parser" / "parser_py.yaml").write_text(
+        "id: parser_py\ntype: python\noptions:\n  script: ./safe.py\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "chunk" / "chunk1.yaml").write_text(
+        "id: chunk1\nchunk_type: block\noptions: {}\n",
+        encoding="utf-8",
+    )
+    data = {
+        "id": "pipe1",
+        "provider": "api1",
+        "prompt": "prompt1",
+        "parser": "parser_py",
+        "chunk_policy": "chunk1",
+    }
+    result = validate_profile("pipeline", data, store=store)
+    assert not result.errors
+    assert "security_custom_parser_script" in result.warnings

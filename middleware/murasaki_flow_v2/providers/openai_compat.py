@@ -23,33 +23,26 @@ DEFAULT_STOP_TOKENS = [
     "<|end_of_text|>",  # Llama 3 Base
     "\n\n\n",  # Heuristic safety net
 ]
+DEFAULT_TIMEOUT_SECONDS = 60
 
 
 class _RpmLimiter:
     def __init__(self, rpm: int):
         self.rpm = rpm
         self._lock = threading.Lock()
-        self._window_start = time.time()
-        self._count = 0
+        self._next_slot = 0.0
 
     def acquire(self) -> None:
         if self.rpm <= 0:
             return
-        while True:
-            with self._lock:
-                now = time.time()
-                elapsed = now - self._window_start
-                if elapsed >= 60:
-                    self._window_start = now
-                    self._count = 0
-                if self._count < self.rpm:
-                    self._count += 1
-                    return
-                wait_seconds = max(0.0, 60 - elapsed)
-            if wait_seconds > 0:
-                time.sleep(wait_seconds)
-            else:
-                time.sleep(0.01)
+        interval = 60.0 / float(self.rpm)
+        with self._lock:
+            now = time.monotonic()
+            slot = max(self._next_slot, now)
+            self._next_slot = slot + interval
+            wait_seconds = slot - now
+        if wait_seconds > 0:
+            time.sleep(wait_seconds)
 
 
 def _normalize_base_url(base_url: str) -> str:
@@ -209,7 +202,7 @@ class OpenAICompatProvider(BaseProvider):
                 url,
                 headers=headers,
                 data=json.dumps(payload),
-                timeout=request.timeout or 600,
+                timeout=request.timeout or DEFAULT_TIMEOUT_SECONDS,
             )
         except requests.RequestException as exc:
             raise ProviderError(f"OpenAI-compatible request failed: {exc}") from exc

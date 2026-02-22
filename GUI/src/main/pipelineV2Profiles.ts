@@ -9,6 +9,7 @@ import {
   mkdir,
   readdir,
   readFile,
+  rename,
   stat,
   unlink,
   writeFile,
@@ -93,6 +94,53 @@ const profileIndexDiskCache: {
   data: null,
   dirty: false,
 };
+
+const fileWriteLocks = new Map<string, Promise<void>>();
+
+const withFileWriteLock = async <T>(
+  target: string,
+  task: () => Promise<T>,
+): Promise<T> => {
+  const previous = fileWriteLocks.get(target) || Promise.resolve();
+  let releaseGate: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => {
+    releaseGate = resolve;
+  });
+  const tail = previous.catch(() => undefined).then(() => gate);
+  fileWriteLocks.set(target, tail);
+
+  await previous.catch(() => undefined);
+
+  try {
+    return await task();
+  } finally {
+    releaseGate?.();
+    if (fileWriteLocks.get(target) === tail) {
+      fileWriteLocks.delete(target);
+    }
+  }
+};
+
+const writeFileAtomic = async (target: string, content: string) => {
+  const token = `${process.pid}-${Date.now()}-${Math.random()
+    .toString(16)
+    .slice(2)}`;
+  const tempPath = `${target}.tmp-${token}`;
+  await writeFile(tempPath, content, "utf-8");
+  try {
+    await rename(tempPath, target);
+  } catch {
+    try {
+      await writeFile(target, content, "utf-8");
+    } finally {
+      await unlink(tempPath).catch(() => null);
+    }
+  }
+};
+
+const writeFileSafely = (target: string, content: string) =>
+  withFileWriteLock(target, () => writeFileAtomic(target, content));
+
 const buildNextProfileIndexCache = (
   cache: ProfileIndexCache,
   kind: ProfileKind,
@@ -575,10 +623,9 @@ const persistProfileIndexDiskCache = async (profilesDir: string) => {
   }
   const cachePath = join(profilesDir, PROFILE_INDEX_FILE);
   try {
-    await writeFile(
+    await writeFileSafely(
       cachePath,
       JSON.stringify(profileIndexDiskCache.data, null, 2),
-      "utf-8",
     );
     profileIndexDiskCache.dirty = false;
   } catch {
@@ -927,7 +974,7 @@ const patchAndPruneProfiles = async (
     }
 
     if (changed) {
-      await writeFile(fullPath, dumpYaml(nextData), "utf-8").catch(() => null);
+      await writeFileSafely(fullPath, dumpYaml(nextData)).catch(() => null);
     }
   }
 };
@@ -1244,7 +1291,7 @@ const saveProfileLocal = async (
     }
   }
 
-  await writeFile(target, dumpYaml(parsed), "utf-8");
+  await writeFileSafely(target, dumpYaml(parsed));
   const metaStat = await stat(target).catch(() => null);
   if (metaStat) {
     const id = String(parsed.id);

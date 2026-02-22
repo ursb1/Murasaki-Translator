@@ -21,6 +21,27 @@ type RunnerDeps = {
 let activeChild: ChildProcess | null = null;
 let stopRequested = false;
 
+const stopActivePipelineChild = () => {
+  if (!activeChild) return;
+  stopRequested = true;
+  console.log("[FlowV2] Stop requested, killing child process...");
+  try {
+    activeChild.kill("SIGTERM");
+    if (process.platform === "win32" && activeChild.pid) {
+      spawn("taskkill", ["/pid", activeChild.pid.toString(), "/f", "/t"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+    }
+  } catch (e) {
+    console.error("[FlowV2] Error killing child:", e);
+  }
+};
+
+export const stopPipelineV2Runner = () => {
+  stopActivePipelineChild();
+};
+
 /**
  * 将缓冲区按行分割，返回未完成的残余行。
  * 复用 V1 index.ts 的 flushBufferedLines 模式。
@@ -41,19 +62,7 @@ const flushBufferedLines = (
 export const registerPipelineV2Runner = (deps: RunnerDeps) => {
   // --- Stop handler ---
   ipcMain.on("stop-pipelinev2", () => {
-    if (activeChild) {
-      stopRequested = true;
-      console.log("[FlowV2] Stop requested, killing child process...");
-      try {
-        activeChild.kill("SIGTERM");
-        // Windows fallback: SIGTERM may not work, use taskkill
-        if (process.platform === "win32" && activeChild.pid) {
-          spawn("taskkill", ["/pid", activeChild.pid.toString(), "/f", "/t"]);
-        }
-      } catch (e) {
-        console.error("[FlowV2] Error killing child:", e);
-      }
-    }
+    stopActivePipelineChild();
   });
 
   ipcMain.handle(

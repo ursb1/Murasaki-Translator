@@ -859,6 +859,8 @@ export const translations = {
       validationMissingJsonPath:
         "Json Object Parser 需要 options.path 或 options.key",
       validationMissingScript: "Python Parser 需要 script 或 path",
+      validationPythonScriptRisk:
+        "检测到自定义 Python 解析脚本，可能执行任意本地代码，请确认配置来源可信",
       validationMissingParsers: "Any Parser 需要 options.parsers",
       validationMissingBaseUrl: "OpenAI 兼容 API 需要 base_url",
       validationMissingModel: "OpenAI 兼容 API 需要 model",
@@ -3768,6 +3770,8 @@ export const translations = {
       validationMissingJsonPath:
         "Json Object Parser requires options.path or options.key",
       validationMissingScript: "Python Parser requires script or path",
+      validationPythonScriptRisk:
+        "Custom Python parser script detected. It may execute local code; only use trusted profiles.",
       validationMissingParsers: "Any Parser requires options.parsers",
       validationMissingBaseUrl: "OpenAI-compatible API requires base_url",
       validationMissingModel: "OpenAI-compatible API requires model",
@@ -4658,8 +4662,8 @@ export const translations = {
           timeoutLabel: "Timeout (seconds)",
           headersLabel: "Request Headers",
           topPLabel: "Top P",
-          presencePenaltyLabel: "存在ペナルティ",
-          frequencyPenaltyLabel: "頻度ペナルティ",
+          presencePenaltyLabel: "Presence Penalty",
+          frequencyPenaltyLabel: "Frequency Penalty",
           seedLabel: "Seed",
           stopLabel: "Stop",
           extraParamsLabel: "Extra Params (JSON)",
@@ -6693,6 +6697,8 @@ export const translations = {
       validationMissingJsonPath:
         "Json Object Parser は options.path または options.key が必要です",
       validationMissingScript: "Python Parser は script または path が必要です",
+      validationPythonScriptRisk:
+        "カスタム Python パーサースクリプトが検出されました。ローカルコードを実行する可能性があるため、信頼できるプロファイルのみ使用してください。",
       validationMissingParsers: "Any Parser は options.parsers が必要です",
       validationMissingBaseUrl: "OpenAI 互換 API は base_url が必要です",
       validationMissingModel: "OpenAI 互換 API は model が必要です",

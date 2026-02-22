@@ -57,6 +57,8 @@ export interface TriggerEvent {
     | "warning_quality";
   /** Block number where the event occurred (0 if not applicable) */
   block: number;
+  /** Source line number where the event occurred (if available) */
+  line?: number;
   /** Human-readable message describing the event */
   message: string;
 }
@@ -738,7 +740,9 @@ function RecordDetailContent({
                   className="flex items-center gap-2 text-xs bg-secondary/50 rounded px-2 py-1"
                 >
                   <span className="text-muted-foreground">
-                    [Block {tr.block}]
+                    {typeof tr.line === "number" && tr.line > 0
+                      ? `[${t.historyView.stats.lines} ${tr.line}]`
+                      : `[${t.historyView.stats.blocks} ${tr.block}]`}
                   </span>
                   <span className="font-medium">
                     {getTriggerTypeLabel(tr.type)}
@@ -1227,8 +1231,12 @@ export function HistoryView({ lang, onNavigate }: HistoryViewProps) {
         ),
       );
       fullRecord.triggers.forEach((tr, i) => {
+        const location =
+          typeof tr.line === "number" && tr.line > 0
+            ? `${t.historyView.stats.lines} ${tr.line}`
+            : `${t.historyView.stats.blocks} ${tr.block}`;
         lines.push(
-          `${i + 1}. [Block ${tr.block}] ${getTriggerTypeLabel(tr.type)} - ${tr.message}`,
+          `${i + 1}. [${location}] ${getTriggerTypeLabel(tr.type)} - ${tr.message}`,
         );
       });
       lines.push(``);

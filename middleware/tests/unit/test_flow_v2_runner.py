@@ -1,5 +1,6 @@
 """Tests for PipelineRunner internal helpers and concurrency utilities."""
 
+import json
 import threading
 import pytest
 
@@ -68,6 +69,36 @@ def test_flow_v2_runner_block_line_range_none_metadata():
 
 
 @pytest.mark.unit
+def test_flow_v2_runner_collect_quality_output_lines_flattens_blocks():
+    blocks = [
+        TextBlock(id=1, prompt_text="A\nB", metadata=[0, 1]),
+        TextBlock(id=2, prompt_text="C", metadata=[2]),
+    ]
+    assert PipelineRunner._collect_quality_output_lines(blocks) == ["A", "B", "C"]
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_resolve_warning_block_prefers_metadata():
+    blocks = [
+        TextBlock(id=1, prompt_text="a", metadata=[0]),
+        TextBlock(id=2, prompt_text="b", metadata=[1]),
+        TextBlock(id=3, prompt_text="c", metadata=[2]),
+    ]
+    assert PipelineRunner._resolve_warning_block(blocks, 2) == 2
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_resolve_warning_block_fallback_and_bounds():
+    blocks = [
+        TextBlock(id=1, prompt_text="a", metadata=[]),
+        TextBlock(id=2, prompt_text="b", metadata=[]),
+    ]
+    assert PipelineRunner._resolve_warning_block(blocks, 1) == 1
+    assert PipelineRunner._resolve_warning_block(blocks, 2) == 2
+    assert PipelineRunner._resolve_warning_block(blocks, 10) == 0
+
+
+@pytest.mark.unit
 def test_flow_v2_runner_should_use_double_newline_separator():
     assert (
         PipelineRunner._should_use_double_newline_separator(
@@ -105,6 +136,42 @@ def test_flow_v2_runner_save_txt_blocks_double_separator(tmp_path):
     ]
     PipelineRunner._save_txt_blocks(str(path), blocks, separator="\n\n")
     assert path.read_text(encoding="utf-8") == "A\n\nB\n\n"
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_resolve_rules_from_json_path(tmp_path):
+    runner = _make_runner(tmp_path)
+    rules = [{"type": "format", "pattern": "ensure_double_newline", "active": True}]
+    rules_path = tmp_path / "rules_post.json"
+    rules_path.write_text(json.dumps(rules, ensure_ascii=False), encoding="utf-8")
+    assert runner._resolve_rules(str(rules_path)) == rules
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_sanitize_post_rules_for_subtitle():
+    source_rules = [
+        {"type": "format", "pattern": "ensure_double_newline", "active": True},
+        {"type": "format", "pattern": "clean_empty_lines", "active": True},
+        {"type": "format", "pattern": "number_fixer", "active": True},
+    ]
+    sanitized = PipelineRunner._sanitize_post_rules_for_input(
+        source_rules,
+        "sample.srt",
+    )
+    assert [rule["pattern"] for rule in sanitized] == ["number_fixer"]
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_resolve_protect_patterns_base():
+    subtitle = PipelineRunner._resolve_protect_patterns_base("episode.ass")
+    assert isinstance(subtitle, list)
+    assert r"<[^>]+>" in subtitle
+
+    epub = PipelineRunner._resolve_protect_patterns_base("book.epub")
+    assert epub == [r"@id=\d+@", r"@end=\d+@", r"<[^>]+>"]
+
+    plain = PipelineRunner._resolve_protect_patterns_base("novel.txt")
+    assert plain is None
 
 
 # ---------------------------------------------------------------------------
@@ -445,6 +512,16 @@ class _DummyLineChunkPolicy:
         ]
 
 
+class _DummyBlockChunkPolicy:
+    profile = {"chunk_type": "block", "type": "block"}
+
+    def chunk(self, items):
+        return [
+            TextBlock(id=index + 1, prompt_text=item["text"], metadata=[])
+            for index, item in enumerate(items)
+        ]
+
+
 @pytest.mark.unit
 def test_flow_v2_runner_fallback_to_source_on_provider_error(tmp_path, monkeypatch):
     runner = _make_runner(tmp_path)
@@ -548,3 +625,128 @@ def test_flow_v2_runner_fallback_to_source_on_parser_error(tmp_path, monkeypatch
     output_path = str(tmp_path / "out.txt")
     runner.run("dummy-input.txt", output_path=output_path, save_cache=False)
     assert [block.prompt_text for block in doc.saved_blocks] == ["A", "B"]
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_block_mode_fallback_does_not_abort_all(
+    tmp_path,
+    monkeypatch,
+):
+    runner = _make_runner(tmp_path)
+    runner.pipeline = {
+        "provider": "provider_stub",
+        "prompt": "prompt_stub",
+        "parser": "parser_stub",
+        "chunk_policy": "chunk_stub",
+        "settings": {"max_retries": 0, "concurrency": 4},
+    }
+
+    class _Provider:
+        profile = {"model": "stub-model"}
+
+        def build_request(self, _messages, _settings):
+            return object()
+
+        def send(self, _request):
+            raise ProviderError("HTTP 500 upstream_error")
+
+    class _Parser:
+        profile = {"type": "plain"}
+
+        def parse(self, _text):
+            raise AssertionError("ProviderError path should not call parser")
+
+    doc = _DummyDoc(["L1", "L2", "L3"])
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.DocumentFactory.get_document",
+        lambda _path: doc,
+    )
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.build_messages",
+        lambda *_args, **_kwargs: [{"role": "user", "content": "x"}],
+    )
+    monkeypatch.setattr(runner.providers, "get_provider", lambda _ref: _Provider())
+    monkeypatch.setattr(runner.parsers, "get_parser", lambda _ref: _Parser())
+    monkeypatch.setattr(
+        runner.prompts, "get_prompt", lambda _ref: {"user_template": "{{source}}"}
+    )
+    monkeypatch.setattr(
+        runner.chunk_policies,
+        "get_chunk_policy",
+        lambda _ref: _DummyBlockChunkPolicy(),
+    )
+
+    output_path = str(tmp_path / "out.txt")
+    result = runner.run("dummy-input.txt", output_path=output_path, save_cache=False)
+    assert result == output_path
+    assert [block.prompt_text for block in doc.saved_blocks] == ["L1", "L2", "L3"]
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_realtime_cache_survives_mid_run_abort(
+    tmp_path,
+    monkeypatch,
+):
+    runner = _make_runner(tmp_path)
+    runner.pipeline = {
+        "provider": "provider_stub",
+        "prompt": "prompt_stub",
+        "parser": "parser_stub",
+        "chunk_policy": "chunk_stub",
+        "settings": {"max_retries": 0, "concurrency": 1},
+    }
+
+    class _Provider:
+        profile = {"model": "stub-model"}
+
+        def build_request(self, _messages, _settings):
+            return object()
+
+        def send(self, _request):
+            return ProviderResponse(text="OK", raw={})
+
+    class _Parser:
+        profile = {"type": "plain"}
+
+        def parse(self, _text):
+            return type("Parsed", (), {"text": "T"})()
+
+    call_counter = {"count": 0}
+
+    def _raise_after_first(self, *_args, **_kwargs):
+        call_counter["count"] += 1
+        if call_counter["count"] >= 1:
+            raise RuntimeError("forced_abort")
+
+    doc = _DummyDoc(["A", "B"])
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.DocumentFactory.get_document",
+        lambda _path: doc,
+    )
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.build_messages",
+        lambda *_args, **_kwargs: [{"role": "user", "content": "x"}],
+    )
+    monkeypatch.setattr(runner.providers, "get_provider", lambda _ref: _Provider())
+    monkeypatch.setattr(runner.parsers, "get_parser", lambda _ref: _Parser())
+    monkeypatch.setattr(
+        runner.prompts, "get_prompt", lambda _ref: {"user_template": "{{source}}"}
+    )
+    monkeypatch.setattr(
+        runner.chunk_policies,
+        "get_chunk_policy",
+        lambda _ref: _DummyLineChunkPolicy(),
+    )
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.ProgressTracker.block_done",
+        _raise_after_first,
+    )
+
+    output_path = str(tmp_path / "abort.txt")
+    with pytest.raises(RuntimeError, match="forced_abort"):
+        runner.run("dummy-input.txt", output_path=output_path, save_cache=True)
+
+    cache_path = tmp_path / "abort.txt.cache.json"
+    assert cache_path.exists()
+    cache_data = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert len(cache_data.get("blocks", [])) >= 1

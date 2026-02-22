@@ -53,3 +53,19 @@ def test_flow_v2_prompt_fallback_user_only():
         line_index=None,
     )
     assert messages == [{"role": "user", "content": "hello"}]
+
+
+@pytest.mark.unit
+def test_flow_v2_prompt_template_does_not_second_pass_expand():
+    profile = {
+        "user_template": "{{source}}",
+    }
+    messages = build_messages(
+        profile,
+        source_text="line {{glossary}}",
+        context_before="",
+        context_after="",
+        glossary_text="SECRET_GLOSSARY",
+        line_index=None,
+    )
+    assert messages == [{"role": "user", "content": "line {{glossary}}"}]

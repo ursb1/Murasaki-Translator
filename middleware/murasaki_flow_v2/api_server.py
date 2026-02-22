@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import os
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import shutil
@@ -80,8 +81,38 @@ def _normalize_chunk_type(value: Any) -> str:
     return ""
 
 
+def _to_json_safe(value: Any, seen: Optional[set[int]] = None) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if seen is None:
+        seen = set()
+    obj_id = id(value)
+    if obj_id in seen:
+        return "<circular>"
+    seen.add(obj_id)
+    try:
+        if isinstance(value, dict):
+            return {str(k): _to_json_safe(v, seen) for k, v in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [_to_json_safe(item, seen) for item in value]
+        if hasattr(value, "dict") and callable(getattr(value, "dict")):
+            try:
+                return _to_json_safe(value.dict(), seen)
+            except Exception:
+                return str(value)
+        if hasattr(value, "__dict__"):
+            try:
+                return _to_json_safe(vars(value), seen)
+            except Exception:
+                return str(value)
+        return str(value)
+    finally:
+        seen.discard(obj_id)
+
+
 def create_app(store: ProfileStore, base_dir: Path) -> FastAPI:
     app = FastAPI(title="Murasaki Flow V2 API", version="0.1.0")
+    sandbox_slots = threading.BoundedSemaphore(value=4)
 
     @app.middleware("http")
     async def local_only_middleware(request: Request, call_next):
@@ -204,28 +235,14 @@ def create_app(store: ProfileStore, base_dir: Path) -> FastAPI:
 
     @app.post("/sandbox")
     def sandbox(payload: SandboxRequest) -> Dict[str, Any]:
+        if not sandbox_slots.acquire(blocking=False):
+            raise HTTPException(status_code=429, detail="sandbox_busy")
         try:
             from murasaki_flow_v2.api.sandbox_tester import SandboxTester
             tester = SandboxTester(store)
             res = tester.run_test(payload.text, payload.pipeline)
-            import json
-            def _safe_default(obj):
-                return str(obj)
-
-            def clean_traces(traces: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
-                if not traces:
-                    return traces
-                
-                # The most bulletproof way to scrub anything that isn't JSON serializable
-                # is to dump it to a string with a default handler that casts to string,
-                # and then load it right back as pure primitives.
-                try:
-                    cleaned_str = json.dumps(traces, default=_safe_default)
-                    return json.loads(cleaned_str)
-                except Exception as e:
-                    import traceback
-                    traceback.print_exc()
-                    return []
+            clean_pre_traces = _to_json_safe(res.pre_traces)
+            clean_post_traces = _to_json_safe(res.post_traces)
 
             return {
                 "ok": res.ok,
@@ -235,8 +252,8 @@ def create_app(store: ProfileStore, base_dir: Path) -> FastAPI:
                 "raw_response": res.raw_response,
                 "parsed_result": res.parsed_result,
                 "post_processed": res.post_processed,
-                "pre_traces": clean_traces(res.pre_traces),
-                "post_traces": clean_traces(res.post_traces),
+                "pre_traces": clean_pre_traces,
+                "post_traces": clean_post_traces,
                 "pre_rules_count": res.pre_rules_count,
                 "post_rules_count": res.post_rules_count,
                 "error": res.error,
@@ -245,6 +262,8 @@ def create_app(store: ProfileStore, base_dir: Path) -> FastAPI:
             import traceback
             traceback.print_exc()
             raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
+        finally:
+            sandbox_slots.release()
 
     return app
 

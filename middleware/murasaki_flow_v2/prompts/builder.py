@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List
+import re
+
+
+_TEMPLATE_TOKEN_PATTERN = re.compile(r"\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}")
 
 
 def _render_template(template: str, mapping: Dict[str, str]) -> str:
-    result = template
-    for key, value in mapping.items():
-        result = result.replace(f"{{{{{key}}}}}", value)
-    return result
+    def _replace(match: re.Match[str]) -> str:
+        key = match.group(1)
+        return mapping.get(key, match.group(0))
+
+    return _TEMPLATE_TOKEN_PATTERN.sub(_replace, template)
 
 
 def build_messages(

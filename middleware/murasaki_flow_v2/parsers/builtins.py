@@ -181,19 +181,43 @@ class JsonlParser(BaseParser):
 
 
 class TaggedLineParser(BaseParser):
+    def __init__(self, profile: dict):
+        super().__init__(profile)
+        self._compiled_cache: Tuple[str, Any] | None = None
+
+    def _get_compiled(self, pattern: str):
+        if self._compiled_cache and self._compiled_cache[0] == pattern:
+            return self._compiled_cache[1]
+        try:
+            compiled = re.compile(pattern)
+        except re.error as exc:
+            raise ParserError(f"TaggedLineParser: invalid pattern: {exc}") from exc
+        self._compiled_cache = (pattern, compiled)
+        return compiled
+
     def parse(self, text: str) -> ParseOutput:
         text = _strip_think_tags(text)
         options = self.profile.get("options") or {}
         pattern = options.get("pattern") or r"^@@(?P<id>\d+)@@(?P<text>.*)$"
         sort_by_id = bool(options.get("sort_by_id") or options.get("sort_by_line_number"))
-        compiled = re.compile(pattern)
+        compiled = self._get_compiled(str(pattern))
         entries: List[tuple[str | None, str]] = []
         for raw in text.splitlines():
             match = compiled.match(raw.strip())
             if match:
-                group_dict = match.groupdict()
-                line_id = group_dict.get("id") if isinstance(group_dict, dict) else None
-                entries.append((line_id, match.group("text")))
+                group_dict = match.groupdict() if match.groupdict() else {}
+                positional = match.groups()
+                line_id = group_dict.get("id")
+                text_value = group_dict.get("text")
+                if line_id is None and len(positional) >= 1:
+                    line_id = positional[0]
+                if text_value is None and len(positional) >= 2:
+                    text_value = positional[1]
+                if text_value is None:
+                    raise ParserError("TaggedLineParser: invalid capture groups")
+                entries.append(
+                    (str(line_id) if line_id is not None else None, str(text_value))
+                )
         if not entries:
             raise ParserError("TaggedLineParser: no tagged lines found")
         if sort_by_id:
@@ -236,7 +260,10 @@ class RegexParser(BaseParser):
         if options.get("ignorecase"):
             flags |= re.IGNORECASE
 
-        compiled = re.compile(pattern, flags)
+        try:
+            compiled = re.compile(pattern, flags)
+        except re.error as exc:
+            raise ParserError(f"RegexParser: invalid pattern: {exc}") from exc
         match = compiled.search(text)
         if not match:
             raise ParserError("RegexParser: pattern not matched")

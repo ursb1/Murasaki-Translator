@@ -3456,6 +3456,7 @@ export function LibraryView({
             onClose={() => setConfigItem(null)}
             remoteRuntime={remoteRuntime}
             v2Profiles={v2Profiles}
+            globalEngineMode={globalEngineMode}
           />
         )}
 

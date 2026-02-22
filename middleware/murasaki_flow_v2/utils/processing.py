@@ -173,6 +173,7 @@ def build_protect_patterns(
     pre_rules: List[Dict[str, Any]],
     post_rules: List[Dict[str, Any]],
     enable: bool = True,
+    base_patterns: Optional[List[str]] = None,
 ) -> List[str]:
     if not enable:
         return []
@@ -180,8 +181,10 @@ def build_protect_patterns(
     legacy_lines = _collect_legacy_protect_lines(post_rules)
     # 即使没有显式配置保护规则，enable=True 时也使用默认 patterns
     additions, removals = _parse_protect_pattern_lines(protect_lines + legacy_lines)
-    base_patterns = TextProtector.DEFAULT_PATTERNS
-    return _merge_protect_patterns(base_patterns, additions, removals)
+    baseline_patterns = (
+        list(base_patterns) if isinstance(base_patterns, list) else TextProtector.DEFAULT_PATTERNS
+    )
+    return _merge_protect_patterns(baseline_patterns, additions, removals)
 
 
 @dataclass
@@ -193,6 +196,7 @@ class ProcessingOptions:
     strict_line_count: bool = False
     enable_quality: bool = True
     enable_text_protect: bool = True
+    protect_patterns_base: Optional[List[str]] = None
 
 
 class ProcessingProcessor:
@@ -222,6 +226,7 @@ class ProcessingProcessor:
             self._pre_rules,
             self._post_rules,
             enable=options.enable_text_protect,
+            base_patterns=options.protect_patterns_base,
         )
 
     @property
