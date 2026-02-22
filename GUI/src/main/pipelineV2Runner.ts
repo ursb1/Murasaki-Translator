@@ -3,6 +3,7 @@ import { spawn, ChildProcess } from "child_process";
 import { existsSync, unlinkSync, writeFileSync } from "fs";
 import { basename, extname, join } from "path";
 import { validatePipelineRun } from "./pipelineV2Validation";
+import type { ApiStatsEventInput } from "./apiStatsStore";
 
 type PythonPath = { type: "python" | "bundle"; path: string };
 
@@ -10,6 +11,9 @@ type RunnerDeps = {
   getPythonPath: () => PythonPath;
   getMiddlewarePath: () => string;
   getMainWindow: () => BrowserWindow | null;
+  recordApiStatsEvent?: (
+    event: ApiStatsEventInput,
+  ) => void | Promise<void>;
   sendLog: (payload: {
     runId: string;
     message: string;
@@ -113,6 +117,22 @@ const resolveBundleArgs = (
   return scriptArgs.slice(1);
 };
 
+const API_STATS_EVENT_PREFIX = "JSON_API_STATS_EVENT:";
+
+const parseApiStatsEventLine = (line: string): ApiStatsEventInput | null => {
+  if (!line.startsWith(API_STATS_EVENT_PREFIX)) return null;
+  const raw = line.slice(API_STATS_EVENT_PREFIX.length);
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as ApiStatsEventInput;
+  } catch {
+    return null;
+  }
+};
+
 export const registerPipelineV2Runner = (deps: RunnerDeps) => {
   // --- Stop handler ---
   ipcMain.on("stop-pipelinev2", () => {
@@ -199,6 +219,8 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
         pipelineId,
         "--profiles-dir",
         profilesDir,
+        "--run-id",
+        runId,
       ];
       const moduleArgs = [
         "-m",
@@ -209,6 +231,8 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
         pipelineId,
         "--profiles-dir",
         profilesDir,
+        "--run-id",
+        runId,
       ];
       const stopFlagPath = join(
         middlewarePath,
@@ -394,11 +418,35 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
         let stdoutBuffer = "";
 
         const handleStdoutLine = (line: string) => {
+          const statsEvent = parseApiStatsEventLine(line);
+          if (statsEvent) {
+            if (deps.recordApiStatsEvent) {
+              const enrichedEvent: ApiStatsEventInput = {
+                ...statsEvent,
+                runId:
+                  typeof statsEvent.runId === "string" && statsEvent.runId.trim()
+                    ? statsEvent.runId
+                    : runId,
+                source:
+                  typeof statsEvent.source === "string" &&
+                    statsEvent.source.trim()
+                    ? statsEvent.source
+                    : "translation_run",
+                origin:
+                  typeof statsEvent.origin === "string" &&
+                    statsEvent.origin.trim()
+                    ? statsEvent.origin
+                    : "pipeline_v2_runner",
+              };
+              void Promise.resolve(
+                deps.recordApiStatsEvent(enrichedEvent),
+              ).catch(() => null);
+            }
+            return;
+          }
           const win = deps.getMainWindow();
           if (!win) return;
-          // 直接发送到 log-update 通道，复用 V1 的日志解析器
           win.webContents.send("log-update", `${line}\n`);
-          // 同时保留 pipelinev2-log 用于调试
           deps.sendLog({ runId, message: line, level: "info" });
         };
 
@@ -488,4 +536,5 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
 export const __testOnly = {
   flushBufferedLines,
   resolveBundleArgs,
+  parseApiStatsEventLine,
 };

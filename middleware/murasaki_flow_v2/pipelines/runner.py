@@ -1,4 +1,4 @@
-"""Pipeline V2 runner."""
+﻿"""Pipeline V2 runner."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import json
 import os
 import threading
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from murasaki_translator.documents.factory import DocumentFactory
@@ -34,6 +35,10 @@ from murasaki_flow_v2.utils import processing as v2_processing
 from murasaki_flow_v2.utils.log_protocol import (
     ProgressTracker, emit_output_path, emit_cache_path, emit_retry, emit_error, emit_warning,
 )
+from murasaki_flow_v2.utils.api_stats_protocol import (
+    emit_api_stats_event,
+    generate_request_id,
+)
 
 MAX_CONCURRENCY = 256
 
@@ -43,7 +48,12 @@ class PipelineStopRequested(RuntimeError):
 
 
 class PipelineRunner:
-    def __init__(self, store: ProfileStore, pipeline_profile: Dict[str, Any]):
+    def __init__(
+        self,
+        store: ProfileStore,
+        pipeline_profile: Dict[str, Any],
+        run_id: Optional[str] = None,
+    ):
         self.store = store
         self.pipeline = pipeline_profile
         self.providers = ProviderRegistry(store)
@@ -51,6 +61,15 @@ class PipelineRunner:
         self.prompts = PromptRegistry(store)
         self.line_policies = PolicyRegistry(store)
         self.chunk_policies = ChunkPolicyRegistry(store)
+        self.run_id = str(run_id or "").strip()
+
+    @staticmethod
+    def _emit_api_stats_safe(payload: Dict[str, Any]) -> None:
+        try:
+            emit_api_stats_event(payload)
+        except Exception:
+            # Stats telemetry should never break the translation flow.
+            pass
 
     def _resolve_rules(self, spec: Any) -> List[Dict[str, Any]]:
         if not spec:
@@ -519,7 +538,7 @@ class PipelineRunner:
         chunk_type: str,
         skip_indices: Optional[Set[int]] = None,
     ) -> Dict[int, Dict[str, str]]:
-        # 仅在 line 模式启用，避免 block 模式误映射导致的错位恢复。
+        # 仅在 line 模式启用，避免 block 模式发生错位恢复。
         if chunk_type != "line":
             return {}
         if not output_path or not os.path.exists(output_path):
@@ -619,7 +638,7 @@ class PipelineRunner:
         joiner = str(context_cfg.get("joiner") or "\n")
         if before <= 0 and after <= 0:
             return {"before": "", "after": ""}
-        # block_end 标识块的结束行（不含），用于分块模式 context
+        # block_end 鏍囪瘑鍧楃殑缁撴潫琛岋紙涓嶅惈锛夛紝鐢ㄤ簬鍒嗗潡妯″紡 context
         content_end = block_end if block_end is not None else line_index + 1
         start = max(0, line_index - before)
         end = min(len(source_lines), content_end + after)
@@ -719,6 +738,7 @@ class PipelineRunner:
             return bool(resolved_stop_flag) and os.path.exists(resolved_stop_flag)
 
         pipeline = self.pipeline
+        run_id = self.run_id
         pipeline_id = str(pipeline.get("id") or "")
         provider_ref = str(pipeline.get("provider") or "")
         prompt_ref = str(pipeline.get("prompt") or "")
@@ -727,6 +747,9 @@ class PipelineRunner:
         chunk_policy_ref = str(pipeline.get("chunk_policy") or "")
 
         provider = self.providers.get_provider(provider_ref)
+        stats_api_profile_id = str(
+            provider.profile.get("id") or provider_ref or ""
+        ).strip()
         prompt_profile = self.prompts.get_prompt(prompt_ref)
         parser = self.parsers.get_parser(parser_ref)
         line_policy = (
@@ -879,13 +902,13 @@ class PipelineRunner:
         source_lang = (
             str(processing_cfg.get("source_lang") or "ja").strip() or "ja"
         )
-        # 默认禁用质量检查 — 用户需在 Pipeline YAML processing.enable_quality
-        # 或 CLI --enable-quality 中显式启用
+        # 默认关闭质量检查，需要在 Pipeline YAML processing.enable_quality
+        # 或 CLI --enable-quality 中显式启用。
         enable_quality = processing_cfg.get("enable_quality")
         if enable_quality is None:
             enable_quality = False
-        # 默认禁用文本保护 — 用户需在 Pipeline YAML processing.text_protect
-        # 或 CLI --text-protect 中显式启用
+        # 默认关闭文本保护，需要在 Pipeline YAML processing.text_protect
+        # 或 CLI --text-protect 中显式启用。
         enable_text_protect = processing_cfg.get("text_protect")
         if enable_text_protect is None:
             enable_text_protect = False
@@ -979,7 +1002,7 @@ class PipelineRunner:
                 processing_processor.apply_pre(line) for line in source_lines
             ]
 
-        # --- Dashboard 日志协议 ---
+        # --- Dashboard 鏃ュ織鍗忚 ---
         temp_progress_file = None
         temp_lock = threading.Lock()
         try:
@@ -1116,10 +1139,10 @@ class PipelineRunner:
                         line_index = meta
                         break
                         
-            # 对于块模式或缺失真实行号的结构化模式，我们不能伪造 line_index
+            # 瀵逛簬鍧楁ā寮忔垨缂哄け鐪熷疄琛屽彿鐨勭粨鏋勫寲妯″紡锛屾垜浠笉鑳戒吉閫?line_index
             fallback_index = line_index if line_index is not None else idx
                 
-            # 分块模式 context：基于块的完整行范围，而非仅首行
+            # 分块模式的 context 以整块行范围为准，而不是仅使用首行。
             blk_start, blk_end = self._block_line_range(block)
             if blk_start == 0 and blk_end == 0:
                 blk_start, blk_end = fallback_index, fallback_index + 1
@@ -1258,21 +1281,209 @@ class PipelineRunner:
             while attempt <= max_retries:
                 if stop_requested():
                     raise PipelineStopRequested("stop_requested")
+                current_request_id: Optional[str] = None
+                current_request_meta: Dict[str, Any] = {}
+                current_endpoint_id: Optional[str] = None
+                current_endpoint_label: Optional[str] = None
+                current_model: Optional[str] = None
+                current_request_payload: Dict[str, Any] = {}
+                current_request_headers: Dict[str, str] | None = None
+                current_request_url: Optional[str] = None
+                attempt_no = attempt + 1
+                common_event_meta = {
+                    "blockIndex": idx,
+                    "lineIndex": line_index,
+                    "chunkType": chunk_type,
+                    "sourceFormat": source_format or "plain",
+                    "parserType": parser_type or "",
+                    "providerRef": provider_ref,
+                    "providerType": str(
+                        provider.profile.get("type")
+                        or provider.profile.get("provider")
+                        or "openai_compat"
+                    ),
+                }
                 try:
-                    request = provider.build_request(messages, settings)
-                    import time
-                    _t0 = time.time()
+                    request_settings = dict(settings or {})
+                    request_settings["_stats"] = {
+                        "run_id": run_id,
+                        "pipeline_id": pipeline_id,
+                        "api_profile_id": stats_api_profile_id,
+                        "block_index": idx,
+                        "line_index": line_index,
+                        "attempt": attempt_no,
+                        "source": "translation_run",
+                    }
+                    request = provider.build_request(messages, request_settings)
+                    request_meta_raw = getattr(request, "meta", None)
+                    current_request_meta = (
+                        dict(request_meta_raw)
+                        if isinstance(request_meta_raw, dict)
+                        else {}
+                    )
+                    current_request_id = str(
+                        getattr(request, "request_id", None)
+                        or current_request_meta.get("request_id")
+                        or generate_request_id()
+                    ).strip() or generate_request_id()
+                    try:
+                        setattr(request, "request_id", current_request_id)
+                    except Exception:
+                        pass
+                    current_endpoint_id = str(
+                        current_request_meta.get("endpoint_id")
+                        or getattr(request, "provider_id", None)
+                        or ""
+                    ).strip() or None
+                    current_endpoint_label = (
+                        str(current_request_meta.get("endpoint_label") or "").strip()
+                        or None
+                    )
+                    current_model = str(getattr(request, "model", "") or "").strip() or None
+                    current_request_payload = {
+                        "model": getattr(request, "model", None),
+                        "messages": getattr(request, "messages", None),
+                        "temperature": getattr(request, "temperature", None),
+                        "max_tokens": getattr(request, "max_tokens", None),
+                        "extra": getattr(request, "extra", None),
+                    }
+                    request_headers_raw = getattr(request, "headers", None)
+                    current_request_headers = (
+                        {str(k): str(v) for k, v in request_headers_raw.items()}
+                        if isinstance(request_headers_raw, dict)
+                        else None
+                    )
+                    current_request_url = (
+                        str(provider.profile.get("base_url") or "").strip() or None
+                    )
+
+                    self._emit_api_stats_safe(
+                        {
+                            "phase": "request_start",
+                            "requestId": current_request_id,
+                            "apiProfileId": stats_api_profile_id,
+                            "source": "translation_run",
+                            "origin": "pipeline_v2_runner",
+                            "runId": run_id or None,
+                            "pipelineId": pipeline_id or None,
+                            "endpointId": current_endpoint_id,
+                            "endpointLabel": current_endpoint_label,
+                            "model": current_model,
+                            "method": "POST",
+                            "url": current_request_url,
+                            "requestPayload": current_request_payload,
+                            "requestHeaders": current_request_headers,
+                            "meta": {
+                                **common_event_meta,
+                                **current_request_meta,
+                                "attempt": attempt_no,
+                            },
+                        }
+                    )
+
+                    _t0 = time.perf_counter()
                     response = provider.send(request)
-                    _ping_ms = int((time.time() - _t0) * 1000)
-                    
-                    # 记录 API 请求统计（token usage）
-                    raw_dict = response.raw or {}
-                    _usage = raw_dict.get("usage") or raw_dict.get("data", {}).get("usage") or {}
+                    _ping_ms = int((time.perf_counter() - _t0) * 1000)
+                    if response.duration_ms is not None and response.duration_ms > 0:
+                        _ping_ms = int(response.duration_ms)
+
+                    raw_dict = response.raw if isinstance(response.raw, dict) else {}
+                    raw_data = raw_dict.get("data")
+                    raw_usage = raw_dict.get("usage")
+                    if not isinstance(raw_usage, dict):
+                        raw_usage = (
+                            raw_data.get("usage")
+                            if isinstance(raw_data, dict)
+                            else {}
+                        )
+                    _usage = raw_usage if isinstance(raw_usage, dict) else {}
+                    _input_tokens = int(_usage.get("prompt_tokens", 0) or 0)
+                    _output_tokens = int(_usage.get("completion_tokens", 0) or 0)
                     tracker.note_request(
-                        input_tokens=_usage.get("prompt_tokens", 0) or 0,
-                        output_tokens=_usage.get("completion_tokens", 0) or 0,
+                        input_tokens=_input_tokens,
+                        output_tokens=_output_tokens,
                         ping=_ping_ms,
                     )
+
+                    status_code: Optional[int] = response.status_code
+                    if status_code is None:
+                        raw_status: Any = raw_dict.get("status_code")
+                        if (
+                            raw_status is None
+                            and isinstance(raw_dict.get("response"), dict)
+                        ):
+                            raw_status = raw_dict.get("response", {}).get(
+                                "status_code"
+                            )
+                        try:
+                            status_code = (
+                                int(raw_status) if raw_status is not None else None
+                            )
+                        except (TypeError, ValueError):
+                            status_code = None
+
+                    raw_request = (
+                        raw_dict.get("request")
+                        if isinstance(raw_dict.get("request"), dict)
+                        else {}
+                    )
+                    raw_response = (
+                        raw_dict.get("response")
+                        if isinstance(raw_dict.get("response"), dict)
+                        else {}
+                    )
+                    request_headers_for_event = response.request_headers
+                    if request_headers_for_event is None:
+                        request_headers_for_event = (
+                            raw_request.get("headers")
+                            if isinstance(raw_request.get("headers"), dict)
+                            else current_request_headers
+                        )
+                    response_headers_for_event = response.response_headers
+                    if response_headers_for_event is None:
+                        response_headers_for_event = (
+                            raw_response.get("headers")
+                            if isinstance(raw_response.get("headers"), dict)
+                            else None
+                        )
+                    response_url = (
+                        response.url
+                        or str(raw_request.get("url") or "").strip()
+                        or current_request_url
+                    )
+                    response_payload = raw_data if raw_data is not None else response.raw
+
+                    self._emit_api_stats_safe(
+                        {
+                            "phase": "request_end",
+                            "requestId": current_request_id,
+                            "apiProfileId": stats_api_profile_id,
+                            "source": "translation_run",
+                            "origin": "pipeline_v2_runner",
+                            "runId": run_id or None,
+                            "pipelineId": pipeline_id or None,
+                            "endpointId": current_endpoint_id,
+                            "endpointLabel": current_endpoint_label,
+                            "model": current_model,
+                            "method": "POST",
+                            "url": response_url,
+                            "statusCode": status_code,
+                            "durationMs": _ping_ms,
+                            "inputTokens": _input_tokens,
+                            "outputTokens": _output_tokens,
+                            "requestPayload": current_request_payload,
+                            "responsePayload": response_payload,
+                            "requestHeaders": request_headers_for_event,
+                            "responseHeaders": response_headers_for_event,
+                            "meta": {
+                                **common_event_meta,
+                                **current_request_meta,
+                                "attempt": attempt_no,
+                                "providerId": getattr(request, "provider_id", None),
+                            },
+                        }
+                    )
+
                     if use_jsonl and target_line_ids:
                         translated = self._parse_jsonl_response(
                             response.text, target_line_ids
@@ -1320,21 +1531,83 @@ class PipelineRunner:
                     last_error = str(exc)
                     if adaptive is not None and isinstance(exc, ProviderError):
                         adaptive.note_error(last_error)
-                    attempt += 1
                     error_type = (
                         "line_mismatch" if isinstance(exc, LinePolicyError)
                         else "empty" if isinstance(exc, ParserError)
                         else "provider_error"
                     )
-                    # 提取 HTTP 状态码（如果是 ProviderError）
                     _status_code = None
+                    _duration_ms: Optional[int] = None
+                    _provider_error_type = error_type
                     if isinstance(exc, ProviderError):
-                        import re as _re
-                        _m = _re.search(r"HTTP (\d{3})", str(exc))
-                        if _m:
-                            _status_code = int(_m.group(1))
+                        _status_code = exc.status_code
+                        _duration_ms = exc.duration_ms
+                        _provider_error_type = exc.error_type or error_type
+                        if _status_code is None:
+                            import re as _re
+
+                            _m = _re.search(r"HTTP (\d{3})", str(exc))
+                            if _m:
+                                _status_code = int(_m.group(1))
+
+                        self._emit_api_stats_safe(
+                            {
+                                "phase": "request_error",
+                                "requestId": current_request_id or generate_request_id(),
+                                "apiProfileId": stats_api_profile_id,
+                                "source": "translation_run",
+                                "origin": "pipeline_v2_runner",
+                                "runId": run_id or None,
+                                "pipelineId": pipeline_id or None,
+                                "endpointId": current_endpoint_id,
+                                "endpointLabel": current_endpoint_label,
+                                "model": current_model,
+                                "method": "POST",
+                                "url": exc.url or current_request_url,
+                                "statusCode": _status_code,
+                                "durationMs": _duration_ms,
+                                "errorType": _provider_error_type,
+                                "errorMessage": str(exc),
+                                "requestPayload": current_request_payload,
+                                "requestHeaders": current_request_headers,
+                                "meta": {
+                                    **common_event_meta,
+                                    **current_request_meta,
+                                    "attempt": attempt_no,
+                                },
+                            }
+                        )
+
+                    attempt += 1
                     tracker.note_retry(_status_code)
                     emit_retry(idx + 1, attempt, error_type)
+                    if attempt <= max_retries:
+                        self._emit_api_stats_safe(
+                            {
+                                "phase": "request_retry",
+                                "requestId": current_request_id or generate_request_id(),
+                                "apiProfileId": stats_api_profile_id,
+                                "source": "translation_run",
+                                "origin": "pipeline_v2_runner",
+                                "runId": run_id or None,
+                                "pipelineId": pipeline_id or None,
+                                "endpointId": current_endpoint_id,
+                                "endpointLabel": current_endpoint_label,
+                                "model": current_model,
+                                "method": "POST",
+                                "url": current_request_url,
+                                "statusCode": _status_code,
+                                "durationMs": _duration_ms,
+                                "retryAttempt": attempt,
+                                "errorType": _provider_error_type,
+                                "errorMessage": last_error,
+                                "meta": {
+                                    **common_event_meta,
+                                    **current_request_meta,
+                                    "attempt": attempt_no,
+                                },
+                            }
+                        )
                     if attempt > max_retries:
                         return fallback_to_source(
                             last_error,
@@ -1360,7 +1633,6 @@ class PipelineRunner:
                 "unknown_error",
                 warning_message="fallback_to_source_unknown_error",
             )
-
         try:
             raw_concurrency = settings.get("concurrency")
             if raw_concurrency is None or raw_concurrency == "":
@@ -1655,6 +1927,9 @@ class PipelineRunner:
                 model_name=model_name,
                 glossary_path=glossary_path,
                 concurrency=concurrency,
+                engine_mode="v2",
+                chunk_type=chunk_type,
+                pipeline_id=pipeline_id,
             )
             if hasattr(translation_cache, 'cache_path') and translation_cache.cache_path:
                 emit_cache_path(translation_cache.cache_path)

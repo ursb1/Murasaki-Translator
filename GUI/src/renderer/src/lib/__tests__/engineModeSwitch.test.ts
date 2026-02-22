@@ -104,10 +104,19 @@ describe("applyFileEngineMode", () => {
 });
 
 describe("resolveQueueItemPipelineId", () => {
-  it("uses file-level pipeline id when provided", () => {
+  it("uses global pipeline id when file follows global defaults", () => {
     expect(
       resolveQueueItemPipelineId(
         { config: { useGlobalDefaults: true, v2PipelineId: "file-pipe" } },
+        "global-pipe",
+      ),
+    ).toBe("global-pipe");
+  });
+
+  it("uses file-level pipeline id when global defaults are disabled", () => {
+    expect(
+      resolveQueueItemPipelineId(
+        { config: { useGlobalDefaults: false, v2PipelineId: "file-pipe" } },
         "global-pipe",
       ),
     ).toBe("file-pipe");
@@ -125,10 +134,16 @@ describe("resolveQueueItemPipelineId", () => {
   it("trims both file-level and global pipeline ids", () => {
     expect(
       resolveQueueItemPipelineId(
-        { config: { v2PipelineId: "  file-pipe  " } },
+        { config: { useGlobalDefaults: false, v2PipelineId: "  file-pipe  " } },
         "  global-pipe  ",
       ),
     ).toBe("file-pipe");
+    expect(
+      resolveQueueItemPipelineId(
+        { config: { useGlobalDefaults: true, v2PipelineId: "  file-pipe  " } },
+        "  global-pipe  ",
+      ),
+    ).toBe("global-pipe");
     expect(resolveQueueItemPipelineId(undefined, "  global-pipe  ")).toBe(
       "global-pipe",
     );

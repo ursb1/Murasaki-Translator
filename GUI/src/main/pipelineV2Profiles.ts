@@ -1,4 +1,5 @@
 import { app, ipcMain } from "electron";
+import { randomUUID } from "crypto";
 
 import { join, basename, extname } from "path";
 
@@ -33,6 +34,7 @@ import {
   safeLoadYaml,
   normalizeChunkType,
 } from "./pipelineV2Shared";
+import type { ApiStatsEventInput } from "./apiStatsStore";
 
 const PROFILE_KINDS = [
   "api",
@@ -148,6 +150,7 @@ type ProfileDeps = {
   getMiddlewarePath: () => string;
 
   getProfilesDir?: () => string;
+  onApiStatsEvent?: (event: ApiStatsEventInput) => void | Promise<void>;
 };
 
 import { URL } from "url";
@@ -238,6 +241,36 @@ const requestWithTimeout = async (
   }
 };
 
+type ApiStatsRecorder = ((event: ApiStatsEventInput) => void | Promise<void>) | undefined;
+
+type ApiStatsTraceContext = {
+  record?: ApiStatsRecorder;
+  apiProfileId?: string;
+  source: string;
+  origin: string;
+};
+
+const emitApiStatsSafe = async (
+  recorder: ApiStatsRecorder,
+  event: ApiStatsEventInput,
+) => {
+  if (!recorder) return;
+  try {
+    await recorder(event);
+  } catch {
+    // ignore recorder errors
+  }
+};
+
+const buildUrlPath = (url: string) => {
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname || "/";
+  } catch {
+    return undefined;
+  }
+};
+
 const testApiConnection = async (
   baseUrl: string,
 
@@ -245,6 +278,7 @@ const testApiConnection = async (
 
   timeoutMs = 60000,
   model?: string,
+  trace?: ApiStatsTraceContext,
 ) => {
   const url = buildChatCompletionsUrl(baseUrl);
 
@@ -258,6 +292,28 @@ const testApiConnection = async (
 
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
+  const requestId = randomUUID();
+  const requestPayload = {
+    model: resolvedModel,
+    messages: [{ role: "user", content: "???" }],
+    temperature: 0,
+    max_tokens: 8,
+  };
+  await emitApiStatsSafe(trace?.record, {
+    phase: "request_start",
+    requestId,
+    ts: new Date().toISOString(),
+    apiProfileId: trace?.apiProfileId,
+    source: trace?.source,
+    origin: trace?.origin,
+    method: "POST",
+    url,
+    path: buildUrlPath(url),
+    model: resolvedModel,
+    requestPayload,
+    requestHeaders: headers,
+  });
+
   const start = Date.now();
 
   try {
@@ -266,12 +322,7 @@ const testApiConnection = async (
       {
         method: "POST",
         headers,
-        body: JSON.stringify({
-          model: resolvedModel,
-          messages: [{ role: "user", content: "你好" }],
-          temperature: 0,
-          max_tokens: 8,
-        }),
+        body: JSON.stringify(requestPayload),
       },
 
       Math.max(1000, timeoutMs),
@@ -287,13 +338,38 @@ const testApiConnection = async (
       data = text;
     }
 
+    const latencyMs = Date.now() - start;
+    await emitApiStatsSafe(trace?.record, {
+      phase: "request_end",
+      requestId,
+      ts: new Date().toISOString(),
+      apiProfileId: trace?.apiProfileId,
+      source: trace?.source,
+      origin: trace?.origin,
+      method: "POST",
+      url,
+      path: buildUrlPath(url),
+      model: resolvedModel,
+      statusCode: res.status,
+      durationMs: latencyMs,
+      responsePayload: data,
+      requestHeaders: headers,
+      errorType: res.ok ? undefined : "http_error",
+      errorMessage:
+        res.ok
+          ? undefined
+          : String(
+            data?.error?.message || data?.detail || data || "request_failed",
+          ),
+    });
+
     if (!res.ok) {
       return {
         ok: false,
 
         status: res.status,
 
-        latencyMs: Date.now() - start,
+        latencyMs,
 
         url,
 
@@ -307,15 +383,36 @@ const testApiConnection = async (
 
       status: res.status,
 
-      latencyMs: Date.now() - start,
+      latencyMs,
 
       url,
     };
   } catch (error: any) {
+    const latencyMs = Date.now() - start;
+    await emitApiStatsSafe(trace?.record, {
+      phase: "request_error",
+      requestId,
+      ts: new Date().toISOString(),
+      apiProfileId: trace?.apiProfileId,
+      source: trace?.source,
+      origin: trace?.origin,
+      method: "POST",
+      url,
+      path: buildUrlPath(url),
+      model: resolvedModel,
+      durationMs: latencyMs,
+      errorType: error?.name === "AbortError" ? "timeout" : "request_exception",
+      errorMessage:
+        error?.name === "AbortError"
+          ? "timeout"
+          : error?.message || "request_failed",
+      requestHeaders: headers,
+      requestPayload,
+    });
     return {
       ok: false,
 
-      latencyMs: Date.now() - start,
+      latencyMs,
 
       url,
 
@@ -333,6 +430,7 @@ const listApiModels = async (
   apiKey?: string,
 
   timeoutMs = 60000,
+  trace?: ApiStatsTraceContext,
 ) => {
   const url = buildModelsUrl(baseUrl);
 
@@ -343,6 +441,20 @@ const listApiModels = async (
   };
 
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  const requestId = randomUUID();
+  await emitApiStatsSafe(trace?.record, {
+    phase: "request_start",
+    requestId,
+    ts: new Date().toISOString(),
+    apiProfileId: trace?.apiProfileId,
+    source: trace?.source,
+    origin: trace?.origin,
+    method: "GET",
+    url,
+    path: buildUrlPath(url),
+    requestHeaders: headers,
+  });
+  const start = Date.now();
 
   try {
     const res = await requestWithTimeout(
@@ -362,12 +474,36 @@ const listApiModels = async (
     } catch {
       data = text;
     }
+    const latencyMs = Date.now() - start;
+    await emitApiStatsSafe(trace?.record, {
+      phase: "request_end",
+      requestId,
+      ts: new Date().toISOString(),
+      apiProfileId: trace?.apiProfileId,
+      source: trace?.source,
+      origin: trace?.origin,
+      method: "GET",
+      url,
+      path: buildUrlPath(url),
+      statusCode: res.status,
+      durationMs: latencyMs,
+      responsePayload: data,
+      requestHeaders: headers,
+      errorType: res.ok ? undefined : "http_error",
+      errorMessage:
+        res.ok
+          ? undefined
+          : String(
+              data?.error?.message || data?.detail || data || "request_failed",
+            ),
+    });
 
     if (!res.ok) {
       return {
         ok: false,
 
         status: res.status,
+        latencyMs,
 
         url,
 
@@ -396,10 +532,30 @@ const listApiModels = async (
       models,
     };
   } catch (error: any) {
+    const latencyMs = Date.now() - start;
+    await emitApiStatsSafe(trace?.record, {
+      phase: "request_error",
+      requestId,
+      ts: new Date().toISOString(),
+      apiProfileId: trace?.apiProfileId,
+      source: trace?.source,
+      origin: trace?.origin,
+      method: "GET",
+      url,
+      path: buildUrlPath(url),
+      durationMs: latencyMs,
+      errorType: error?.name === "AbortError" ? "timeout" : "request_exception",
+      errorMessage:
+        error?.name === "AbortError"
+          ? "timeout"
+          : error?.message || "request_failed",
+      requestHeaders: headers,
+    });
     return {
       ok: false,
 
       url,
+      latencyMs,
 
       message:
         error?.name === "AbortError"
@@ -444,10 +600,10 @@ const requestJson = async (
   if (!res.ok) {
     const detail = data?.detail || data || "request_failed";
 
-    return { ok: false, error: detail };
+    return { ok: false, error: detail, status: res.status, data };
   }
 
-  return { ok: true, data };
+  return { ok: true, data, status: res.status };
 };
 
 type LocalProfileRef = {
@@ -963,6 +1119,7 @@ const testApiConcurrency = async (
   maxConcurrency = 128,
 
   model?: string,
+  trace?: ApiStatsTraceContext,
 ) => {
   const url = buildChatCompletionsUrl(baseUrl);
 
@@ -979,18 +1136,94 @@ const testApiConcurrency = async (
   const body = JSON.stringify(
     buildConcurrencyTestPayload(resolvedModel || "test"),
   );
+  const requestPayload = buildConcurrencyTestPayload(resolvedModel || "test");
 
-  const runBatchOnce = async (count: number) => {
+  const runBatchOnce = async (count: number, batchAttempt: number) => {
     const start = Date.now();
-    const tasks = Array.from({ length: count }, () =>
-      requestWithTimeout(
+    const tasks = Array.from({ length: count }, async (_, index) => {
+      const requestId = randomUUID();
+      await emitApiStatsSafe(trace?.record, {
+        phase: "request_start",
+        requestId,
+        ts: new Date().toISOString(),
+        apiProfileId: trace?.apiProfileId,
+        source: trace?.source,
+        origin: trace?.origin,
+        method: "POST",
         url,
-        { method: "POST", headers, body },
-        Math.max(1000, timeoutMs),
-      )
-        .then((res) => res.status)
-        .catch(() => 0),
-    );
+        path: buildUrlPath(url),
+        model: resolvedModel || "test",
+        requestPayload,
+        requestHeaders: headers,
+        meta: {
+          batchSize: count,
+          batchAttempt,
+          batchIndex: index,
+        },
+      });
+      const requestStart = Date.now();
+      try {
+        const res = await requestWithTimeout(
+          url,
+          { method: "POST", headers, body },
+          Math.max(1000, timeoutMs),
+        );
+        const durationMs = Date.now() - requestStart;
+        await emitApiStatsSafe(trace?.record, {
+          phase: "request_end",
+          requestId,
+          ts: new Date().toISOString(),
+          apiProfileId: trace?.apiProfileId,
+          source: trace?.source,
+          origin: trace?.origin,
+          method: "POST",
+          url,
+          path: buildUrlPath(url),
+          model: resolvedModel || "test",
+          statusCode: res.status,
+          durationMs,
+          requestHeaders: headers,
+          requestPayload,
+          errorType: res.ok ? undefined : "http_error",
+          errorMessage: res.ok ? undefined : `http_${res.status}`,
+          meta: {
+            batchSize: count,
+            batchAttempt,
+            batchIndex: index,
+          },
+        });
+        return res.status;
+      } catch (error: any) {
+        const durationMs = Date.now() - requestStart;
+        await emitApiStatsSafe(trace?.record, {
+          phase: "request_error",
+          requestId,
+          ts: new Date().toISOString(),
+          apiProfileId: trace?.apiProfileId,
+          source: trace?.source,
+          origin: trace?.origin,
+          method: "POST",
+          url,
+          path: buildUrlPath(url),
+          model: resolvedModel || "test",
+          durationMs,
+          requestHeaders: headers,
+          requestPayload,
+          errorType:
+            error?.name === "AbortError" ? "timeout" : "request_exception",
+          errorMessage:
+            error?.name === "AbortError"
+              ? "timeout"
+              : error?.message || "request_failed",
+          meta: {
+            batchSize: count,
+            batchAttempt,
+            batchIndex: index,
+          },
+        });
+        return 0;
+      }
+    });
     const statuses = await Promise.all(tasks);
     return {
       statuses,
@@ -999,13 +1232,13 @@ const testApiConcurrency = async (
   };
 
   const runBatch = async (count: number) => {
-    const firstRun = await runBatchOnce(count);
+    const firstRun = await runBatchOnce(count, 1);
     let mergedStatuses = firstRun.statuses;
     let latencyMs = firstRun.latencyMs;
     let assessment = assessConcurrencyBatch(mergedStatuses);
 
     if (!assessment.ok && !assessment.hardFailure) {
-      const retryRun = await runBatchOnce(count);
+      const retryRun = await runBatchOnce(count, 2);
       mergedStatuses = [...firstRun.statuses, ...retryRun.statuses];
       latencyMs = Math.round((firstRun.latencyMs + retryRun.latencyMs) / 2);
       assessment = assessConcurrencyBatch(mergedStatuses);
@@ -1480,6 +1713,7 @@ export const registerPipelineV2Profiles = (deps: ProfileDeps) => {
         apiKey?: string;
         timeoutMs?: number;
         model?: string;
+        apiProfileId?: string;
       },
     ) =>
       testApiConnection(
@@ -1489,6 +1723,12 @@ export const registerPipelineV2Profiles = (deps: ProfileDeps) => {
 
         payload?.timeoutMs,
         payload?.model,
+        {
+          record: deps.onApiStatsEvent,
+          apiProfileId: payload?.apiProfileId,
+          source: "api_test",
+          origin: "pipeline_v2_profiles",
+        },
       ),
   );
 
@@ -1498,7 +1738,12 @@ export const registerPipelineV2Profiles = (deps: ProfileDeps) => {
     async (
       _event,
 
-      payload: { baseUrl: string; apiKey?: string; timeoutMs?: number },
+      payload: {
+        baseUrl: string;
+        apiKey?: string;
+        timeoutMs?: number;
+        apiProfileId?: string;
+      },
     ) =>
       listApiModels(
         payload?.baseUrl || "",
@@ -1506,6 +1751,12 @@ export const registerPipelineV2Profiles = (deps: ProfileDeps) => {
         payload?.apiKey,
 
         payload?.timeoutMs,
+        {
+          record: deps.onApiStatsEvent,
+          apiProfileId: payload?.apiProfileId,
+          source: "api_models",
+          origin: "pipeline_v2_profiles",
+        },
       ),
   );
 
@@ -1525,6 +1776,7 @@ export const registerPipelineV2Profiles = (deps: ProfileDeps) => {
         maxConcurrency?: number;
 
         model?: string;
+        apiProfileId?: string;
       },
     ) =>
       testApiConcurrency(
@@ -1537,6 +1789,12 @@ export const registerPipelineV2Profiles = (deps: ProfileDeps) => {
         payload?.maxConcurrency,
 
         payload?.model,
+        {
+          record: deps.onApiStatsEvent,
+          apiProfileId: payload?.apiProfileId,
+          source: "api_concurrency_test",
+          origin: "pipeline_v2_profiles",
+        },
       ),
   );
 
@@ -1547,27 +1805,93 @@ export const registerPipelineV2Profiles = (deps: ProfileDeps) => {
       payload: {
         text: string;
         pipeline: Record<string, any>;
+        apiProfileId?: string;
       },
     ) => {
       const baseUrl = await ensureServer();
       if (!baseUrl) {
         return { ok: false, error: "Server not ready" };
       }
+      const url = `${baseUrl}/sandbox`;
+      const requestId = randomUUID();
+      const apiProfileId =
+        String(payload?.apiProfileId || payload?.pipeline?.provider || "").trim() ||
+        undefined;
+      const requestPayload = {
+        text: payload?.text,
+        pipeline: payload?.pipeline,
+      };
+      const requestHeaders = {
+        "Content-Type": "application/json",
+      };
+      await emitApiStatsSafe(deps.onApiStatsEvent, {
+        phase: "request_start",
+        requestId,
+        ts: new Date().toISOString(),
+        apiProfileId,
+        source: "sandbox_test",
+        origin: "pipeline_v2_profiles",
+        method: "POST",
+        url,
+        path: buildUrlPath(url),
+        requestPayload,
+        requestHeaders,
+      });
+      const start = Date.now();
       try {
         const res = await requestJson(
           baseUrl,
           "/sandbox",
           {
             method: "POST",
-            body: JSON.stringify(payload),
+            body: JSON.stringify(requestPayload),
           },
           60000,
         );
+        const durationMs = Date.now() - start;
+        await emitApiStatsSafe(deps.onApiStatsEvent, {
+          phase: "request_end",
+          requestId,
+          ts: new Date().toISOString(),
+          apiProfileId,
+          source: "sandbox_test",
+          origin: "pipeline_v2_profiles",
+          method: "POST",
+          url,
+          path: buildUrlPath(url),
+          statusCode: Number(res?.status || 0) || undefined,
+          durationMs,
+          errorType: res.ok ? undefined : "http_error",
+          errorMessage: res.ok ? undefined : String(res?.error || "sandbox_request_failed"),
+          requestPayload,
+          responsePayload: res?.data,
+          requestHeaders,
+        });
         if (res.ok) {
           return { ok: true, data: res.data };
         }
         return { ok: false, error: res.error };
       } catch (error: any) {
+        const durationMs = Date.now() - start;
+        await emitApiStatsSafe(deps.onApiStatsEvent, {
+          phase: "request_error",
+          requestId,
+          ts: new Date().toISOString(),
+          apiProfileId,
+          source: "sandbox_test",
+          origin: "pipeline_v2_profiles",
+          method: "POST",
+          url,
+          path: buildUrlPath(url),
+          durationMs,
+          errorType: error?.name === "AbortError" ? "timeout" : "request_exception",
+          errorMessage:
+            error?.name === "AbortError"
+              ? "timeout"
+              : error?.message || "sandbox_request_failed",
+          requestPayload,
+          requestHeaders,
+        });
         return { ok: false, error: error?.message || "sandbox_request_failed" };
       }
     },

@@ -2256,7 +2256,12 @@ def main():
         total_time = time.time() - start_time
         if translation_cache:
             m_name = os.path.basename(args.model) if args.model else "Unknown"
-            translation_cache.save(model_name=m_name, glossary_path=args.glossary or "", concurrency=args.concurrency)
+            translation_cache.save(
+                model_name=m_name,
+                glossary_path=args.glossary or "",
+                concurrency=args.concurrency,
+                engine_mode="v1",
+            )
 
         # 发送最终 JSON 统计
         final_stats = {
@@ -2285,7 +2290,12 @@ def main():
                 m_name = os.path.basename(args.model) if args.model else "Unknown"
                 # 忽略第二次 Ctrl+C，确保缓存写入完成
                 try:
-                    if translation_cache.save(model_name=m_name, glossary_path=args.glossary or "", concurrency=args.concurrency):
+                    if translation_cache.save(
+                        model_name=m_name,
+                        glossary_path=args.glossary or "",
+                        concurrency=args.concurrency,
+                        engine_mode="v1",
+                    ):
                         print(f"[Cache] Saved {len(translation_cache.blocks)} blocks before interrupt")
                     else:
                         print("[Cache] Warning: Failed to save cache on interrupt")

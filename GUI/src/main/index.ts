@@ -31,6 +31,7 @@ import {
 } from "./pipelineV2Profiles";
 import { stopPipelineV2Server } from "./pipelineV2Server";
 import { registerPipelineV2Runner, stopPipelineV2Runner } from "./pipelineV2Runner";
+import { createApiStatsService } from "./apiStatsStore";
 
 let pythonProcess: ChildProcess | null = null;
 let translationStopRequested = false;
@@ -496,15 +497,25 @@ app.whenReady().then(() => {
     }
     return profilesDir;
   };
+  const apiStatsService = createApiStatsService({
+    getProfilesDir: ensureProfilesDir,
+  });
+  apiStatsService.registerIpc();
   registerPipelineV2Profiles({
     getPythonPath,
     getMiddlewarePath,
     getProfilesDir: ensureProfilesDir,
+    onApiStatsEvent: (event) => {
+      void apiStatsService.appendEvent(event);
+    },
   });
   registerPipelineV2Runner({
     getPythonPath,
     getMiddlewarePath,
     getMainWindow: () => mainWindow,
+    recordApiStatsEvent: (event) => {
+      void apiStatsService.appendEvent(event);
+    },
     sendLog: ({ runId, message, level }) => {
       if (!mainWindow) return;
       mainWindow.webContents.send("pipelinev2-log", {

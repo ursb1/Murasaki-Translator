@@ -39,3 +39,35 @@ describe("pipelineV2Runner bundle args", () => {
     ]);
   });
 });
+
+describe("pipelineV2Runner api stats event parser", () => {
+  it("parses valid prefixed json object line", () => {
+    const event = __testOnly.parseApiStatsEventLine(
+      'JSON_API_STATS_EVENT:{"phase":"request_end","requestId":"req_1","statusCode":200}',
+    );
+    expect(event).toEqual({
+      phase: "request_end",
+      requestId: "req_1",
+      statusCode: 200,
+    });
+  });
+
+  it("returns null for non-prefixed line", () => {
+    const event = __testOnly.parseApiStatsEventLine(
+      '{"phase":"request_end","requestId":"req_1"}',
+    );
+    expect(event).toBeNull();
+  });
+
+  it("returns null for invalid json or non-object payload", () => {
+    expect(
+      __testOnly.parseApiStatsEventLine("JSON_API_STATS_EVENT:{invalid-json"),
+    ).toBeNull();
+    expect(
+      __testOnly.parseApiStatsEventLine("JSON_API_STATS_EVENT:[1,2,3]"),
+    ).toBeNull();
+    expect(
+      __testOnly.parseApiStatsEventLine('JSON_API_STATS_EVENT:"string"'),
+    ).toBeNull();
+  });
+});

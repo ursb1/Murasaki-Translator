@@ -34,6 +34,7 @@ def main() -> int:
     parser.add_argument("--cache-dir", help="Custom directory to store cache files")
     parser.add_argument("--no-cache", action="store_true", help="Disable cache saving")
     parser.add_argument("--stop-flag", help="Stop request marker file path")
+    parser.add_argument("--run-id", help="Run identifier for tracing and stats")
     parser.add_argument("--source-lang", default="ja", help="Source language for QC (e.g. ja)")
     parser.add_argument("--enable-quality", action="store_true", help="Enable V1 quality checks")
     parser.add_argument("--disable-quality", action="store_true", help="Disable V1 quality checks")
@@ -89,7 +90,7 @@ def main() -> int:
         print(f"[FlowV2] LinePolicy: {pipeline_profile.get('line_policy')}")
         print(f"[FlowV2] ChunkPolicy: {pipeline_profile.get('chunk_policy')}")
 
-        runner = PipelineRunner(store, pipeline_profile)
+        runner = PipelineRunner(store, pipeline_profile, run_id=args.run_id)
         output_path = runner.run(
             args.file,
             output_path=args.output,

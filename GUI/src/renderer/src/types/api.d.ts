@@ -269,6 +269,111 @@ export interface RemoteHfDownloadStatus {
   error?: string;
 }
 
+export interface ApiStatsResult<T> {
+  ok: boolean;
+  data?: T;
+  error?: string;
+}
+
+export interface ApiStatsOverview {
+  apiProfileId: string;
+  range?: { fromTs?: string; toTs?: string };
+  totalEvents: number;
+  totalRequests: number;
+  successRequests: number;
+  failedRequests: number;
+  inflightRequests: number;
+  successRate: number;
+  totalRetries: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  avgLatencyMs: number;
+  p50LatencyMs: number;
+  p95LatencyMs: number;
+  totalDurationMs: number;
+  requestsPerMinuteAvg: number;
+  peakRequestsPerMinute: number;
+  statusCodeCounts: Record<string, number>;
+  sourceCounts: Record<string, number>;
+  errorTypeCounts: Record<string, number>;
+  byHour: Array<{ hour: number; count: number }>;
+  latestRequestAt?: string;
+}
+
+export interface ApiStatsTrendPoint {
+  bucketStart: string;
+  value: number;
+  requests: number;
+  errors: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+export interface ApiStatsTrend {
+  apiProfileId: string;
+  range?: { fromTs?: string; toTs?: string };
+  metric: "requests" | "latency" | "input_tokens" | "output_tokens";
+  interval: "minute" | "hour" | "day";
+  points: ApiStatsTrendPoint[];
+}
+
+export interface ApiStatsBreakdownItem {
+  key: string;
+  count: number;
+  ratio: number;
+}
+
+export interface ApiStatsBreakdown {
+  apiProfileId: string;
+  range?: { fromTs?: string; toTs?: string };
+  dimension: "status_code" | "source" | "error_type" | "model" | "hour";
+  items: ApiStatsBreakdownItem[];
+}
+
+export interface ApiStatsRecord {
+  requestId: string;
+  apiProfileId: string;
+  startedAt: string;
+  endedAt?: string;
+  phaseFinal: "request_end" | "request_error" | "inflight";
+  source: string;
+  origin: string;
+  runId?: string;
+  pipelineId?: string;
+  endpointId?: string;
+  endpointLabel?: string;
+  model?: string;
+  method?: string;
+  path?: string;
+  url?: string;
+  statusCode?: number;
+  durationMs?: number;
+  inputTokens: number;
+  outputTokens: number;
+  retryCount: number;
+  errorType?: string;
+  errorMessage?: string;
+  requestPayload?: unknown;
+  responsePayload?: unknown;
+  requestHeaders?: Record<string, string>;
+  responseHeaders?: Record<string, string>;
+}
+
+export interface ApiStatsRecords {
+  apiProfileId: string;
+  range?: { fromTs?: string; toTs?: string };
+  page: number;
+  pageSize: number;
+  total: number;
+  items: ApiStatsRecord[];
+}
+
+export interface ApiStatsClearResult {
+  apiProfileId: string;
+  deleted: number;
+  kept: number;
+}
+
 export interface ElectronAPI {
   // Model Management
   getModels: () => Promise<string[]>;
@@ -378,6 +483,7 @@ export interface ElectronAPI {
     apiKey?: string;
     timeoutMs?: number;
     model?: string;
+    apiProfileId?: string;
   }) => Promise<{
     ok: boolean;
     status?: number;
@@ -390,6 +496,7 @@ export interface ElectronAPI {
     baseUrl: string;
     apiKey?: string;
     timeoutMs?: number;
+    apiProfileId?: string;
   }) => Promise<{
     ok: boolean;
     status?: number;
@@ -403,6 +510,7 @@ export interface ElectronAPI {
     timeoutMs?: number;
     maxConcurrency?: number;
     model?: string;
+    apiProfileId?: string;
   }) => Promise<{
     ok: boolean;
     maxConcurrency?: number;
@@ -411,9 +519,43 @@ export interface ElectronAPI {
     statusCounts?: Record<string, number>;
     latencyMs?: number;
   }>;
+  apiStatsOverview: (payload: {
+    apiProfileId?: string;
+    fromTs?: string;
+    toTs?: string;
+  }) => Promise<ApiStatsResult<ApiStatsOverview>>;
+  apiStatsTrend: (payload: {
+    apiProfileId?: string;
+    metric?: "requests" | "latency" | "input_tokens" | "output_tokens";
+    interval?: "minute" | "hour" | "day";
+    fromTs?: string;
+    toTs?: string;
+  }) => Promise<ApiStatsResult<ApiStatsTrend>>;
+  apiStatsBreakdown: (payload: {
+    apiProfileId?: string;
+    dimension?: "status_code" | "source" | "error_type" | "model" | "hour";
+    fromTs?: string;
+    toTs?: string;
+  }) => Promise<ApiStatsResult<ApiStatsBreakdown>>;
+  apiStatsRecords: (payload: {
+    apiProfileId?: string;
+    fromTs?: string;
+    toTs?: string;
+    page?: number;
+    pageSize?: number;
+    statusCode?: number;
+    source?: string;
+    phase?: "request_end" | "request_error" | "inflight";
+    query?: string;
+  }) => Promise<ApiStatsResult<ApiStatsRecords>>;
+  apiStatsClear: (payload: {
+    apiProfileId?: string;
+    beforeTs?: string;
+  }) => Promise<ApiStatsResult<ApiStatsClearResult>>;
   pipelineV2SandboxTest: (payload: {
     text: string;
     pipeline: Record<string, any>;
+    apiProfileId?: string;
   }) => Promise<{
     ok: boolean;
     data?: {

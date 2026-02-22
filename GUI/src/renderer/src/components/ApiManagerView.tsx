@@ -17,6 +17,7 @@ import {
   Trash2,
   Plus,
   Activity,
+  BarChart3,
   Sparkles,
   CheckCircle2,
   AlertTriangle,
@@ -78,6 +79,7 @@ import {
 import { KVEditor } from "./api-manager/shared/KVEditor";
 import { FormSection } from "./api-manager/shared/FormSection";
 import { TemplateSelector } from "./api-manager/shared/TemplateSelector";
+import { ApiStatsModal } from "./api-manager/ApiStatsModal";
 import { AlertModal } from "./ui/AlertModal";
 import { useAlertModal } from "../hooks/useAlertModal";
 import deepseekLogo from "../assets/brands/deepseek.ico";
@@ -1859,6 +1861,11 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
   const [modelListLoading, setModelListLoading] = useState(false);
   const [modelListError, setModelListError] = useState("");
   const [modelListRequested, setModelListRequested] = useState(false);
+  const [apiStatsOpen, setApiStatsOpen] = useState(false);
+  const [apiStatsTarget, setApiStatsTarget] = useState<{
+    id: string;
+    name?: string;
+  } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const yamlUpdateTimer = useRef<number | null>(null);
   const pendingYamlPayload = useRef<any | null>(null);
@@ -2085,6 +2092,19 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
     if (!activePreset) return true;
     return Boolean(activePreset.supportsModelList);
   }, [apiForm.apiType, activePreset]);
+  const activeApiStatsProfileId = useMemo(() => {
+    const selected = String(selectedId || "").trim();
+    if (selected) return selected;
+    const fromForm = String(apiForm.id || "").trim();
+    return fromForm;
+  }, [selectedId, apiForm.id]);
+  const resolvedApiStatsProfileId = apiStatsTarget?.id || activeApiStatsProfileId;
+  const handleApiStatsOpenChange = (nextOpen: boolean) => {
+    setApiStatsOpen(nextOpen);
+    if (!nextOpen) {
+      setApiStatsTarget(null);
+    }
+  };
   const [pipelineComposer, setPipelineComposer] =
     useState<PipelineComposerState>(DEFAULT_PIPELINE_COMPOSER);
   const [promptForm, setPromptForm] =
@@ -3692,6 +3712,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
         apiKey,
         timeoutMs,
         model: apiForm.model.trim(),
+        apiProfileId: activeApiStatsProfileId || undefined,
       });
       if (requestId !== apiTestSeq.current) return;
       if (result?.ok) {
@@ -3760,6 +3781,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
         timeoutMs,
         maxConcurrency,
         model: apiForm.model.trim(),
+        apiProfileId: activeApiStatsProfileId || undefined,
       });
       if (requestId !== apiConcurrencySeq.current) return;
       if (result?.ok) {
@@ -3826,6 +3848,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
         baseUrl,
         apiKey,
         timeoutMs,
+        apiProfileId: activeApiStatsProfileId || undefined,
       });
       if (requestId !== modelListSeq.current) return;
       if (result?.ok && Array.isArray(result.models)) {
@@ -6022,32 +6045,34 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                     )}
                   </div>
                 </div>
-                <Button
-                  variant={
-                    apiTest.status === "success" ? "outline" : "secondary"
-                  }
-                  size="sm"
-                  className={cn(
-                    "gap-2 min-w-[120px] justify-center ml-auto",
-                    apiTest.status === "success" &&
-                      "border-green-500/50 text-green-600 dark:text-green-400 bg-green-500/10",
-                    apiTest.status === "error" &&
-                      "border-red-500/50 text-red-600 dark:text-red-400 bg-red-500/10",
-                  )}
-                  onClick={handleTestApi}
-                  disabled={apiTest.status === "testing"}
-                >
-                  {apiTest.status === "testing" ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : apiTest.status === "success" ? (
-                    <CheckCircle2 className="h-4 w-4" />
-                  ) : (
-                    <Zap className="h-4 w-4" />
-                  )}
-                  {apiTest.status === "testing"
-                    ? texts.testConnectionRunning
-                    : texts.testConnection}
-                </Button>
+                <div className="ml-auto flex items-center gap-2">
+                  <Button
+                    variant={
+                      apiTest.status === "success" ? "outline" : "secondary"
+                    }
+                    size="sm"
+                    className={cn(
+                      "gap-2 min-w-[120px] justify-center",
+                      apiTest.status === "success" &&
+                        "border-green-500/50 text-green-600 dark:text-green-400 bg-green-500/10",
+                      apiTest.status === "error" &&
+                        "border-red-500/50 text-red-600 dark:text-red-400 bg-red-500/10",
+                    )}
+                    onClick={handleTestApi}
+                    disabled={apiTest.status === "testing"}
+                  >
+                    {apiTest.status === "testing" ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : apiTest.status === "success" ? (
+                      <CheckCircle2 className="h-4 w-4" />
+                    ) : (
+                      <Zap className="h-4 w-4" />
+                    )}
+                    {apiTest.status === "testing"
+                      ? texts.testConnectionRunning
+                      : texts.testConnection}
+                  </Button>
+                </div>
               </div>
             </div>
             <div className="rounded-xl border border-border/60 bg-gradient-to-br from-muted/10 via-background/80 to-muted/5 p-4 shadow-sm">
@@ -7870,6 +7895,8 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
       const res = await window.api?.pipelineV2SandboxTest?.({
         text: sandboxText,
         pipeline: pipelineConfig,
+        apiProfileId:
+          String(pipelineComposer.provider || "").trim() || undefined,
       });
 
       if (res?.ok && res.data) {
@@ -9269,12 +9296,18 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                     key={id}
                     onClick={() => handleSelectProfile(id, "api")}
                     className={cn(
-                      "group relative flex flex-col justify-between p-6 rounded-2xl border cursor-pointer transition-all duration-300 ease-out select-none min-h-[160px]",
+                      "group relative flex flex-col justify-between p-6 rounded-2xl border cursor-pointer transition-all duration-300 ease-out select-none min-h-[168px] overflow-hidden",
                       isSelected
-                        ? "bg-muted/40 border-border/70 shadow-[0_0_0_1px_rgba(0,0,0,0.04)] dark:bg-primary/15 dark:border-primary/40"
-                        : "bg-card border-border/60 hover:border-border/80 hover:shadow-lg hover:-translate-y-1",
+                        ? "bg-gradient-to-br from-muted/55 via-background to-muted/20 border-border/70 shadow-[0_0_0_1px_rgba(0,0,0,0.04)] dark:from-primary/20 dark:via-background dark:to-primary/10 dark:border-primary/40"
+                        : "bg-gradient-to-br from-card via-card to-muted/20 border-border/60 hover:border-border/80 hover:shadow-lg hover:-translate-y-1",
                     )}
                   >
+                    <div
+                      className={cn(
+                        "pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-primary/60 via-cyan-400/40 to-emerald-400/40 transition-opacity duration-300",
+                        isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-70",
+                      )}
+                    />
                     {/* Selected Badge */}
                     <div
                       className={cn(
@@ -9307,11 +9340,26 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
                     </div>
 
                     {/* Footer / Action */}
-                    <div className="pt-4 mt-2 flex items-end justify-end border-t border-border/30">
-                      <div className="flex items-center gap-1 text-xs font-medium text-muted-foreground opacity-0 group-hover:opacity-100 transition-all duration-300 transform translate-x-2 group-hover:translate-x-0 dark:text-primary">
-                        <span>{texts.profileCardAction}</span>
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      </div>
+                    <div className="pt-4 mt-3 flex items-center justify-between border-t border-border/40">
+                      <span className="text-[11px] text-muted-foreground/80 font-medium">
+                        {texts.profileCardAction}
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 rounded-full border border-border/40 bg-background/70 px-3 gap-1.5 text-[11px] text-muted-foreground hover:text-primary hover:border-primary/40 hover:bg-primary/10"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setApiStatsTarget({
+                            id,
+                            name,
+                          });
+                          setApiStatsOpen(true);
+                        }}
+                      >
+                        <BarChart3 className="w-3.5 h-3.5" />
+                        {texts.apiStats.open}
+                      </Button>
                     </div>
                   </div>
                 );
@@ -10277,6 +10325,13 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
           })()}
         />
       </div>
+      <ApiStatsModal
+        open={apiStatsOpen}
+        onOpenChange={handleApiStatsOpenChange}
+        lang={lang}
+        apiProfileId={resolvedApiStatsProfileId || undefined}
+        apiName={apiStatsTarget?.name || (kind === "api" ? activeProfileName : undefined)}
+      />
       <AlertModal {...alertProps} />
     </>
   );

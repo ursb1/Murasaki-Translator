@@ -9,9 +9,12 @@ type QueueConfigLike = {
   v2PipelineId?: string;
 };
 
-type QueueItemLike = {
-  config?: QueueConfigLike;
-} | null | undefined;
+type QueueItemLike =
+  | {
+      config?: QueueConfigLike;
+    }
+  | null
+  | undefined;
 
 type ClosestCapableTarget = EventTarget & {
   closest: (selectors: string) => unknown;
@@ -50,8 +53,11 @@ export const resolveQueueItemPipelineId = (
   queueItem: QueueItemLike,
   globalPipelineId: string,
 ): string => {
-  const filePipelineId = String(queueItem?.config?.v2PipelineId || "").trim();
-  if (filePipelineId) return filePipelineId;
+  const config = queueItem?.config;
+  const filePipelineId = String(config?.v2PipelineId || "").trim();
+  if (config?.useGlobalDefaults === false && filePipelineId) {
+    return filePipelineId;
+  }
   return String(globalPipelineId || "").trim();
 };
 

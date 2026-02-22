@@ -83,11 +83,13 @@ const api = {
     apiKey?: string;
     timeoutMs?: number;
     model?: string;
+    apiProfileId?: string;
   }) => ipcRenderer.invoke("pipelinev2-api-test", payload),
   pipelineV2ApiModels: (payload: {
     baseUrl: string;
     apiKey?: string;
     timeoutMs?: number;
+    apiProfileId?: string;
   }) => ipcRenderer.invoke("pipelinev2-api-models", payload),
   pipelineV2ApiConcurrencyTest: (payload: {
     baseUrl: string;
@@ -95,7 +97,39 @@ const api = {
     timeoutMs?: number;
     maxConcurrency?: number;
     model?: string;
+    apiProfileId?: string;
   }) => ipcRenderer.invoke("pipelinev2-api-concurrency-test", payload),
+  apiStatsOverview: (payload: {
+    apiProfileId?: string;
+    fromTs?: string;
+    toTs?: string;
+  }) => ipcRenderer.invoke("api-stats-overview", payload),
+  apiStatsTrend: (payload: {
+    apiProfileId?: string;
+    metric?: "requests" | "latency" | "input_tokens" | "output_tokens";
+    interval?: "minute" | "hour" | "day";
+    fromTs?: string;
+    toTs?: string;
+  }) => ipcRenderer.invoke("api-stats-trend", payload),
+  apiStatsBreakdown: (payload: {
+    apiProfileId?: string;
+    dimension?: "status_code" | "source" | "error_type" | "model" | "hour";
+    fromTs?: string;
+    toTs?: string;
+  }) => ipcRenderer.invoke("api-stats-breakdown", payload),
+  apiStatsRecords: (payload: {
+    apiProfileId?: string;
+    fromTs?: string;
+    toTs?: string;
+    page?: number;
+    pageSize?: number;
+    statusCode?: number;
+    source?: string;
+    phase?: "request_end" | "request_error" | "inflight";
+    query?: string;
+  }) => ipcRenderer.invoke("api-stats-records", payload),
+  apiStatsClear: (payload: { apiProfileId?: string; beforeTs?: string }) =>
+    ipcRenderer.invoke("api-stats-clear", payload),
   pipelineV2Run: (payload: {
     filePath: string;
     pipelineId: string;
@@ -153,6 +187,7 @@ const api = {
   pipelineV2SandboxTest: (payload: {
     text: string;
     pipeline: Record<string, any>;
+    apiProfileId?: string;
   }) => ipcRenderer.invoke("pipelinev2-sandbox-test", payload),
 
   // Glossary Management

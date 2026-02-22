@@ -1,13 +1,13 @@
-"""Provider pool for load balancing between multiple API profiles."""
+﻿"""Provider pool for load balancing between multiple API profiles."""
 
 from __future__ import annotations
 
 from typing import Any, Dict, List, TYPE_CHECKING
+import math
 import random
 import threading
-import math
 
-from .base import BaseProvider, ProviderRequest, ProviderResponse, ProviderError
+from .base import BaseProvider, ProviderError, ProviderRequest, ProviderResponse
 from .openai_compat import OpenAICompatProvider
 
 if TYPE_CHECKING:
@@ -40,6 +40,15 @@ class PoolProvider(BaseProvider):
             base_url = str(item.get("base_url") or item.get("baseUrl") or "").strip()
             if not base_url:
                 continue
+            endpoint_index = len(endpoints)
+            endpoint_id = (
+                str(item.get("id") or item.get("endpoint_id") or "").strip()
+                or f"endpoint_{endpoint_index + 1}"
+            )
+            endpoint_label = (
+                str(item.get("label") or item.get("name") or "").strip()
+                or endpoint_id
+            )
             endpoints.append(
                 {
                     "base_url": base_url,
@@ -47,6 +56,8 @@ class PoolProvider(BaseProvider):
                     "model": item.get("model"),
                     "weight": item.get("weight"),
                     "rpm": item.get("rpm"),
+                    "endpoint_id": endpoint_id,
+                    "endpoint_label": endpoint_label,
                 }
             )
         return endpoints
@@ -69,6 +80,8 @@ class PoolProvider(BaseProvider):
             "params": self.profile.get("params"),
             "timeout": self.profile.get("timeout"),
             "rpm": endpoint.get("rpm") or self.profile.get("rpm"),
+            "_pool_endpoint_id": endpoint.get("endpoint_id"),
+            "_pool_endpoint_label": endpoint.get("endpoint_label"),
         }
 
     def _pick_endpoint_index(self) -> int:
@@ -95,18 +108,44 @@ class PoolProvider(BaseProvider):
                 return idx
         return None
 
+    def _attach_endpoint_meta(self, request: ProviderRequest, idx: int) -> None:
+        endpoint = self._endpoints[idx]
+        request.provider_id = self._endpoint_id(idx)
+        request_meta = dict(request.meta or {})
+        request_meta.update(
+            {
+                "endpoint_index": idx,
+                "endpoint_id": endpoint.get("endpoint_id"),
+                "endpoint_label": endpoint.get("endpoint_label"),
+            }
+        )
+        request.meta = request_meta
+
     def build_request(
         self, messages: List[Dict[str, str]], settings: Dict[str, Any]
     ) -> ProviderRequest:
         idx = self._pick_endpoint_index()
         provider = self._endpoint_providers[idx]
         request = provider.build_request(messages, settings)
-        request.provider_id = self._endpoint_id(idx)
+        self._attach_endpoint_meta(request, idx)
         return request
 
     def send(self, request: ProviderRequest) -> ProviderResponse:
         idx = self._endpoint_from_request(request)
         if idx is None:
             idx = self._pick_endpoint_index()
+        self._attach_endpoint_meta(request, idx)
+
         provider = self._endpoint_providers[idx]
-        return provider.send(request)
+        response = provider.send(request)
+
+        if isinstance(response.raw, dict):
+            response.raw.setdefault(
+                "pool",
+                {
+                    "endpoint_index": idx,
+                    "endpoint_id": self._endpoints[idx].get("endpoint_id"),
+                    "endpoint_label": self._endpoints[idx].get("endpoint_label"),
+                },
+            )
+        return response

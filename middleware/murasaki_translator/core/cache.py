@@ -124,7 +124,15 @@ class TranslationCache:
                 self._index_map[index] = len(self.blocks) - 1
         return block
     
-    def save(self, model_name: str = '', glossary_path: str = '', concurrency: int = 1) -> bool:
+    def save(
+        self,
+        model_name: str = '',
+        glossary_path: str = '',
+        concurrency: int = 1,
+        engine_mode: str = '',
+        chunk_type: str = '',
+        pipeline_id: str = '',
+    ) -> bool:
         """保存缓存到文件（线程安全）"""
         try:
             # [并发安全] 加锁保护读取和保存操作
@@ -151,6 +159,19 @@ class TranslationCache:
                     },
                     'blocks': [block.to_dict() for block in self.blocks]
                 }
+                normalized_engine_mode = str(engine_mode or '').strip().lower()
+                if normalized_engine_mode in {'v1', 'v2'}:
+                    data['engineMode'] = normalized_engine_mode
+
+                normalized_chunk_type = str(chunk_type or '').strip().lower()
+                if normalized_chunk_type == 'legacy':
+                    normalized_chunk_type = 'block'
+                if normalized_chunk_type in {'line', 'chunk', 'block'}:
+                    data['chunkType'] = normalized_chunk_type
+
+                normalized_pipeline_id = str(pipeline_id or '').strip()
+                if normalized_pipeline_id:
+                    data['pipelineId'] = normalized_pipeline_id
             # 在锁外进行文件 I/O，避免阻塞其他线程
             with open(self.cache_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)

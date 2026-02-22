@@ -1,29 +1,33 @@
-"""OpenAI-compatible provider."""
+﻿"""OpenAI-compatible provider."""
 
 from __future__ import annotations
 
 from typing import Any, Dict, List
-import json
-import time
-import requests
 import itertools
+import json
 import threading
+import time
 import re
 from urllib.parse import urlparse
 
-from .base import BaseProvider, ProviderRequest, ProviderResponse, ProviderError
+import requests
+
+from murasaki_flow_v2.utils.api_stats_protocol import sanitize_headers
+
+from .base import BaseProvider, ProviderError, ProviderRequest, ProviderResponse
 
 
 _VERSION_SEGMENT = re.compile(r"/v\d+(?:/|$)")
 DEFAULT_STOP_TOKENS = [
-    "<|im_end|>",  # ChatML
-    "<|endoftext|>",  # GPT/Base
-    "</s>",  # Llama 2/Mistral
-    "<|eot_id|>",  # Llama 3
-    "<|end_of_text|>",  # Llama 3 Base
-    "\n\n\n",  # Heuristic safety net
+    "<|im_end|>",
+    "<|endoftext|>",
+    "</s>",
+    "<|eot_id|>",
+    "<|end_of_text|>",
+    "\n\n\n",
 ]
 DEFAULT_TIMEOUT_SECONDS = 60
+MAX_ERROR_TEXT_CHARS = 4000
 
 
 class _RpmLimiter:
@@ -51,29 +55,28 @@ def _normalize_base_url(base_url: str) -> str:
         return base_url
     if base_url.endswith("/v1/chat/completions"):
         return base_url.rsplit("/chat/completions", 1)[0]
-    
+
     path = (urlparse(base_url).path or "").lower()
-    
-    # 如果用户只填了一个主域名 (例如 https://api.openai.com) 或者刚好是以 /v1 结尾
-    # 或者是 /openai 这种常见的网关前缀，我们在下面的 _build_url 会统一处理补全
-    # 这里主要决定要不要强行把 /v1 插在它屁股后面。
-    if not path or path == "/" or path.endswith("/v1") or _VERSION_SEGMENT.search(path) or "/openapi" in path:
+    if (
+        not path
+        or path == "/"
+        or path.endswith("/v1")
+        or _VERSION_SEGMENT.search(path)
+        or "/openapi" in path
+    ):
         return base_url if path and path != "/" else f"{base_url}/v1"
-        
-    # 对于其他任何奇奇怪怪的路径（用户可能填了一个具体的内网反代地址 /my_proxy/api 等）
-    # 都只返回原样，把拼接 /chat/completions 的权力完全交给 _build_url
+
     return base_url
+
 
 def _build_url(base_url: str) -> str:
     base_url = base_url.strip().rstrip("/")
     if not base_url:
         return ""
-        
-    # 如果用户明确提供了一个完整的后缀补全，哪怕它没 /v1，也绝对原样使用它
+
     if base_url.endswith("/chat/completions"):
         return base_url
-        
-    # 如果用户没有写完整后缀，我们先格式化，然后再硬加上 /chat/completions
+
     normalized = _normalize_base_url(base_url)
     return f"{normalized}/chat/completions"
 
@@ -86,6 +89,27 @@ def _normalize_keys(raw: Any) -> List[str]:
     if isinstance(raw, str):
         return [line.strip() for line in raw.splitlines() if line.strip()]
     return [str(raw).strip()] if str(raw).strip() else []
+
+
+def _parse_timeout_seconds(value: Any) -> int | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = int(float(text))
+    except (ValueError, TypeError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _extract_usage(data: Any) -> Dict[str, Any]:
+    if isinstance(data, dict):
+        usage = data.get("usage")
+        if isinstance(usage, dict):
+            return usage
+    return {}
 
 
 class OpenAICompatProvider(BaseProvider):
@@ -121,8 +145,11 @@ class OpenAICompatProvider(BaseProvider):
     ) -> ProviderRequest:
         model = str(settings.get("model") or self.profile.get("model") or "").strip()
         if not model:
-            raise ProviderError("OpenAI-compatible provider requires model")
-            
+            raise ProviderError(
+                "OpenAI-compatible provider requires model",
+                error_type="invalid_config",
+            )
+
         raw_temp = settings.get("temperature")
         temperature = None
         if raw_temp is not None and str(raw_temp).strip() != "":
@@ -130,7 +157,7 @@ class OpenAICompatProvider(BaseProvider):
                 temperature = float(raw_temp)
             except (ValueError, TypeError):
                 pass
-                
+
         raw_max = settings.get("max_tokens")
         max_tokens = None
         if raw_max is not None and str(raw_max).strip() != "":
@@ -147,7 +174,8 @@ class OpenAICompatProvider(BaseProvider):
         if isinstance(settings_params, dict):
             extra.update(settings_params)
         if "stop" not in extra:
-            extra["stop"] = DEFAULT_STOP_TOKENS[:4] # Max 4 items for OpenAI/Volcengine compatibility
+            # Keep max 4 stop entries for compatibility with OpenAI-like endpoints.
+            extra["stop"] = DEFAULT_STOP_TOKENS[:4]
 
         headers: Dict[str, str] = {}
         profile_headers = self.profile.get("headers") or {}
@@ -157,8 +185,13 @@ class OpenAICompatProvider(BaseProvider):
         if isinstance(settings_headers, dict):
             headers.update({str(k): str(v) for k, v in settings_headers.items()})
 
-        timeout = settings.get("timeout") or self.profile.get("timeout")
-        timeout = int(timeout) if timeout is not None else None
+        timeout = _parse_timeout_seconds(settings.get("timeout") or self.profile.get("timeout"))
+
+        stats_meta = settings.get("_stats") if isinstance(settings.get("_stats"), dict) else None
+        request_id = None
+        if stats_meta:
+            request_id = str(stats_meta.get("request_id") or "").strip() or None
+
         return ProviderRequest(
             model=model,
             messages=messages,
@@ -167,12 +200,18 @@ class OpenAICompatProvider(BaseProvider):
             extra=extra,
             headers=headers if headers else None,
             timeout=timeout,
+            request_id=request_id,
+            meta=dict(stats_meta or {}),
         )
 
     def send(self, request: ProviderRequest) -> ProviderResponse:
         base_url = str(self.profile.get("base_url") or "").strip()
         if not base_url:
-            raise ProviderError("OpenAI-compatible provider requires base_url")
+            raise ProviderError(
+                "OpenAI-compatible provider requires base_url",
+                error_type="invalid_config",
+                request_id=request.request_id,
+            )
 
         if self._rpm_limiter:
             self._rpm_limiter.acquire()
@@ -196,31 +235,106 @@ class OpenAICompatProvider(BaseProvider):
         if request.max_tokens is not None:
             payload["max_tokens"] = request.max_tokens
 
-        start = time.time()
+        timeout_seconds = request.timeout or DEFAULT_TIMEOUT_SECONDS
+        safe_request_headers = sanitize_headers(headers)
+
+        start = time.perf_counter()
         try:
             resp = self._session.post(
                 url,
                 headers=headers,
-                data=json.dumps(payload),
-                timeout=request.timeout or DEFAULT_TIMEOUT_SECONDS,
+                data=json.dumps(payload, ensure_ascii=False),
+                timeout=timeout_seconds,
             )
-        except requests.RequestException as exc:
-            raise ProviderError(f"OpenAI-compatible request failed: {exc}") from exc
-
-        duration = time.time() - start
-        if resp.status_code >= 400:
+        except requests.Timeout as exc:
+            duration_ms = int((time.perf_counter() - start) * 1000)
             raise ProviderError(
-                f"OpenAI-compatible HTTP {resp.status_code}: {resp.text}"
+                f"OpenAI-compatible request timeout: {exc}",
+                error_type="timeout",
+                request_id=request.request_id,
+                duration_ms=duration_ms,
+                url=url,
+            ) from exc
+        except requests.RequestException as exc:
+            duration_ms = int((time.perf_counter() - start) * 1000)
+            raise ProviderError(
+                f"OpenAI-compatible request failed: {exc}",
+                error_type="network_error",
+                request_id=request.request_id,
+                duration_ms=duration_ms,
+                url=url,
+            ) from exc
+
+        duration_ms = int((time.perf_counter() - start) * 1000)
+        raw_response_headers = getattr(resp, "headers", None)
+        if isinstance(raw_response_headers, dict):
+            response_headers = {str(k): str(v) for k, v in raw_response_headers.items()}
+        else:
+            try:
+                response_headers = dict(raw_response_headers or {})
+            except Exception:
+                response_headers = {}
+        safe_response_headers = sanitize_headers(response_headers)
+
+        if resp.status_code >= 400:
+            body = (resp.text or "").strip()
+            body_preview = body[:MAX_ERROR_TEXT_CHARS]
+            raise ProviderError(
+                f"OpenAI-compatible HTTP {resp.status_code}: {body_preview}",
+                error_type="http_error",
+                status_code=resp.status_code,
+                request_id=request.request_id,
+                duration_ms=duration_ms,
+                url=url,
+                response_text=body_preview,
             )
 
         try:
             data = resp.json()
         except ValueError as exc:
-            raise ProviderError("OpenAI-compatible response is not JSON") from exc
+            raise ProviderError(
+                "OpenAI-compatible response is not JSON",
+                error_type="invalid_json",
+                status_code=resp.status_code,
+                request_id=request.request_id,
+                duration_ms=duration_ms,
+                url=url,
+            ) from exc
 
         try:
             text = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
-            raise ProviderError("OpenAI-compatible response missing content") from exc
+            raise ProviderError(
+                "OpenAI-compatible response missing content",
+                error_type="invalid_response",
+                status_code=resp.status_code,
+                request_id=request.request_id,
+                duration_ms=duration_ms,
+                url=url,
+            ) from exc
 
-        return ProviderResponse(text=text, raw={"data": data, "duration": duration})
+        usage = _extract_usage(data)
+        raw = {
+            "data": data,
+            "usage": usage,
+            "duration": duration_ms / 1000.0,
+            "duration_ms": duration_ms,
+            "request": {
+                "url": url,
+                "headers": safe_request_headers,
+                "payload": payload,
+            },
+            "response": {
+                "status_code": resp.status_code,
+                "headers": safe_response_headers,
+            },
+        }
+        return ProviderResponse(
+            text=text,
+            raw=raw,
+            status_code=resp.status_code,
+            duration_ms=duration_ms,
+            url=url,
+            request_headers=safe_request_headers,
+            response_headers=safe_response_headers,
+        )

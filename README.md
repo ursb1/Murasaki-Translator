@@ -29,6 +29,11 @@
 
 > **✨ Now Live:** 无需下载模型，点击 **[Online Demo](https://huggingface.co/spaces/Murasaki-Project/online-demo)** 在线体验模型。
 
+> **2.0.0（2026-02-22）更新摘要**
+> - 全面支持使用 **OpenAI 兼容格式的在线 API** 进行翻译。
+> - 新增 **API 管理中心**：统一管理 API / Pipeline / Prompt / Parser / Policy / Chunk，并支持连通性测试与 Sandbox 调试。
+> - 支持本地模型与在线 API 两种翻译模式按需切换。
+
 ---
 
 本项目基于 Murasaki 系列模型的原生 CoT 能力和长上下文特性，专门设计并优化了翻译引擎。我们对模型底层格式及特性进行了深度的适配与工程优化，底层采用 **llama.cpp** 推理框架，前端使用 **Electron + React** 构建，旨在为轻小说翻译提供一个轻量级、高性能且功能完备的解决方案。
@@ -68,6 +73,11 @@ Murasaki 模型针对术语表进行了特化训练，支持 **Prompt 级术语�
 - **格式化模板**：内置多达10+种预设模板，覆盖大部分常见需求。
 - **正则扩展**：全面支持用户自定义正则表达式 (Regex)，可针对特定文本源编写清洗规则。
 
+### 6. 在线 API 翻译（OpenAI 兼容，2.0.0）
+- **在线 API 直连**：支持接入 OpenAI 兼容 API，直接使用在线模型完成翻译任务。
+- **一体化管理**：内置 API 管理中心，统一维护 API / Pipeline / Prompt / Parser / Policy / Chunk 配置。
+- **长任务友好**：支持并发执行、可中断与断点恢复，适合长文本批量翻译。
+
 
 ## 使用说明
 
@@ -105,13 +115,18 @@ Murasaki 模型针对术语表进行了特化训练，支持 **Prompt 级术语�
 
 *(如需通过源码编译，请参考 [开发指南](./DEVELOPMENT.md)。)*
 
-#### 2. 下载模型
+#### 2. 下载模型（使用本地模型时）
 
 在GUI的模型管理页面在线下载即可，或前往 [Hugging Face](https://huggingface.co/Murasaki-Project) 下载模型文件。
+如果你使用在线 API 翻译，可跳过本步骤，直接在侧栏 `API 管理` 配置兼容 OpenAI 格式的 API。
 
 #### 3. 开始翻译
 
-将下载的模型文件放入 `models` 目录中。(通过模型管理内置下载器下载的可以跳过这一步直接开始翻译)
+在 Dashboard 顶部先选择翻译模式：
+- **本地模型**：加载本地模型后开始翻译。
+- **在线 API**：选择已配置的 API Pipeline 后开始翻译。
+
+若使用本地模型模式，将下载的模型文件放入 `models` 目录中。(通过模型管理内置下载器下载的可以跳过这一步直接开始翻译)
    - Windows: `解压目录\resources\middleware\models`
    - macOS: `应用程序/Murasaki Translator.app/Contents/Resources/middleware/models`
 
@@ -189,6 +204,7 @@ ssh -N -L 8000:127.0.0.1:8000 user@your-server
 - [ ] **多格式文档支持**：计划扩展对多种文件格式的支持，特别是针对 **RPG** 及 **Galgame** 脚本等游戏文本格式的直接解析与翻译。
 - [x] **跨平台支持**：已支持 Windows、macOS (Apple Silicon/Intel)、Linux (AppImage)。
 - [x] **Linux Server 后端**：已提供 Linux CLI 服务端，支持 OpenAI 兼容 API 接口，适用于远程推理部署。
+- [x] **在线 API 翻译（OpenAI 兼容）**：已支持兼容 OpenAI 格式的在线 API 翻译与 API 管理中心配置。
 - [ ] **文档完善**：补充更详尽的**使用教程**与**功能文档**。
 - [ ] **模型迭代**：持续更新模型训练，发布质量更高、针对性更强的新版本模型。
 

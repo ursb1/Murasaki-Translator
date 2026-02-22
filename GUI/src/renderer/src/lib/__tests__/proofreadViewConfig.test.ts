@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildProofreadAlignedLinePairs,
   buildProofreadLineLayoutMetrics,
+  isProofreadV2LineCache,
   normalizeProofreadEngineMode,
+  normalizeProofreadChunkType,
   parseLegacyActivePipelineId,
   resolveProofreadPipelineId,
   resolveProofreadRetranslateOptions,
@@ -73,5 +76,61 @@ describe("buildProofreadLineLayoutMetrics", () => {
     expect(metrics.isSingleLineBlock).toBe(false);
     expect(metrics.rowMinHeight).toBe(20);
     expect(metrics.lineHeight).toBe(20);
+  });
+});
+
+describe("buildProofreadAlignedLinePairs", () => {
+  it("keeps all aligned rows by default", () => {
+    expect(
+      buildProofreadAlignedLinePairs({
+        srcLines: ["", "Alpha"],
+        dstLines: ["", ""],
+      }),
+    ).toEqual([
+      { rawIndex: 0, lineNumber: 1, srcLine: "", dstLine: "" },
+      { rawIndex: 1, lineNumber: 2, srcLine: "Alpha", dstLine: "" },
+    ]);
+  });
+
+  it("drops rows only when both sides are empty", () => {
+    expect(
+      buildProofreadAlignedLinePairs({
+        srcLines: ["", "  ", "Alpha", ""],
+        dstLines: ["", "", "", "Beta"],
+        hideBothEmpty: true,
+      }),
+    ).toEqual([
+      { rawIndex: 2, lineNumber: 3, srcLine: "Alpha", dstLine: "" },
+      { rawIndex: 3, lineNumber: 4, srcLine: "", dstLine: "Beta" },
+    ]);
+  });
+});
+
+describe("normalizeProofreadChunkType", () => {
+  it("normalizes known chunk types", () => {
+    expect(normalizeProofreadChunkType("line")).toBe("line");
+    expect(normalizeProofreadChunkType(" chunk ")).toBe("chunk");
+    expect(normalizeProofreadChunkType("legacy")).toBe("block");
+  });
+
+  it("returns empty string for unknown values", () => {
+    expect(normalizeProofreadChunkType("")).toBe("");
+    expect(normalizeProofreadChunkType("foo")).toBe("");
+    expect(normalizeProofreadChunkType(undefined)).toBe("");
+  });
+});
+
+describe("isProofreadV2LineCache", () => {
+  it("returns true only for v2 line cache metadata", () => {
+    expect(isProofreadV2LineCache({ engineMode: "v2", chunkType: "line" })).toBe(
+      true,
+    );
+    expect(
+      isProofreadV2LineCache({ engineMode: "v2", chunkType: "legacy" }),
+    ).toBe(false);
+    expect(
+      isProofreadV2LineCache({ engineMode: "v1", chunkType: "line" }),
+    ).toBe(false);
+    expect(isProofreadV2LineCache({})).toBe(false);
   });
 });

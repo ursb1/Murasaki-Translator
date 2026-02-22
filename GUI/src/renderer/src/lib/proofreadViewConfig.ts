@@ -19,6 +19,13 @@ export interface ProofreadLineLayoutMetrics {
   textVerticalPadding: number;
 }
 
+export interface ProofreadAlignedLinePair {
+  rawIndex: number;
+  lineNumber: number;
+  srcLine: string;
+  dstLine: string;
+}
+
 const trimString = (value: unknown): string =>
   typeof value === "string" ? value.trim() : "";
 
@@ -63,6 +70,63 @@ export const resolveProofreadRetranslateOptions = ({
     useV2: true,
     pipelineId: resolveProofreadPipelineId(pipelineId, legacyPipelineRaw),
   };
+};
+
+export const normalizeProofreadChunkType = (
+  value: unknown,
+): "line" | "chunk" | "block" | "" => {
+  const normalized = trimString(value).toLowerCase();
+  if (normalized === "legacy") return "block";
+  if (
+    normalized === "line" ||
+    normalized === "chunk" ||
+    normalized === "block"
+  ) {
+    return normalized;
+  }
+  return "";
+};
+
+export const isProofreadV2LineCache = (cache: {
+  engineMode?: unknown;
+  chunkType?: unknown;
+}): boolean =>
+  trimString(cache?.engineMode).toLowerCase() === "v2" &&
+  normalizeProofreadChunkType(cache?.chunkType) === "line";
+
+export const buildProofreadAlignedLinePairs = ({
+  srcLines,
+  dstLines,
+  hideBothEmpty = false,
+}: {
+  srcLines: string[];
+  dstLines: string[];
+  hideBothEmpty?: boolean;
+}): ProofreadAlignedLinePair[] => {
+  const normalizedSrc = Array.isArray(srcLines)
+    ? srcLines.map((line) => (typeof line === "string" ? line : ""))
+    : [];
+  const normalizedDst = Array.isArray(dstLines)
+    ? dstLines.map((line) => (typeof line === "string" ? line : ""))
+    : [];
+  const maxLines = Math.max(normalizedSrc.length, normalizedDst.length, 1);
+
+  const alignedRows: ProofreadAlignedLinePair[] = [];
+  for (let rawIndex = 0; rawIndex < maxLines; rawIndex += 1) {
+    const srcLine = normalizedSrc[rawIndex] ?? "";
+    const dstLine = normalizedDst[rawIndex] ?? "";
+    if (hideBothEmpty && srcLine.trim() === "" && dstLine.trim() === "") {
+      continue;
+    }
+    alignedRows.push({
+      rawIndex,
+      lineNumber: rawIndex + 1,
+      srcLine,
+      dstLine,
+    });
+  }
+
+  return alignedRows;
 };
 
 export const buildProofreadLineLayoutMetrics = (

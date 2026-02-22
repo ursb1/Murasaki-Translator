@@ -75,6 +75,12 @@ import {
   formatProgressCount,
   formatProgressPercent,
 } from "../lib/progressDisplay";
+import {
+  applyFinalPayloadToV2HistoryStats,
+  applyProgressPayloadToV2HistoryStats,
+  applyRetryEventToV2HistoryStats,
+  createEmptyV2HistoryStats,
+} from "../lib/v2HistoryStats";
 
 // Window.api type is defined in src/types/api.d.ts
 
@@ -647,6 +653,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       totalTime?: number;
       avgSpeed?: number;
     } | null>(null);
+    const v2StatsRef = useRef<NonNullable<TranslationRecord["v2Stats"]> | null>(
+      null,
+    );
 
     // Ref to hold the fresh checkAndStart function (avoids closure stale state in handleProcessExit)
     const checkAndStartRef = useRef<
@@ -856,6 +865,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       const code = payload?.code ?? null;
       const signal = payload?.signal ?? null;
       const stopRequested = payload?.stopRequested === true;
+      const runModeAtExit =
+        currentRunEngineModeRef.current || engineModeRef.current;
       setIsRunning(false);
       currentRunEngineModeRef.current = null;
       const success = code === 0;
@@ -933,6 +944,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           outputPath: progressDataRef.current.outputPath,
           cachePath: resolvedCachePath || undefined,
           avgSpeed: avgSpeed,
+          ...(runModeAtExit === "v2" && v2StatsRef.current
+            ? { v2Stats: v2StatsRef.current }
+            : {}),
           logs: logsBufferRef.current.slice(-MAX_HISTORY_LOG_LINES),
           llamaLogs: llamaLogsBufferRef.current.slice(
             -MAX_HISTORY_LLAMA_LOG_LINES,
@@ -956,6 +970,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           speeds: [],
         };
         finalStatsRef.current = null;
+        v2StatsRef.current = null;
         llamaLogsBufferRef.current = [];
       }
 
@@ -1262,6 +1277,12 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                       ].slice(-20)
                     : progressDataRef.current.speeds,
               };
+              if (v2StatsRef.current) {
+                v2StatsRef.current = applyProgressPayloadToV2HistoryStats(
+                  v2StatsRef.current,
+                  data as Record<string, unknown>,
+                );
+              }
 
               const shouldUseProgressAsChartDriver =
                 engineModeRef.current === "v2" ||
@@ -1342,6 +1363,11 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                                   String(data.src_lines - data.dst_lines),
                                 ),
               });
+              if (v2StatsRef.current) {
+                v2StatsRef.current = applyRetryEventToV2HistoryStats(
+                  v2StatsRef.current,
+                );
+              }
             } catch (e) {
               console.error("JSON_RETRY Parse Error:", e, log);
             }
@@ -1460,21 +1486,12 @@ export const Dashboard = forwardRef<any, DashboardProps>(
 
               // Update history record with final stats
               if (currentRecordIdRef.current) {
-                const v2Stats =
-                  data.totalRequests !== undefined
-                    ? {
-                        totalRequests: Number(data.totalRequests || 0),
-                        totalRetries: Number(data.totalRetries || 0),
-                        totalErrors: Number(data.totalErrors || 0),
-                        totalInputTokens: Number(data.totalInputTokens || 0),
-                        totalOutputTokens: Number(data.totalOutputTokens || 0),
-                        errorStatusCodes:
-                          data.errorStatusCodes &&
-                          typeof data.errorStatusCodes === "object"
-                            ? data.errorStatusCodes
-                            : undefined,
-                      }
-                    : undefined;
+                if (v2StatsRef.current) {
+                  v2StatsRef.current = applyFinalPayloadToV2HistoryStats(
+                    v2StatsRef.current,
+                    data as Record<string, unknown>,
+                  );
+                }
                 updateRecord(currentRecordIdRef.current, {
                   sourceLines: data.sourceLines,
                   sourceChars: data.sourceChars,
@@ -1482,7 +1499,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                   totalChars: data.outputChars,
                   avgSpeed: data.avgSpeed,
                   duration: data.totalTime,
-                  ...(v2Stats ? { v2Stats } : {}),
+                  ...(v2StatsRef.current ? { v2Stats: v2StatsRef.current } : {}),
                 });
               }
             } catch (e) {
@@ -2248,6 +2265,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       logsBufferRef.current = [];
       triggersBufferRef.current = [];
       llamaLogsBufferRef.current = [];
+      v2StatsRef.current = null;
 
       // 重置远程信息(新任务开始)
       remoteInfoRef.current = null;
@@ -2434,6 +2452,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       logsBufferRef.current = [];
       triggersBufferRef.current = [];
       llamaLogsBufferRef.current = [];
+      v2StatsRef.current = createEmptyV2HistoryStats();
 
       const newRecord: TranslationRecord = {
         id: recordId,
@@ -2460,6 +2479,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           providerName,
           chunkType,
         },
+        v2Stats: v2StatsRef.current,
       };
       addRecord(newRecord);
 

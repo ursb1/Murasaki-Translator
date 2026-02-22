@@ -59,6 +59,9 @@ interface CacheData {
   outputPath: string;
   modelName: string;
   glossaryPath: string;
+  engineMode?: string;
+  chunkType?: string;
+  pipelineId?: string;
   stats: {
     blockCount: number;
     srcLines: number;
@@ -149,7 +152,9 @@ import { useAlertModal } from "../hooks/useAlertModal";
 import { stripSystemMarkersForDisplay } from "../lib/displayText";
 import { resolveRuleListForRun } from "../lib/rulesConfig";
 import {
+  buildProofreadAlignedLinePairs,
   buildProofreadLineLayoutMetrics,
+  isProofreadV2LineCache,
   normalizeProofreadEngineMode,
   resolveProofreadRetranslateOptions,
 } from "../lib/proofreadViewConfig";
@@ -908,6 +913,20 @@ export default function ProofreadView({
     setHasUnsavedChanges(false); // Reset on load
     setCurrentPage(1);
     setEditingBlockId(null);
+    const cacheEngineModeRaw =
+      typeof data?.engineMode === "string" ? data.engineMode.trim() : "";
+    if (cacheEngineModeRaw) {
+      const normalizedCacheEngineMode =
+        normalizeProofreadEngineMode(cacheEngineModeRaw);
+      setRetryEngineMode(normalizedCacheEngineMode);
+      if (normalizedCacheEngineMode === "v2") {
+        const cachePipelineId =
+          typeof data?.pipelineId === "string" ? data.pipelineId.trim() : "";
+        if (cachePipelineId) {
+          setRetryV2PipelineId(cachePipelineId);
+        }
+      }
+    }
 
     if (data.glossaryPath) {
       try {
@@ -1902,7 +1921,7 @@ export default function ProofreadView({
       const simLines = findHighSimilarityLines(block.src, block.dst);
       const simSet = new Set(simLines);
 
-      // In line mode, render line-by-line with synchronized heights
+      // Build aligned rows first, and filter rows only in line-mode preview.
       const displaySrc = stripSystemMarkersForDisplay(
         trimLeadingEmptyLines(block.src),
       );
@@ -1912,29 +1931,38 @@ export default function ProofreadView({
           ? editingText
           : trimLeadingEmptyLines(block.dst);
       const dstLinesRaw = dstText.split("\n");
-
-      // Align both sides: pad shorter side with empty lines
-      const maxLines = Math.max(srcLinesRaw.length, dstLinesRaw.length);
-      const srcLines = [
-        ...srcLinesRaw,
-        ...Array(maxLines - srcLinesRaw.length).fill(""),
-      ];
-      const dstLines = [
-        ...dstLinesRaw,
-        ...Array(maxLines - dstLinesRaw.length).fill(""),
-      ];
-      const layoutMetrics = buildProofreadLineLayoutMetrics(maxLines);
+      const useEnhancedLinePreview =
+        lineMode && isProofreadV2LineCache(cacheData || {});
+      const linePairs = buildProofreadAlignedLinePairs({
+        srcLines: srcLinesRaw,
+        dstLines: dstLinesRaw,
+        hideBothEmpty: useEnhancedLinePreview && editingBlockId !== block.index,
+      });
+      if (useEnhancedLinePreview && linePairs.length === 0) {
+        return null;
+      }
+      const layoutMetrics = buildProofreadLineLayoutMetrics(
+        Math.max(linePairs.length, 1),
+      );
       const isSingleLineBlock = layoutMetrics.isSingleLineBlock;
 
       return (
         <div
           key={block.index}
           id={`block-${block.index}`}
-          className={`group hover:bg-muted/30 transition-colors ${isSingleLineBlock ? "bg-background/60" : ""} ${editingBlockId === block.index ? "bg-muted/30" : ""}`}
+          className={
+            useEnhancedLinePreview
+              ? `group relative overflow-hidden rounded-xl border transition-all ${editingBlockId === block.index ? "border-primary/40 bg-primary/5 shadow-[0_0_0_1px_hsl(var(--primary)/0.15)]" : "border-border/40 bg-card/70 hover:border-border/70 hover:bg-card"} ${isSingleLineBlock ? "backdrop-blur-[1px]" : ""}`
+              : `group hover:bg-muted/30 transition-colors ${isSingleLineBlock ? "bg-background/60" : ""} ${editingBlockId === block.index ? "bg-muted/30" : ""}`
+          }
         >
           {/* Block header with info and actions */}
           <div
-            className={`flex items-center gap-2 border-b border-border/10 bg-muted/20 ${isSingleLineBlock ? "px-2 py-0.5" : "px-3 py-1"}`}
+            className={
+              useEnhancedLinePreview
+                ? `flex items-center gap-2 border-b border-border/20 bg-muted/25 ${isSingleLineBlock ? "px-2.5 py-1" : "px-3.5 py-1.5"}`
+                : `flex items-center gap-2 border-b border-border/10 bg-muted/20 ${isSingleLineBlock ? "px-2 py-0.5" : "px-3 py-1"}`
+            }
           >
             <span className="text-[10px] text-muted-foreground/50 font-mono">
               #{block.index + 1}
@@ -1996,16 +2024,25 @@ export default function ProofreadView({
               )}
               {/* Display layer: two independent text flows to avoid cross-column copy linkage */}
               <div
-                className="grid"
+                className={useEnhancedLinePreview ? "grid bg-background/60" : "grid"}
                 style={{
                   gridTemplateColumns: gridTemplate,
                   gridAutoRows: `minmax(${layoutMetrics.rowMinHeight}px, auto)`,
                   gridAutoFlow: "row",
                 }}
               >
-                {Array.from({ length: maxLines }).map((_, lineIdx) => {
-                  const srcLine = srcLines[lineIdx] || "";
-                  const isWarning = simSet.has(lineIdx + 1);
+                {linePairs.map((pair, rowIdx) => {
+                  const isWarning = simSet.has(pair.lineNumber);
+                  const rowToneClass =
+                    useEnhancedLinePreview
+                      ? rowIdx % 2 === 0
+                        ? "bg-background/30"
+                        : "bg-muted/20"
+                      : "";
+                  const rowDividerClass =
+                    !useEnhancedLinePreview || rowIdx === linePairs.length - 1
+                      ? ""
+                      : "border-b border-border/15";
                   const baseCellStyle: React.CSSProperties = {
                     minHeight: `${layoutMetrics.rowMinHeight}px`,
                     paddingLeft: `${layoutMetrics.paddingLeft}px`,
@@ -2024,14 +2061,14 @@ export default function ProofreadView({
                   const srcCellStyle: React.CSSProperties = {
                     ...baseCellStyle,
                     gridColumn: 1,
-                    gridRow: lineIdx + 1,
+                    gridRow: rowIdx + 1,
                     userSelect: selectionLock === "dst" ? "none" : "text",
                   };
                   return (
                     <div
-                      key={`src-${lineIdx}`}
-                      id={`block-${block.index}-src-line-${lineIdx}`}
-                      className={`relative border-r border-border/20 ${isWarning ? "bg-amber-500/20" : ""}`}
+                      key={`src-${pair.rawIndex}`}
+                      id={`block-${block.index}-src-line-${pair.rawIndex}`}
+                      className={`relative ${useEnhancedLinePreview ? "border-r border-border/25" : "border-r border-border/20"} ${rowDividerClass} ${isWarning ? "bg-amber-500/20" : rowToneClass}`}
                       style={srcCellStyle}
                       onMouseDown={() =>
                         flushSync(() => setSelectionLock("src"))
@@ -2053,17 +2090,26 @@ export default function ProofreadView({
                           lineHeight: `${layoutMetrics.lineHeight}px`,
                         }}
                       >
-                        {lineIdx + 1}
+                        {pair.lineNumber}
                       </span>
                       <span className="whitespace-pre-wrap text-foreground select-text">
-                        {renderHighlightedLine(srcLine)}
+                        {renderHighlightedLine(pair.srcLine)}
                       </span>
                     </div>
                   );
                 })}
-                {Array.from({ length: maxLines }).map((_, lineIdx) => {
-                  const dstLine = dstLines[lineIdx] || "";
-                  const isWarning = simSet.has(lineIdx + 1);
+                {linePairs.map((pair, rowIdx) => {
+                  const isWarning = simSet.has(pair.lineNumber);
+                  const rowToneClass =
+                    useEnhancedLinePreview
+                      ? rowIdx % 2 === 0
+                        ? "bg-background/30"
+                        : "bg-muted/20"
+                      : "";
+                  const rowDividerClass =
+                    !useEnhancedLinePreview || rowIdx === linePairs.length - 1
+                      ? ""
+                      : "border-b border-border/15";
                   const baseCellStyle: React.CSSProperties = {
                     minHeight: `${layoutMetrics.rowMinHeight}px`,
                     paddingLeft: `${layoutMetrics.paddingLeft}px`,
@@ -2082,14 +2128,14 @@ export default function ProofreadView({
                   const dstCellStyle: React.CSSProperties = {
                     ...baseCellStyle,
                     gridColumn: 2,
-                    gridRow: lineIdx + 1,
+                    gridRow: rowIdx + 1,
                     userSelect: selectionLock === "src" ? "none" : "text",
                   };
                   return (
                     <div
-                      key={`dst-${lineIdx}`}
-                      id={`block-${block.index}-dst-line-${lineIdx}`}
-                      className={`relative cursor-text ${isWarning ? "bg-amber-500/20" : ""}`}
+                      key={`dst-${pair.rawIndex}`}
+                      id={`block-${block.index}-dst-line-${pair.rawIndex}`}
+                      className={`relative cursor-text ${useEnhancedLinePreview ? "transition-colors" : ""} ${rowDividerClass} ${isWarning ? "bg-amber-500/20" : rowToneClass} ${useEnhancedLinePreview && editingBlockId !== block.index ? "hover:bg-primary/5" : ""}`}
                       style={dstCellStyle}
                       onClick={() => {
                         if (editingBlockId !== block.index) {
@@ -2117,12 +2163,12 @@ export default function ProofreadView({
                           lineHeight: `${layoutMetrics.lineHeight}px`,
                         }}
                       >
-                        {lineIdx + 1}
+                        {pair.lineNumber}
                       </span>
                       <span
                         className={`whitespace-pre-wrap text-foreground select-text ${editingBlockId === block.index ? "opacity-0" : ""}`}
                       >
-                        {renderHighlightedLine(dstLine)}
+                        {renderHighlightedLine(pair.dstLine)}
                       </span>
                     </div>
                   );
@@ -2135,7 +2181,13 @@ export default function ProofreadView({
                   style={{ gridTemplateColumns: gridTemplate }}
                 >
                   {/* Left: transparent placeholder to maintain layout */}
-                  <div className="border-r border-border/20" />
+                  <div
+                    className={
+                      useEnhancedLinePreview
+                        ? "border-r border-border/25"
+                        : "border-r border-border/20"
+                    }
+                  />
                   {/* Right: textarea */}
                   <div className="relative">
                     <textarea
@@ -2281,6 +2333,8 @@ export default function ProofreadView({
     editingBlockId,
     editingText,
     lineMode,
+    cacheData?.engineMode,
+    cacheData?.chunkType,
     selectionLock,
     loading,
     retranslatingBlocks,
@@ -2885,6 +2939,9 @@ export default function ProofreadView({
     );
   }
 
+  const useEnhancedLinePreview =
+    lineMode && isProofreadV2LineCache(cacheData || {});
+
   return (
     <div className="flex h-full bg-background">
       {/* Main Content Column */}
@@ -3201,17 +3258,35 @@ export default function ProofreadView({
         >
           {/* Header Row */}
           <div
-            className="sticky top-0 z-20 grid bg-muted/80 backdrop-blur border-b text-xs font-medium text-muted-foreground"
+            className={`sticky top-0 z-20 grid ${
+              useEnhancedLinePreview
+                ? "border-b border-border/60 bg-background/95 backdrop-blur-sm text-[11px] font-semibold tracking-wide text-muted-foreground"
+                : "bg-muted/80 backdrop-blur border-b text-xs font-medium text-muted-foreground"
+            }`}
             style={{ gridTemplateColumns: gridTemplate }}
           >
-            <div className="px-4 py-2 border-r border-border/50">
+            <div
+              className={`px-4 ${useEnhancedLinePreview ? "py-2.5 border-r border-border/40 uppercase" : "py-2 border-r border-border/50"}`}
+            >
               {pv.sourceTitle}
             </div>
-            <div className="px-4 py-2">{pv.targetTitle}</div>
+            <div
+              className={`px-4 ${useEnhancedLinePreview ? "py-2.5 uppercase" : "py-2"}`}
+            >
+              {pv.targetTitle}
+            </div>
           </div>
 
           {/* Blocks */}
-          <div className="divide-y divide-border/30">{renderedBlocks}</div>
+          <div
+            className={
+              useEnhancedLinePreview
+                ? "px-3 py-3 space-y-3"
+                : "divide-y divide-border/30"
+            }
+          >
+            {renderedBlocks}
+          </div>
 
           {/* --- Pagination Footer --- */}
           {totalPages > 1 && (
