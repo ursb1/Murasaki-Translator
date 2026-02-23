@@ -33,6 +33,7 @@ import {
   isPathWithin,
   safeLoadYaml,
   normalizeChunkType,
+  normalizeProfileCompatibility,
 } from "./pipelineV2Shared";
 import type { ApiStatsEventInput } from "./apiStatsStore";
 
@@ -923,6 +924,15 @@ const loadProfileLocal = async (
   const raw = await readFile(path, "utf-8");
 
   const data = safeLoadYaml(raw) || {};
+  let normalizedYaml = raw;
+  if (normalizeProfileCompatibility(kind, data)) {
+    normalizedYaml = dumpYaml(data);
+    try {
+      await writeFileSafely(path, normalizedYaml);
+    } catch {
+      // ignore compatibility writeback failures and continue in-memory
+    }
+  }
 
   const fallbackId = basename(path, extname(path));
   const rawId = String(data.id || "").trim();
@@ -930,7 +940,7 @@ const loadProfileLocal = async (
 
   const name = String(data.name || id);
 
-  return { id, name, yaml: raw, data };
+  return { id, name, yaml: normalizedYaml, data };
 };
 
 const saveProfileLocal = async (
@@ -959,6 +969,7 @@ const saveProfileLocal = async (
     return { ok: false, error: "invalid_id" };
   }
   parsed.id = rawId;
+  normalizeProfileCompatibility(kind, parsed);
   if (kind === "chunk") {
     const normalized = normalizeChunkType(
       parsed.chunk_type ?? parsed.type ?? "",

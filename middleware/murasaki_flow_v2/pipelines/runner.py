@@ -2130,9 +2130,7 @@ class PipelineRunner:
 
         strict_concurrency = (
             self._parse_bool_flag(settings.get("strict_concurrency"))
-            or self._parse_bool_flag(settings.get("serial_requests"))
             or self._parse_bool_flag(provider.profile.get("strict_concurrency"))
-            or self._parse_bool_flag(provider.profile.get("serial_requests"))
         )
 
         if strict_concurrency:

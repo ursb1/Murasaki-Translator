@@ -56,6 +56,46 @@ def test_profile_store_list_chunk_type(tmp_path):
 
 
 @pytest.mark.unit
+def test_profile_store_migrates_api_serial_requests_to_strict_concurrency(tmp_path):
+    api_dir = tmp_path / "api"
+    api_dir.mkdir()
+    profile_path = api_dir / "legacy_api.yaml"
+    profile_path.write_text(
+        "id: legacy_api\nname: Legacy API\ntype: openai_compat\nserial_requests: true\n",
+        encoding="utf-8",
+    )
+    store = ProfileStore(str(tmp_path))
+    profile = store.load_profile("api", "legacy_api")
+
+    assert profile.get("strict_concurrency") is True
+    assert "serial_requests" not in profile
+
+    persisted = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
+    assert persisted.get("strict_concurrency") is True
+    assert "serial_requests" not in persisted
+
+
+@pytest.mark.unit
+def test_profile_store_migrates_chunk_type_legacy_alias(tmp_path):
+    chunk_dir = tmp_path / "chunk"
+    chunk_dir.mkdir()
+    profile_path = chunk_dir / "legacy_chunk.yaml"
+    profile_path.write_text(
+        "id: legacy_chunk\nname: Legacy Chunk\ntype: legacy\noptions: {}\n",
+        encoding="utf-8",
+    )
+    store = ProfileStore(str(tmp_path))
+    profile = store.load_profile("chunk", "legacy_chunk")
+
+    assert profile.get("chunk_type") == "block"
+    assert "type" not in profile
+
+    persisted = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
+    assert persisted.get("chunk_type") == "block"
+    assert "type" not in persisted
+
+
+@pytest.mark.unit
 def test_default_line_tolerant_profile_checks_enabled():
     profile_path = (
         Path(__file__).resolve().parents[2]

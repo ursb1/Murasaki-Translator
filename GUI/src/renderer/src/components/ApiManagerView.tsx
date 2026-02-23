@@ -4501,8 +4501,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
             : "",
         strictConcurrency: parseBooleanFlag(
           data.strict_concurrency ??
-            data.strictConcurrency ??
-            data.serial_requests,
+            data.strictConcurrency,
           false,
         ),
         maxRetries:
@@ -5147,7 +5146,6 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
           "timeout",
           "concurrency",
           "strict_concurrency",
-          "serial_requests",
           "max_retries",
           "rpm",
           "requests_per_minute",
