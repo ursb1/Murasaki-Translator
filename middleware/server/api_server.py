@@ -25,6 +25,7 @@ import secrets
 import threading
 import subprocess
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -34,7 +35,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Uplo
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.security import APIKeyHeader
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 # 添加父目录到 path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -54,10 +55,26 @@ logger = logging.getLogger("murasaki-api")
 # ============================================
 # FastAPI App
 # ============================================
+
+
+@asynccontextmanager
+async def app_lifespan(_app: FastAPI):
+    try:
+        yield
+    finally:
+        global worker
+        try:
+            if worker is not None:
+                worker.stop_server()
+        except Exception:
+            pass
+
+
 app = FastAPI(
     title="Murasaki Translation API",
     version="1.0.0",
-    description="Remote translation server with full GUI functionality"
+    description="Remote translation server with full GUI functionality",
+    lifespan=app_lifespan,
 )
 
 
@@ -247,17 +264,6 @@ TASK_RETENTION_HOURS = 24  # 保留 24 小时
 # 线程安全锁（防止并发修改字典）
 _tasks_lock = threading.Lock()
 TERMINAL_TASK_STATUSES = {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED}
-
-
-@app.on_event("shutdown")
-def on_shutdown():
-    """Ensure llama-server is stopped when API server exits."""
-    global worker
-    try:
-        if worker is not None:
-            worker.stop_server()
-    except Exception:
-        pass
 
 
 def _set_task(task: TranslationTask) -> None:
@@ -574,7 +580,8 @@ class TranslateRequest(BaseModel):
     )
     text_protect: bool = False
 
-    @validator("mode", pre=True)
+    @field_validator("mode", mode="before")
+    @classmethod
     def normalize_mode(cls, value: Optional[str]) -> str:
         raw = str(value or "").strip().lower()
         if raw in ("doc", "chunk"):
