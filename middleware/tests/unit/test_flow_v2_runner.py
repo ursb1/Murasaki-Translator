@@ -486,6 +486,125 @@ def test_flow_v2_runner_should_apply_line_policy_non_line_chunk():
 
 
 # ---------------------------------------------------------------------------
+# Kana residue retry for V2 block mode
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_resolve_kana_retry_settings_default():
+    enabled, threshold, min_chars = PipelineRunner._resolve_kana_retry_settings({})
+    assert enabled is True
+    assert threshold == pytest.approx(0.30)
+    assert min_chars == 20
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_resolve_kana_retry_settings_custom():
+    cfg = {
+        "kana_retry_enabled": False,
+        "kana_retry_threshold": 0.42,
+        "kana_retry_min_chars": 32,
+    }
+    enabled, threshold, min_chars = PipelineRunner._resolve_kana_retry_settings(cfg)
+    assert enabled is False
+    assert threshold == pytest.approx(0.42)
+    assert min_chars == 32
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_resolve_kana_retry_settings_invalid_fallback():
+    cfg = {
+        "kana_retry_enabled": "yes",
+        "kana_retry_threshold": 9,
+        "kana_retry_min_chars": -1,
+    }
+    enabled, threshold, min_chars = PipelineRunner._resolve_kana_retry_settings(cfg)
+    assert enabled is True
+    assert threshold == pytest.approx(0.30)
+    assert min_chars == 20
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_compute_kana_ratio_counts():
+    ratio, kana_chars, effective_chars = PipelineRunner._compute_kana_ratio("春风かな123")
+    assert kana_chars == 2
+    assert effective_chars == 7
+    assert ratio == pytest.approx(2 / 7)
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_evaluate_kana_retry_triggers_in_block_ja():
+    result = PipelineRunner._evaluate_kana_retry(
+        "かなかなかなかなかなかなかなかなかなかな",
+        source_lang="ja",
+        chunk_type="block",
+        enabled=True,
+        threshold=0.30,
+        min_chars=20,
+    )
+    assert result["eligible"] is True
+    assert result["should_retry"] is True
+    assert result["ratio"] >= 0.30
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_evaluate_kana_retry_triggers_in_block_jp_alias():
+    result = PipelineRunner._evaluate_kana_retry(
+        "かなかなかなかなかなかなかなかなかなかな",
+        source_lang="jp",
+        chunk_type="block",
+        enabled=True,
+        threshold=0.30,
+        min_chars=20,
+    )
+    assert result["eligible"] is True
+    assert result["should_retry"] is True
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_evaluate_kana_retry_not_triggered_for_line_mode():
+    result = PipelineRunner._evaluate_kana_retry(
+        "かなかなかなかなかなかなかなかなかなかな",
+        source_lang="ja",
+        chunk_type="line",
+        enabled=True,
+        threshold=0.30,
+        min_chars=20,
+    )
+    assert result["eligible"] is False
+    assert result["should_retry"] is False
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_evaluate_kana_retry_not_triggered_when_too_short():
+    result = PipelineRunner._evaluate_kana_retry(
+        "かなかな",
+        source_lang="ja",
+        chunk_type="block",
+        enabled=True,
+        threshold=0.30,
+        min_chars=20,
+    )
+    assert result["eligible"] is True
+    assert result["effectiveChars"] < 20
+    assert result["should_retry"] is False
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_evaluate_kana_retry_not_triggered_without_explicit_source_lang():
+    result = PipelineRunner._evaluate_kana_retry(
+        "かなかなかなかなかなかなかなかなかなかな",
+        source_lang="",
+        chunk_type="block",
+        enabled=True,
+        threshold=0.30,
+        min_chars=20,
+    )
+    assert result["eligible"] is False
+    assert result["should_retry"] is False
+
+
+# ---------------------------------------------------------------------------
 # JSONL protection helpers
 # ---------------------------------------------------------------------------
 
@@ -886,6 +1005,169 @@ def test_flow_v2_runner_block_mode_fallback_does_not_abort_all(
     result = runner.run("dummy-input.txt", output_path=output_path, save_cache=False)
     assert result == output_path
     assert [block.prompt_text for block in doc.saved_blocks] == ["L1", "L2", "L3"]
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_block_mode_kana_residue_retries_and_records_reason(
+    tmp_path,
+    monkeypatch,
+):
+    runner = _make_runner(tmp_path)
+    runner.pipeline = {
+        "provider": "provider_stub",
+        "prompt": "prompt_stub",
+        "parser": "parser_stub",
+        "chunk_policy": "chunk_stub",
+        "settings": {"max_retries": 1, "concurrency": 1},
+        "processing": {
+            "source_lang": "ja",
+            "kana_retry_enabled": True,
+            "kana_retry_threshold": 0.30,
+            "kana_retry_min_chars": 20,
+        },
+    }
+
+    class _Provider:
+        profile = {"model": "stub-model", "base_url": "http://localhost:8000/v1"}
+
+        def __init__(self):
+            self.calls = 0
+
+        def build_request(self, _messages, _settings):
+            return object()
+
+        def send(self, _request):
+            self.calls += 1
+            if self.calls == 1:
+                return ProviderResponse(text="かなかなかなかなかなかなかなかなかなかな", raw={})
+            return ProviderResponse(text="这是中文输出结果。", raw={})
+
+    class _Parser:
+        profile = {"type": "plain"}
+
+        def parse(self, text):
+            return type("Parsed", (), {"text": text})()
+
+    provider = _Provider()
+    captured_events = []
+    doc = _DummyDoc(["原文一行"])
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.DocumentFactory.get_document",
+        lambda _path: doc,
+    )
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.build_messages",
+        lambda *_args, **_kwargs: [{"role": "user", "content": "x"}],
+    )
+    monkeypatch.setattr(runner.providers, "get_provider", lambda _ref: provider)
+    monkeypatch.setattr(runner.parsers, "get_parser", lambda _ref: _Parser())
+    monkeypatch.setattr(
+        runner.prompts, "get_prompt", lambda _ref: {"user_template": "{{source}}"}
+    )
+    monkeypatch.setattr(
+        runner.chunk_policies,
+        "get_chunk_policy",
+        lambda _ref: _DummyBlockChunkPolicy(),
+    )
+    monkeypatch.setattr(
+        flow_v2_runner,
+        "emit_api_stats_event",
+        lambda payload: captured_events.append(payload),
+    )
+
+    output_path = str(tmp_path / "kana_retry.txt")
+    runner.run("dummy-input.txt", output_path=output_path, save_cache=False)
+
+    assert provider.calls == 2
+    assert [block.prompt_text for block in doc.saved_blocks] == ["这是中文输出结果。"]
+
+    retry_events = [
+        event for event in captured_events if event.get("phase") == "request_retry"
+    ]
+    assert retry_events
+    assert any(event.get("errorType") == "kana_residue" for event in retry_events)
+    matched_event = next(
+        event for event in retry_events if event.get("errorType") == "kana_residue"
+    )
+    retry_meta = matched_event.get("meta") or {}
+    assert retry_meta.get("kanaRetryThreshold") == pytest.approx(0.30)
+    assert (retry_meta.get("kanaRetryRatio") or 0) >= 0.30
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_block_mode_kana_residue_disabled_without_explicit_source_lang(
+    tmp_path,
+    monkeypatch,
+):
+    runner = _make_runner(tmp_path)
+    runner.pipeline = {
+        "provider": "provider_stub",
+        "prompt": "prompt_stub",
+        "parser": "parser_stub",
+        "chunk_policy": "chunk_stub",
+        "settings": {"max_retries": 1, "concurrency": 1},
+        "processing": {
+            "kana_retry_enabled": True,
+            "kana_retry_threshold": 0.30,
+            "kana_retry_min_chars": 20,
+        },
+    }
+
+    class _Provider:
+        profile = {"model": "stub-model", "base_url": "http://localhost:8000/v1"}
+
+        def __init__(self):
+            self.calls = 0
+
+        def build_request(self, _messages, _settings):
+            return object()
+
+        def send(self, _request):
+            self.calls += 1
+            return ProviderResponse(text="かなかなかなかなかなかなかなかなかなかな", raw={})
+
+    class _Parser:
+        profile = {"type": "plain"}
+
+        def parse(self, text):
+            return type("Parsed", (), {"text": text})()
+
+    provider = _Provider()
+    captured_events = []
+    doc = _DummyDoc(["原文一行"])
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.DocumentFactory.get_document",
+        lambda _path: doc,
+    )
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.build_messages",
+        lambda *_args, **_kwargs: [{"role": "user", "content": "x"}],
+    )
+    monkeypatch.setattr(runner.providers, "get_provider", lambda _ref: provider)
+    monkeypatch.setattr(runner.parsers, "get_parser", lambda _ref: _Parser())
+    monkeypatch.setattr(
+        runner.prompts, "get_prompt", lambda _ref: {"user_template": "{{source}}"}
+    )
+    monkeypatch.setattr(
+        runner.chunk_policies,
+        "get_chunk_policy",
+        lambda _ref: _DummyBlockChunkPolicy(),
+    )
+    monkeypatch.setattr(
+        flow_v2_runner,
+        "emit_api_stats_event",
+        lambda payload: captured_events.append(payload),
+    )
+
+    output_path = str(tmp_path / "kana_no_lang.txt")
+    runner.run("dummy-input.txt", output_path=output_path, save_cache=False)
+
+    assert provider.calls == 1
+    assert [block.prompt_text for block in doc.saved_blocks] == ["かなかなかなかなかなかなかなかなかなかな"]
+    retry_events = [
+        event for event in captured_events if event.get("phase") == "request_retry"
+    ]
+    assert not any(event.get("errorType") == "kana_residue" for event in retry_events)
 
 
 @pytest.mark.unit

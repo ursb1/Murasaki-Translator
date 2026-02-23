@@ -41,10 +41,45 @@ from murasaki_flow_v2.utils.api_stats_protocol import (
 )
 
 MAX_CONCURRENCY = 256
+DEFAULT_KANA_RETRY_THRESHOLD = 0.30
+DEFAULT_KANA_RETRY_MIN_CHARS = 20
+_KANA_CHAR_RE = re.compile(r"[\u3040-\u309F\u30A0-\u30FF]")
+_KANA_RATIO_BASE_RE = re.compile(
+    r"[A-Za-z0-9\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]"
+)
 
 
 class PipelineStopRequested(RuntimeError):
     """Raised when an external stop request asks runner to end gracefully."""
+
+
+class KanaResidueRetryError(RuntimeError):
+    """Raised when block output still contains too much kana and should be retried."""
+
+    def __init__(
+        self,
+        *,
+        ratio: float,
+        threshold: float,
+        kana_chars: int,
+        effective_chars: int,
+        min_chars: int,
+    ) -> None:
+        self.ratio = float(ratio)
+        self.threshold = float(threshold)
+        self.kana_chars = int(kana_chars)
+        self.effective_chars = int(effective_chars)
+        self.min_chars = int(min_chars)
+        super().__init__(
+            (
+                "KanaResidue:"
+                f" ratio={self.ratio:.3f}"
+                f" threshold={self.threshold:.3f}"
+                f" kana={self.kana_chars}"
+                f" effective={self.effective_chars}"
+                f" min_chars={self.min_chars}"
+            )
+        )
 
 
 class PipelineRunner:
@@ -82,6 +117,76 @@ class PipelineRunner:
         if not text:
             return False
         return text in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _resolve_kana_retry_settings(processing_cfg: Dict[str, Any]) -> Tuple[bool, float, int]:
+        enabled_raw = processing_cfg.get("kana_retry_enabled")
+        enabled = (
+            True
+            if enabled_raw is None
+            else PipelineRunner._parse_bool_flag(enabled_raw)
+        )
+
+        threshold = DEFAULT_KANA_RETRY_THRESHOLD
+        threshold_raw = processing_cfg.get("kana_retry_threshold")
+        if threshold_raw is not None and str(threshold_raw).strip() != "":
+            try:
+                parsed_threshold = float(threshold_raw)
+                if 0 <= parsed_threshold <= 1:
+                    threshold = parsed_threshold
+            except (TypeError, ValueError):
+                pass
+
+        min_chars = DEFAULT_KANA_RETRY_MIN_CHARS
+        min_chars_raw = processing_cfg.get("kana_retry_min_chars")
+        if min_chars_raw is not None and str(min_chars_raw).strip() != "":
+            try:
+                parsed_min_chars = int(min_chars_raw)
+                if parsed_min_chars >= 1:
+                    min_chars = parsed_min_chars
+            except (TypeError, ValueError):
+                pass
+
+        return enabled, threshold, min_chars
+
+    @staticmethod
+    def _compute_kana_ratio(text: str) -> Tuple[float, int, int]:
+        normalized = str(text or "")
+        effective_chars = len(_KANA_RATIO_BASE_RE.findall(normalized))
+        if effective_chars <= 0:
+            return 0.0, 0, 0
+        kana_chars = len(_KANA_CHAR_RE.findall(normalized))
+        return kana_chars / effective_chars, kana_chars, effective_chars
+
+    @staticmethod
+    def _evaluate_kana_retry(
+        translated: str,
+        *,
+        source_lang: str,
+        chunk_type: str,
+        enabled: bool,
+        threshold: float,
+        min_chars: int,
+    ) -> Dict[str, Any]:
+        ratio, kana_chars, effective_chars = PipelineRunner._compute_kana_ratio(translated)
+        normalized_lang = str(source_lang or "").strip().lower()
+        lang_eligible = normalized_lang in {"ja", "jp"}
+        chunk_eligible = chunk_type == "block"
+        eligible = bool(enabled and lang_eligible and chunk_eligible)
+        should_retry = bool(
+            eligible and effective_chars >= min_chars and ratio >= threshold
+        )
+        return {
+            "should_retry": should_retry,
+            "eligible": eligible,
+            "ratio": ratio,
+            "threshold": threshold,
+            "kanaChars": kana_chars,
+            "effectiveChars": effective_chars,
+            "minChars": min_chars,
+            "sourceLang": normalized_lang,
+            "chunkType": chunk_type,
+        }
 
     @staticmethod
     def _emit_api_stats_safe(payload: Dict[str, Any]) -> None:
@@ -967,9 +1072,10 @@ class PipelineRunner:
             rules_post_spec = pipeline.get("rules_post")
         if rules_pre_spec or rules_post_spec:
             processing_enabled = True
-        source_lang = (
-            str(processing_cfg.get("source_lang") or "ja").strip() or "ja"
-        )
+        source_lang_raw = processing_cfg.get("source_lang")
+        source_lang = str(source_lang_raw or "ja").strip() or "ja"
+        source_lang_explicit = bool(str(source_lang_raw or "").strip())
+        kana_retry_source_lang = source_lang if source_lang_explicit else ""
         # 默认关闭质量检查，需要在 Pipeline YAML processing.enable_quality
         # 或 CLI --enable-quality 中显式启用。
         enable_quality = processing_cfg.get("enable_quality")
@@ -981,6 +1087,11 @@ class PipelineRunner:
         if enable_text_protect is None:
             enable_text_protect = False
         strict_line_count = bool(processing_cfg.get("strict_line_count"))
+        (
+            kana_retry_enabled,
+            kana_retry_threshold,
+            kana_retry_min_chars,
+        ) = self._resolve_kana_retry_settings(processing_cfg)
 
         if processing_enabled:
             pre_rules = self._resolve_rules(rules_pre_spec)
@@ -1468,6 +1579,12 @@ class PipelineRunner:
                     and line_index is not None
                     and line_index < len(source_lines)
                 )
+                kana_retry_eligible = bool(
+                    kana_retry_enabled
+                    and chunk_type == "block"
+                    and str(kana_retry_source_lang or "").strip().lower()
+                    in {"ja", "jp"}
+                )
                 common_event_meta = {
                     "blockIndex": idx,
                     "lineIndex": line_index,
@@ -1483,6 +1600,9 @@ class PipelineRunner:
                     "linePolicyRef": line_policy_ref or "",
                     "linePolicyEnabled": line_policy_enabled,
                     "linePolicyEligible": line_policy_eligible,
+                    "kanaRetryEnabled": kana_retry_eligible,
+                    "kanaRetryThreshold": kana_retry_threshold,
+                    "kanaRetryMinChars": kana_retry_min_chars,
                     "contextAnchor": context_anchor,
                     "contextBlockEnd": context_block_end,
                     "contextBeforeChars": len(context_before),
@@ -1792,6 +1912,22 @@ class PipelineRunner:
                                 "LinePolicy: unexpected line count"
                             )
                         translated = checked[0]
+                    kana_retry_check = self._evaluate_kana_retry(
+                        translated,
+                        source_lang=kana_retry_source_lang,
+                        chunk_type=chunk_type,
+                        enabled=kana_retry_enabled,
+                        threshold=kana_retry_threshold,
+                        min_chars=kana_retry_min_chars,
+                    )
+                    if kana_retry_check["should_retry"]:
+                        raise KanaResidueRetryError(
+                            ratio=float(kana_retry_check["ratio"]),
+                            threshold=float(kana_retry_check["threshold"]),
+                            kana_chars=int(kana_retry_check["kanaChars"]),
+                            effective_chars=int(kana_retry_check["effectiveChars"]),
+                            min_chars=int(kana_retry_check["minChars"]),
+                        )
                     write_temp_entry(idx, block.prompt_text, translated)
                     return idx, TextBlock(
                         id=idx + 1,
@@ -1800,18 +1936,33 @@ class PipelineRunner:
                     )
                 except PipelineStopRequested:
                     raise
-                except (ProviderError, ParserError, LinePolicyError) as exc:
+                except (
+                    ProviderError,
+                    ParserError,
+                    LinePolicyError,
+                    KanaResidueRetryError,
+                ) as exc:
                     last_error = str(exc)
                     if adaptive is not None and isinstance(exc, ProviderError):
                         adaptive.note_error(last_error)
                     error_type = (
-                        "line_mismatch" if isinstance(exc, LinePolicyError)
+                        "kana_residue" if isinstance(exc, KanaResidueRetryError)
+                        else "line_mismatch" if isinstance(exc, LinePolicyError)
                         else "empty" if isinstance(exc, ParserError)
                         else "provider_error"
                     )
                     _status_code = None
                     _duration_ms: Optional[int] = None
                     _provider_error_type = error_type
+                    _retry_extra_meta: Dict[str, Any] = {}
+                    if isinstance(exc, KanaResidueRetryError):
+                        _retry_extra_meta = {
+                            "kanaRetryRatio": round(exc.ratio, 6),
+                            "kanaRetryThreshold": exc.threshold,
+                            "kanaRetryMinChars": exc.min_chars,
+                            "kanaChars": exc.kana_chars,
+                            "kanaEffectiveChars": exc.effective_chars,
+                        }
                     if isinstance(exc, ProviderError):
                         _status_code = exc.status_code
                         _duration_ms = exc.duration_ms
@@ -1903,6 +2054,7 @@ class PipelineRunner:
                                     **common_event_meta,
                                     **current_request_meta,
                                     "attempt": attempt_no,
+                                    **_retry_extra_meta,
                                 },
                             }
                         )
