@@ -1,4 +1,6 @@
-# Python
+# =============================================================================
+# Python environments and artifacts
+# =============================================================================
 __pycache__/
 *.py[cod]
 *$py.class
@@ -6,56 +8,29 @@ __pycache__/
 **/.pytest_cache/
 .venv
 venv-gpu/
+python_env/
 .env
 
-# IDE
+# =============================================================================
+# Editor / IDE
+# =============================================================================
 .vscode/
 .idea/
 
+# =============================================================================
+# Local playground and temporary files
+# =============================================================================
 demo/
 .tmp*/
-
-# Large Data & Models
-models/
-hf_cache/
-output/
-saves/
-archive/
-
-# Data (Ignore huge datasets, but keep config)
-data/*
-!data/dataset_info.json
-!data/.gitkeep
-!data/sft/.gitkeep
-
-# System
-thumbs.db
-desktop.ini
-
-docs/
-
-# GUI (Electron)
-GUI/node_modules/
-GUI/out/
-GUI/dist/
-GUI/.vite/
-GUI/.vitest/
-GUI/coverage/
-GUI/*.log
-
-# GUI/package-lock.json (Keep this tracked for consistency)
-
-python_env/
-
-# External Binaries (Do not commit large runtime binaries)
-llama-b7770-*/
-middleware/bin/
-middleware/models/
-middleware/temp/
-
-# Murasaki Translation Temp Files
 *.bak
 *.pause
+*.diff
+diff
+local
+
+# =============================================================================
+# Logs, coverage and test reports
+# =============================================================================
 *.log
 pytestdebug.log
 .coverage
@@ -64,37 +39,80 @@ htmlcov/
 **/test-results/
 **/reports/
 **/junit*.xml
-middleware/tests/smoke/.env
-middleware/tests/smoke/.cache/
-GUI/release/
-GUI/dist-native/
+
+# =============================================================================
+# OS metadata
+# =============================================================================
+thumbs.db
+desktop.ini
 .DS_Store
-dev_start.bat
-repo_download_stats.bat
-tools/repo_download_stats.ps1
-changelog.private
-*.diff
 
-# User Data & Glossaries
-middleware/glossaries/
-GUI/middleware/glossaries/
+# =============================================================================
+# Large assets and generated outputs
+# =============================================================================
+models/
+hf_cache/
+output/
+saves/
+archive/
+llama-b7770-*/
+release/
+download-stats-output/
 
-diff
+# =============================================================================
+# Data (ignore bulk data, keep index placeholders tracked)
+# =============================================================================
+data/*
+!data/dataset_info.json
+!data/.gitkeep
+!data/sft/.gitkeep
+
+# =============================================================================
+# GUI (Electron / Vite)
+# =============================================================================
+GUI/node_modules/
+GUI/out/
+GUI/dist/
+GUI/dist-native/
+GUI/release/
+GUI/.vite/
+GUI/.vitest/
+GUI/coverage/
+GUI/*.log
+.vite
+# GUI/package-lock.json is intentionally tracked for consistency.
+
+# =============================================================================
+# Middleware runtime binaries, models and temp files
+# =============================================================================
+middleware/bin/
+middleware/models/
+middleware/temp/
 middleware/temp_rules_post.json
 middleware/temp_rules_pre.json
 middleware/temp_retry_post.json
 middleware/environment_report.json
-
-release/
-docs/
-
-AGENTS.md
+middleware/tests/smoke/.env
+middleware/tests/smoke/.cache/
 middleware/remote-sync
 middleware/uploads
 middleware/outputs
 
+# =============================================================================
+# User data and glossaries
+# =============================================================================
+middleware/glossaries/
+GUI/middleware/glossaries/
+
+# =============================================================================
+# Project docs, scripts and private metadata
+# =============================================================================
+docs/
+dev_start.bat
+repo_download_stats.bat
+tools/repo_download_stats.ps1
+changelog.private
+AGENTS.md
 .claude
 .keiyaku/
-local
-download-stats-output/
-.vite
+docs/
