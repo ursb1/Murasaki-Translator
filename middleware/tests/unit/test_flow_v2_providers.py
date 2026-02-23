@@ -1,4 +1,5 @@
 import pytest
+import threading
 
 from murasaki_flow_v2.providers.base import BaseProvider, ProviderRequest, ProviderResponse
 from murasaki_flow_v2.providers.pool import PoolProvider
@@ -191,3 +192,39 @@ def test_openai_compat_rpm_limiter_schedules_fixed_intervals(monkeypatch):
     assert len(sleeps) == 2
     assert sleeps[0] == pytest.approx(1.0, rel=1e-6)
     assert sleeps[1] == pytest.approx(1.0, rel=1e-6)
+
+
+@pytest.mark.unit
+def test_openai_compat_session_is_thread_local(monkeypatch):
+    import murasaki_flow_v2.providers.openai_compat as provider_module
+
+    provider = OpenAICompatProvider(
+        {
+            "id": "api_demo",
+            "type": "openai_compat",
+            "base_url": "https://api.example.com/v1",
+            "model": "demo-model",
+        }
+    )
+    created = {"count": 0}
+
+    class DummySession:
+        pass
+
+    def fake_session():
+        created["count"] += 1
+        return DummySession()
+
+    monkeypatch.setattr(provider_module.requests, "Session", fake_session)
+    main_thread_session = provider._get_session()
+    sessions = [main_thread_session]
+
+    def worker():
+        sessions.append(provider._get_session())
+
+    t = threading.Thread(target=worker)
+    t.start()
+    t.join()
+
+    assert created["count"] == 2
+    assert sessions[0] is not sessions[1]
