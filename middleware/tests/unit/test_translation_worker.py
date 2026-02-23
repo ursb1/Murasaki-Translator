@@ -322,6 +322,47 @@ async def test_translate_disables_retry_prompt_feedback(monkeypatch, tmp_path):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_translate_does_not_pass_qc_kana_flags(monkeypatch, tmp_path):
+    worker = TranslationWorker(model_path="model.gguf")
+    worker._current_config = {
+        "model_path": "model.gguf",
+        "ctx": 2048,
+        "gpu_layers": -1,
+        "flash_attn": False,
+        "kv_cache_type": "f16",
+        "parallel": 1,
+        "use_large_batch": False,
+        "batch_size": None,
+        "seed": None,
+    }
+    monkeypatch.setattr(worker, "is_ready", lambda: True)
+
+    captured = {}
+
+    async def fake_create_subprocess_exec(*cmd, **kwargs):
+        captured["cmd"] = list(cmd)
+        return DummyProcess([])
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    task = TranslationTask(
+        task_id="qc-kana-off",
+        request=DummyRequest(),
+    )
+    outputs_dir = Path(__file__).resolve().parents[2] / "outputs"
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+    output_path = outputs_dir / f"{task.task_id}_output.txt"
+    output_path.write_text("ok", encoding="utf-8")
+
+    result = await worker.translate(task)
+    assert result == "ok"
+    cmd = captured["cmd"]
+    assert "--no-qc-kana" not in cmd
+    assert "--qc-kana" not in cmd
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_start_server_builds_ctx_total(monkeypatch, tmp_path):
     server_path = tmp_path / "llama-server.exe"
     model_path = tmp_path / "model.gguf"

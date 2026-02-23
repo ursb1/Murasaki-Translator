@@ -74,6 +74,20 @@ from murasaki_translator.fixer import NumberFixer, Normalizer, PunctuationFixer,
 from murasaki_translator.documents import DocumentFactory
 from murasaki_translator.utils.alignment_handler import AlignmentHandler
 
+V1_KANA_RETRY_THRESHOLD = 0.30
+_KANA_CHAR_RE = re.compile(r"[\u3040-\u30FF\u31F0-\u31FF]")
+_NON_SPACE_RE = re.compile(r"\S")
+
+
+def _calculate_kana_ratio(text: str) -> tuple:
+    normalized = str(text or "")
+    effective_chars = len(_NON_SPACE_RE.findall(normalized))
+    if effective_chars <= 0:
+        return 0.0, 0, 0
+    kana_chars = len(_KANA_CHAR_RE.findall(normalized))
+    return kana_chars / effective_chars, kana_chars, effective_chars
+
+
 def load_glossary(path: Optional[str]) -> Dict[str, str]:
     """
     Robustly load glossary from JSON file.
@@ -403,6 +417,8 @@ def translate_block_with_retry(
     best_result = None
     retry_history = []  # Track all retry attempts for debugging
     anchor_attempts = 0
+    kana_retry_attempts = 0
+    kana_retry_budget = 1
     structural_retry_happened = False
     anchor_retry_budget = 0
     if getattr(args, "anchor_check", False):
@@ -423,8 +439,8 @@ def translate_block_with_retry(
         current_temp = args.temperature
         current_rep_base = args.rep_penalty_base
         
-        if retry_reason in ('line_check', 'strict_line_check', 'anchor_missing'):
-            retry_steps = max(1, global_attempts + anchor_attempts)
+        if retry_reason in ('line_check', 'strict_line_check', 'anchor_missing', 'kana_residue'):
+            retry_steps = max(1, global_attempts + anchor_attempts + kana_retry_attempts)
             current_temp = min(args.temperature + (retry_steps * args.retry_temp_boost), 1.2)
         elif retry_reason == 'glossary':
             current_temp = max(args.temperature - (glossary_attempts * args.retry_temp_boost), 0.3)
@@ -534,6 +550,29 @@ def translate_block_with_retry(
             # No retry budget left: keep current output and skip lower-priority retries
             structural_retry_happened = True
 
+        if not structural_retry_happened:
+            translated_text_for_kana = '\n'.join(parsed_lines)
+            kana_ratio, kana_chars, effective_chars = _calculate_kana_ratio(
+                translated_text_for_kana
+            )
+            if effective_chars > 0 and kana_ratio >= V1_KANA_RETRY_THRESHOLD:
+                if kana_retry_attempts < kana_retry_budget:
+                    kana_retry_attempts += 1
+                    retry_reason = 'kana_residue'
+                    retry_payload = {
+                        'block': block_idx + 1,
+                        'attempt': kana_retry_attempts,
+                        'type': 'kana_residue',
+                        'ratio': round(kana_ratio, 6),
+                        'threshold': V1_KANA_RETRY_THRESHOLD,
+                        'kana_chars': kana_chars,
+                        'effective_chars': effective_chars,
+                        'temp': round(current_temp, 2),
+                    }
+                    retry_history.append({**retry_payload, 'raw_output': raw_output or ''})
+                    safe_print_json("JSON_RETRY", retry_payload)
+                    continue
+
         if glossary and args.output_hit_threshold > 0 and not structural_retry_happened:
             translated_text = '\n'.join(parsed_lines)
             passed, coverage, cot_coverage, hit, total = calculate_glossary_coverage(
@@ -582,10 +621,11 @@ def translate_block_with_retry(
     warnings = []
     try:
         qc = QualityChecker(glossary=glossary)
+        qc_source_lang = "ja"
         warnings = qc.check_output(
             [l for l in original_src_text.split('\n') if l.strip()], 
             [l for l in processed_text.split('\n') if l.strip()], 
-            source_lang="ja"
+            source_lang=qc_source_lang
         )
     except Exception as e:
         logger.debug(f"[QualityChecker] Check failed: {e}")
@@ -2173,6 +2213,29 @@ def main():
                                     {"block": curr_disp, "src": res['src_text'], "output": res['preview_text']}
                                 )
                                 preview_sent.add(next_write_idx)
+
+                            warnings_list = res.get("warnings") or []
+                            retry_history = res.get("retry_history") or []
+                            last_retry_type = None
+                            if retry_history:
+                                try:
+                                    last_retry_type = retry_history[-1].get("type")
+                                except Exception:
+                                    last_retry_type = None
+                            if warnings_list:
+                                for warning in warnings_list:
+                                    if isinstance(warning, dict):
+                                        safe_print_json(
+                                            "JSON_WARNING",
+                                            {
+                                                "block": curr_disp,
+                                                "line": warning.get("line"),
+                                                "type": warning.get("type"),
+                                                "message": warning.get("message", ""),
+                                                "retry_count": len(retry_history),
+                                                "last_retry_type": last_retry_type,
+                                            },
+                                        )
                             
                             if translation_cache:
                                 w_types = [w['type'] for w in res["warnings"]] if res["warnings"] else []

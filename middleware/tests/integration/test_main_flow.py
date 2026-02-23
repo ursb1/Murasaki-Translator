@@ -201,6 +201,15 @@ def test_main_flow_quality_warnings():
 
 
 @pytest.mark.integration
+def test_main_flow_kana_residue_retry_not_consume_max_retry_budget():
+    args = _make_args(max_retries=0, coverage_retries=0, anchor_check=False)
+    result = _run_flow("hello", ["\u304b\u306a\u304b\u306a\u304b\u306a", "中文输出"], args)
+    retry_types = [item.get("type") for item in result["retry_history"]]
+    assert "kana_residue" in retry_types
+    assert result["out_text"] == "中文输出"
+
+
+@pytest.mark.integration
 def test_main_flow_empty_output_no_retry_fallback():
     args = _make_args(max_retries=0)
     result = _run_flow("hello", [""], args)
