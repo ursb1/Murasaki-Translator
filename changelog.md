@@ -1,39 +1,71 @@
 # Murasaki Translator - Changelog
 
+## [2.1.0] - 2026-02-23
+
+### Changed
+
+#### [GUI界面层] 队列存储兼容收敛
+
+*   新增 `libraryQueueStorage` 统一队列持久化入口：仅写入 `library_queue`，并在写入时自动清理旧键 `file_queue`。
+*   启动读取改为一次性兼容迁移：支持从旧 `file_queue` 与旧字符串数组格式 `library_queue` 迁移到最新 `QueueItem[]` 结构。
+*   `App` / `Dashboard` / `LibraryView` / `HistoryView` 的队列读写路径统一复用该模块，降低跨页面状态分叉风险。
+
+#### [GUI界面层] 队列状态语义一致性
+
+*   队列状态模型补齐 `interrupted`，用户停止任务不再误记为 `failed`。
+*   任务启动阶段补齐 `processing` 状态标记；启动失败路径回落 `failed` 并收敛索引状态，避免运行态悬挂。
+*   “重试失败项”与失败筛选统一覆盖 `failed` / `interrupted` 两类可重试状态。
+
+#### [主进程与中间件执行层] Pipeline V2 兼容字段迁移
+
+*   新增 profile 兼容归一逻辑：`strictConcurrency` / `serial_requests` 统一迁移为 `strict_concurrency`。
+*   新增 chunk 类型兼容归一：`type: legacy` 自动迁移为 `chunk_type: block`，并移除旧字段。
+*   GUI 本地 profiles 与 Middleware `ProfileStore` 在读取时进行 best-effort 自动回写，保存时统一输出最新字段。
+*   运行时配置读取移除 `serial_requests` 回退分支，避免新旧字段并存导致语义分叉。
+
+#### [中间件执行层] 规则脚本超时隔离执行
+
+*   `RuleProcessor` 的 Python 规则执行由线程模型改为子进程隔离执行，超时时可强制终止，避免超时后后台线程继续运行。
+*   子进程执行保持安全内置函数限制，并兼容 `protector` 上下文序列化恢复，不改变规则函数签名与主链路行为。
+*   超时与运行时异常统一输出可观测错误信息，规则失败时保持“回退原文”策略不变。
+
+#### [测试工程层] 回归覆盖
+
+*   新增 `libraryQueueStorage` 单测，覆盖旧键迁移、异常 payload 兜底、写入清理旧键等路径。
+*   新增 `pipelineV2Shared` 单测，覆盖 `strict_concurrency` 与 chunk 类型兼容归一逻辑。
+*   更新 `test_flow_v2_profiles` 与 `test_rule_processor`，覆盖 profile 自动迁移回写与 Python 规则子进程执行链路。
+
 ## [2.0.3] - 2026-02-23
 
-### 最小风险修复包（事件闭环与可观测性）
+### Changed
+
+#### [GUI界面层] 事件闭环与可观测性
 
 *   `scan-directory` 异常路径补充结构化告警日志（`console.warn` + `replyLogUpdate WARN`），并保持返回协议不变（失败仍返回 `[]`）。
 *   退出清理流程新增 remote 日志队列强制 flush 与日志定时器清理，降低退出瞬间日志丢失风险。
 *   `Sidebar` 的 `View` 导入调整为 `type-only import`，消除运行时导入环，避免潜在加载阻塞。
 *   新增 `ipcDiagnostics` 单测，覆盖 `scan-directory` 失败信息的格式化输出。
 
-### 稳定性与并发互斥（主链路）
-
-*   修复 V1 启停竞态与 `runId` 串扰：启动冲突会明确拒绝并回发 `process-exit`，旧进程退出不再误伤新任务。
-*   修复启动早退未闭环问题：脚本缺失/模型缺失/平台检测失败等路径统一回发 `process-exit`，避免前端卡运行态。
-*   新增 V1/V2 双向互斥：V2 运行时阻止 V1 启动，V1/remote 运行时阻止 V2 启动，避免功能对冲。
-*   远程模式取消链路增强：取消超时与回退退出事件绑定正确 `runId`，轮询异常时增加后台 best-effort cancel 重试。
-
-### Worker 取消响应与参数一致性
-
-*   修复 `translation_worker` 在“静默输出”场景下取消不及时：读取子进程输出改为短超时轮询，循环优先检查取消请求并及时终止进程树。
-*   统一 `lineTolerancePct` 归一化逻辑，兼容 `0.2` 与 `20` 两种输入口径，避免参数被重复缩放或误传。
-
-### 队列可达性、i18n 与清理
+#### [GUI界面层] 队列可达性、i18n 与清理
 
 *   Watch Folder 入队稳定性提升：提交时二次去重，恢复监听后回读并对齐 active/enabled 状态。
 *   增加跨页面队列同步兜底：非 Library 页面收到 watch 新文件时也会写入队列并广播更新事件。
 *   Dashboard 去除硬编码文案并补齐中/英/日三语键值，完善 API 方案相关提示。
 *   清理无引用死代码：移除 `RemoteClient.translateAndWait`。
 
-### 测试与仓库规范
+#### [主进程编排层] 稳定性与并发互斥（主链路）
 
-*   新增单测覆盖：`translation_worker` 静默输出场景下取消请求可及时生效。
-*   全仓行尾规范统一为 LF：新增 `.gitattributes`（`* text=auto eol=lf`），消除 CRLF/mixed 行尾差异噪音。
+*   修复 V1 启停竞态与 `runId` 串扰：启动冲突会明确拒绝并回发 `process-exit`，旧进程退出不再误伤新任务。
+*   修复启动早退未闭环问题：脚本缺失/模型缺失/平台检测失败等路径统一回发 `process-exit`，避免前端卡运行态。
+*   新增 V1/V2 双向互斥：V2 运行时阻止 V1 启动，V1/remote 运行时阻止 V2 启动，避免功能对冲。
+*   远程模式取消链路增强：取消超时与回退退出事件绑定正确 `runId`，轮询异常时增加后台 best-effort cancel 重试。
 
-### 可靠性与依赖闭环
+#### [中间件执行层] Worker 取消响应与参数一致性
+
+*   修复 `translation_worker` 在“静默输出”场景下取消不及时：读取子进程输出改为短超时轮询，循环优先检查取消请求并及时终止进程树。
+*   统一 `lineTolerancePct` 归一化逻辑，兼容 `0.2` 与 `20` 两种输入口径，避免参数被重复缩放或误传。
+
+#### [中间件执行层] 可靠性与依赖闭环
 
 *   Remote API 取消收敛补强：`DELETE /api/v1/translate/{task_id}` 在 `RUNNING` 且持有进程句柄时会执行 best-effort immediate kill，并同步收敛到 `CANCELLED` 状态，降低取消延迟窗口。
 *   Remote API 并发初始化竞态修复：`worker` 懒初始化改为全局锁双检，避免并发任务触发重复初始化。
@@ -43,9 +75,29 @@
 *   CI/Release 依赖闭环补齐：`middleware/requirements-test.txt` 显式包含 `requirements.txt` 与 `server/requirements.txt`，CI 与 Release 工作流新增关键依赖导入校验（`fastapi/uvicorn/httpx/multipart/pydantic`）。
 *   仓库忽略规则补充：新增 `.keiyaku/` 到 `.gitignore`，避免临时协作产物进入版本库。
 
+#### [中间件执行层] 测试与仓库规范
+
+*   新增单测覆盖：`translation_worker` 静默输出场景下取消请求可及时生效。
+*   全仓行尾规范统一为 LF：新增 `.gitattributes`（`* text=auto eol=lf`），消除 CRLF/mixed 行尾差异噪音。
+
 ## [2.0.2] - 2026-02-23
 
-### EPUB结构翻译优化
+### Changed
+
+#### [GUI界面层] API 管理中心与 Sandbox 联调
+
+*   `ApiManagerView` 新增关键字段说明与提示：并发/严格并发/RPM/重试/Base URL/API Key/解析器/策略等配置补充 tooltip 与表单 hint，减少误配。
+*   Chunk 配置页新增“块模式质量检查”分组：支持在 `block` 模式配置 `kana_retry_source_lang / kana_retry_threshold / kana_retry_min_chars`，`line` 模式下自动禁用并给出提示。
+*   Pipeline Sandbox 调试链路补齐 `processing.kana_retry_*` 注入，联调时可直接验证 `kana_residue` 的触发与重试行为。
+
+#### [中间件执行层] API模式日语残留重试
+
+*   Pipeline V2 在 `block` 模式新增假名残留比例重试：当 `processing.source_lang` **显式配置**为 `ja/jp` 且译文假名比例达到阈值时，自动触发重翻。
+*   新增可配置项：`processing.kana_retry_enabled`（默认 `true`）、`processing.kana_retry_threshold`（默认 `0.30`）、`processing.kana_retry_min_chars`（默认 `32`）。
+*   重试类型新增 `kana_residue`，并在 `request_retry` 事件元数据中补充 `kanaRetryRatio / kanaRetryThreshold / kanaChars / kanaEffectiveChars`，便于定位“输出残留日文”问题。
+*   分块策略支持就近覆盖：`chunk.options` 可覆盖 `kana_retry_enabled / kana_retry_threshold / kana_retry_min_chars`，并支持 `kana_retry_source_lang`（兼容 `source_lang`）按策略局部生效。
+
+#### [中间件执行层] EPUB结构翻译优化
 
 *   EPUB 文档工厂默认剥离注音包装标签：`EpubDocument` 在 `load/save` 两侧统一移除 `<ruby>/<rb>/<rt>/<rp>/<rtc>`，仅保留正文基文本，降低模型输入中的标签噪声与结构干扰。
 *   EPUB 重建链路与加载链路对齐：保存阶段使用与加载阶段一致的 ruby 预处理，避免“翻译时已去注音、重建时标签形态不一致”导致的映射偏差。
@@ -54,78 +106,69 @@
     *   `save` 侧验证重建后的章节内容不再包含 `ruby/rb/rt` 标签；
     *   继续保留锚点归一化测试，确保结构化回填稳定。
 
-### API模式日语残留重试
-
-*   Pipeline V2 在 `block` 模式新增假名残留比例重试：当 `processing.source_lang` **显式配置**为 `ja/jp` 且译文假名比例达到阈值时，自动触发重翻。
-*   新增可配置项：`processing.kana_retry_enabled`（默认 `true`）、`processing.kana_retry_threshold`（默认 `0.30`）、`processing.kana_retry_min_chars`（默认 `32`）。
-*   重试类型新增 `kana_residue`，并在 `request_retry` 事件元数据中补充 `kanaRetryRatio / kanaRetryThreshold / kanaChars / kanaEffectiveChars`，便于定位“输出残留日文”问题。
-*   分块策略支持就近覆盖：`chunk.options` 可覆盖 `kana_retry_enabled / kana_retry_threshold / kana_retry_min_chars`，并支持 `kana_retry_source_lang`（兼容 `source_lang`）按策略局部生效。
-
-### API 管理中心与 Sandbox 联调
-
-*   `ApiManagerView` 新增关键字段说明与提示：并发/严格并发/RPM/重试/Base URL/API Key/解析器/策略等配置补充 tooltip 与表单 hint，减少误配。
-*   Chunk 配置页新增“块模式质量检查”分组：支持在 `block` 模式配置 `kana_retry_source_lang / kana_retry_threshold / kana_retry_min_chars`，`line` 模式下自动禁用并给出提示。
-*   Pipeline Sandbox 调试链路补齐 `processing.kana_retry_*` 注入，联调时可直接验证 `kana_residue` 的触发与重试行为。
-
-### V1 重试与可观测性补强
+#### [中间件执行层] V1 重试与可观测性补强
 
 *   V1 单块重试新增 `kana_residue` 路径（预算 1 次，不占用 `max_retries`），用于拦截“译文残留较高比例假名”场景。
 *   主流程新增 `JSON_WARNING` 事件输出，补充 `retry_count / last_retry_type` 元数据，便于前端和日志侧定位重试上下文。
 
-### 文案与测试覆盖补齐
+#### [中间件执行层] 文案与测试覆盖补齐
 
 *   Dashboard 补充 `kana_residue` 重试消息映射，三语 i18n 同步新增相关键值，避免重试类型显示回退到通用文案。
 *   新增/更新单元与集成测试：覆盖 EPUB ruby 清洗、V2 chunk 覆盖优先级、V1 `kana_residue` 不占用重试预算、worker 参数透传边界。
 
 ## [2.0.1] - 2026-02-23
 
-### 稳定性与恢复链路
+### Changed
+
+#### [GUI界面层] 并发与性能体验
+
+*   OpenAI 兼容配置新增 `strict_concurrency`（兼容 `serial_requests`），支持固定并发上限模式（禁用自适应并发）。
+*   Dashboard 新增 V2 速度平滑模块（`v2SpeedMetrics`），缓解短时抖动与异常尖峰，图表显示更平稳。
+*   Dashboard 预览与日志内存边界收敛：新增可见日志上限、预览块上限、持久化节流与字符预算，降低长任务 UI 卡顿与 localStorage 膨胀风险。
+
+#### [GUI界面层] 稳定性与恢复链路
 
 *   V2 输出检测与续传识别增强：`check-output-file-exists` 新增 `resumeOutputPath`，支持识别 `.temp.jsonl` / `.cache.json` / 输出目录与缓存目录下的候选工件，减少误判“无法续传”。
 *   校对保存容错增强：`save-cache` 新增回退写入路径（优先原路径，失败时尝试 `outputPath.cache.json`），并将回退结果透传到前端，避免因路径异常导致“保存失败但不可恢复”。
 *   校对回写链路重构：新增 `proofreadSavePath` 工具，统一 Windows 路径判定、缓存保存结果归一化与输出路径解析，降低跨路径场景下的回写失败率。
 *   Pipeline V2 临时文件治理升级：Runner 将 stop-flag 与临时规则文件迁移到进程级临时目录，新增陈旧会话目录清理与遗留临时文件清理，减少长跑任务后残留文件。
 
-### API 统计与可观测性
+#### [中间件执行层] API 统计与可观测性
 
 *   API 统计面板扩展：新增错误率/成功率趋势、状态分类（2xx/4xx/5xx）分布、首/末请求时间、观测窗口、Token 出入比、平均重试等指标。
 *   统计明细可读性增强：请求列表支持展开详情（请求体/响应体/元数据/请求头/响应头）与逐条复制，清空操作改为统一确认弹窗。
 *   主进程与 Flow V2 统计事件补充：请求错误路径补齐 `requestHeaders/responseHeaders/responsePayload`，请求成功路径补齐 `meta` 与响应侧元信息，便于排障与审计。
 
-### 并发与性能体验
-
-*   OpenAI 兼容配置新增 `strict_concurrency`（兼容 `serial_requests`），支持固定并发上限模式（禁用自适应并发）。
-*   Dashboard 新增 V2 速度平滑模块（`v2SpeedMetrics`），缓解短时抖动与异常尖峰，图表显示更平稳。
-*   Dashboard 预览与日志内存边界收敛：新增可见日志上限、预览块上限、持久化节流与字符预算，降低长任务 UI 卡顿与 localStorage 膨胀风险。
-
 ## [2.0.0] - 2026-02-22
 
-### Pipeline V2 引擎上线（核心）
+### Changed
+
+#### [GUI界面层] API 管理中心（GUI）
+
+*   新增 `ApiManagerView` 页面与侧栏入口，支持 API / Pipeline / Prompt / Parser / Policy / Chunk 六类配置的一体化管理。
+*   支持 YAML 编辑、引用联动更新、本地/服务端双路径读写、批量加载、冲突提示与安全校验。
+*   新增联机工具：API 连通性测试、模型列表探测、并发压测、Pipeline Sandbox 单条链路调试（预处理→请求→响应→解析→后处理）。
+
+#### [中间件执行层] Pipeline V2 引擎上线（核心）
 
 *   新增 `murasaki_flow_v2` 独立运行时，包含 Provider/Prompt/Parser/Policy/Chunk 全链路注册与执行，支持从配置组合成可复用 Pipeline。
 *   新增 Pipeline V2 Runner：支持并发执行（含自适应并发 `concurrency=0`）、中断/强杀、断点恢复（resume + cache + fingerprint），并可按需启用质量检查与文本保护。
 *   新增 Flow V2 结构化日志协议与统计上报：统一输出路径、缓存路径、重试事件、告警事件与最终统计。
 *   补充：收敛本地字体权限为仅允许 `local-fonts`，并恢复 `.vscode` 本地调试配置默认不入库策略。
 
-### API 管理中心（GUI）
-
-*   新增 `ApiManagerView` 页面与侧栏入口，支持 API / Pipeline / Prompt / Parser / Policy / Chunk 六类配置的一体化管理。
-*   支持 YAML 编辑、引用联动更新、本地/服务端双路径读写、批量加载、冲突提示与安全校验。
-*   新增联机工具：API 连通性测试、模型列表探测、并发压测、Pipeline Sandbox 单条链路调试（预处理→请求→响应→解析→后处理）。
-
-### 主流程切换到双引擎模式
+#### [中间件执行层] 主流程切换到双引擎模式
 
 *   Dashboard 新增 `v1 / v2` 引擎切换：`v1` 继续本地模型翻译，`v2` 走 API Pipeline 翻译。
 *   队列与历史记录接入 V2 字段：支持单文件覆盖 `engineMode`，并在 `useGlobalDefaults=false` 时允许文件级 `v2PipelineId` 覆盖全局 Pipeline；历史记录新增 `engineVersion`、`v2Config`、`v2Stats`。
 *   运行态监控分离：V1 显示硬件监控，V2 显示 API 监控（URL / Ping / RPM / 并发）。
 
-### 后端服务与配置体系
+#### [中间件执行层] 后端服务与配置体系
 
 *   新增 Pipeline V2 本地 API Server（Loopback-only），提供 profiles CRUD、校验与 sandbox 接口；服务不可用时自动回退本地文件模式。
 *   新增配置目录迁移与默认模板下发：自动从旧 `pipeline_v2_profiles` 迁移到用户目录，并补齐默认 profiles。
 *   新增 OpenAI 兼容 Provider 与 Pool Provider（多端点权重分发、RPM 限流、API Key 轮换、超时与请求参数透传）。
 
-### 解析与策略能力扩展
+#### [中间件执行层] 解析与策略能力扩展
 
 *   新增多种 Parser：`plain` / `line_strict` / `json_array` / `json_object` / `jsonl` / `tagged_line` / `regex` / `any` / `python`。
 *   新增 Pipeline 规则校验：字段合法性、引用完整性、Prompt/Parser 组合约束、Chunk/LinePolicy 约束、Python 脚本风险告警。
@@ -133,22 +176,18 @@
 
 ## [1.8.0] - 2026-02-14
 
-### 校对与重翻
+### Changed
 
-*   校对页新增“重翻配置”弹窗，支持取消/保存，支持模型路径/术语表路径/预设/设备与显卡/CTX/温度/重复惩罚/严格模式/行数校验/锚点校验/覆盖率重试等参数配置，均可直接影响单块重翻。
-*   单块重翻前新增确认提示，避免误触覆盖当前译文。
-*   `retranslate-block` 透传补齐 `strict-mode`、`line-check`、`anchor-check`、`coverage` 等重试相关参数，并支持关闭覆盖率重试。
+#### [中间件执行层] 一致性检查
 
-### 质量控制与重试
+*   校对页新增全局一致性检查，支持跨文件扫描术语/译名冲突并定位到例句。
 
-*   新增“核心锚点缺失即重试”校验：支持 EPUB/SRT/ASS/对齐 TXT，默认开启并可配置重试次数。
-*   重试预算改为取 `max(max_retries, coverage_retries, anchor_check_retries)`，避免多类重试叠加导致过量重试。
-*   结构类重试（空输出/行数/锚点）优先，触发并通过后跳过术语覆盖率重试。
-*   仅空输出失败回填 `[翻译失败] + 原文`，其他失败保留最后一次或最佳输出。
-*   高级设置/队列配置/远程链路/历史统计全面同步锚点校验与重试参数，默认覆盖率重试调整为 1 次。
-*   质量检查优化：高相似度检测过滤锚点/文件名/字幕时间轴等噪声，仅在完整句子范围内触发；行数不匹配改为基于有效内容行统计；忽略韩文残留提示。
+#### [中间件执行层] 历史与运行
 
-### 搜索与体验
+*   历史记录支持一键应用配置、重入队并可自动启动队列。
+*   历史记录支持导出日志与快速定位输出路径。
+
+#### [中间件执行层] 搜索与体验
 
 *   校对页搜索改为按“行”匹配，支持跳转到具体行并居中定位。
 *   行模式与块模式统一支持关键词高亮；块模式补齐行级锚点以保证精准跳转。
@@ -157,16 +196,28 @@
 *   质量检查侧栏选中态改为主色系，并避免工具栏按钮在窄窗口下覆盖侧栏。
 *   队列列表新增搜索与状态筛选，便于快速定位文件与任务。
 
-### 历史与运行
+#### [中间件执行层] 文本保护与参数链路
 
-*   历史记录支持一键应用配置、重入队并可自动启动队列。
-*   历史记录支持导出日志与快速定位输出路径。
+*   文本保护入口升级为预处理规则页顶层入口，移除后处理入口/二级入口并补充示例与说明；占位符改为 `@P{n}@` 且仅对 `.txt`（非对齐模式）生效。
+*   自定义保护规则支持 JSON 列表与逐行正则，支持 `#`/`//` 注释、`!` 移除内置规则、`+` 强制加入，并在提供规则时自动启用文本保护。
+*   参数链路修复：coverageCheck 关闭时明确传递 0 阈值，`retry_prompt_feedback` 支持 `--no-retry-prompt-feedback` 且本地/远程一致生效。
 
-### 一致性检查
+#### [中间件执行层] 校对与重翻
 
-*   校对页新增全局一致性检查，支持跨文件扫描术语/译名冲突并定位到例句。
+*   校对页新增“重翻配置”弹窗，支持取消/保存，支持模型路径/术语表路径/预设/设备与显卡/CTX/温度/重复惩罚/严格模式/行数校验/锚点校验/覆盖率重试等参数配置，均可直接影响单块重翻。
+*   单块重翻前新增确认提示，避免误触覆盖当前译文。
+*   `retranslate-block` 透传补齐 `strict-mode`、`line-check`、`anchor-check`、`coverage` 等重试相关参数，并支持关闭覆盖率重试。
 
-### 队列与配置
+#### [中间件执行层] 质量控制与重试
+
+*   新增“核心锚点缺失即重试”校验：支持 EPUB/SRT/ASS/对齐 TXT，默认开启并可配置重试次数。
+*   重试预算改为取 `max(max_retries, coverage_retries, anchor_check_retries)`，避免多类重试叠加导致过量重试。
+*   结构类重试（空输出/行数/锚点）优先，触发并通过后跳过术语覆盖率重试。
+*   仅空输出失败回填 `[翻译失败] + 原文`，其他失败保留最后一次或最佳输出。
+*   高级设置/队列配置/远程链路/历史统计全面同步锚点校验与重试参数，默认覆盖率重试调整为 1 次。
+*   质量检查优化：高相似度检测过滤锚点/文件名/字幕时间轴等噪声，仅在完整句子范围内触发；行数不匹配改为基于有效内容行统计；忽略韩文残留提示。
+
+#### [中间件执行层] 队列与配置
 
 *   新增全局配置快照导入/导出，支持跨机器迁移与分享配置，导入前提示覆盖并展示版本信息。
 *   新增队列导入/导出（JSON）与合并/替换模式，提供汇总提示并过滤重复/不支持格式。
@@ -174,13 +225,7 @@
 *   配置/队列/调试信息导出与导入增加明确成功/失败反馈，避免静默失败。
 *   缓存输出命名改为包含模型信息，避免多模型覆盖同名缓存。
 
-### 文本保护与参数链路
-
-*   文本保护入口升级为预处理规则页顶层入口，移除后处理入口/二级入口并补充示例与说明；占位符改为 `@P{n}@` 且仅对 `.txt`（非对齐模式）生效。
-*   自定义保护规则支持 JSON 列表与逐行正则，支持 `#`/`//` 注释、`!` 移除内置规则、`+` 强制加入，并在提供规则时自动启用文本保护。
-*   参数链路修复：coverageCheck 关闭时明确传递 0 阈值，`retry_prompt_feedback` 支持 `--no-retry-prompt-feedback` 且本地/远程一致生效。
-
-### 测试与CI
+#### [测试工程层] 测试与CI
 
 *   新增 pytest + vitest 测试体系，分层 `unit/integration/contract/smoke`，本地默认可运行。
 *   补齐 middleware 关键模块单测与主流程集成测试（含 API 任务状态/清理、HF helper、TranslationWorker 关键分支）。
@@ -189,26 +234,9 @@
 
 ## [1.7.1] - 2026-02-14
 
-### 规则系统与文本处理
+### Changed
 
-*   规则引擎新增 `python` 脚本规则：安全执行（禁用危险调用、长度限制、超时、允许 `re`、安全内建）、严格行数模式保护，并记录执行日志（`middleware/rule_processor.py`）。
-*   RuleEditor 支持规则配置组（创建/重命名/删除/切换/导入/导出），新增 Python 脚本编辑与模板插入，沙盒执行链路与交互优化，全面接入 i18n（`GUI/src/renderer/src/components/RuleEditor.tsx`）。
-*   新增 `test-rules` IPC，沙盒调用后端规则引擎并从 stdout/stderr 提取 JSON 结果（`GUI/src/main/index.ts`）。
-*   单文件配置新增预处理/后处理配置组覆盖（`rulesPreProfileId/rulesPostProfileId`），Dashboard 启动时按配置组解析规则（`GUI/src/renderer/src/types/common.ts`，`Dashboard.tsx`，`LibraryView.tsx`）。
-
-### 术语表与校对
-
-*   Glossary 管理完善：新增读取/保存/删除/重命名 IPC，GlossaryView 支持表格/原文编辑、重命名、错误提示与通知（`GUI/src/main/index.ts`，`preload/index.ts`，`GlossaryView.tsx`，`types/api.d.ts`）。
-*   校对与检查体验增强：Proofread 支持正则错误提示、术语加载失败提示与缓存加载错误弹窗；ResultChecker 增强缓存读取错误提示；TermExtract 支持队列加载失败提示与格式校验弹窗（`ProofreadView.tsx`，`ResultChecker.tsx`，`TermExtractModal.tsx`）。
-*   EPUB 保护锚点恢复增强：容错全角/空白/跨块的 `@id/@end` 标记，提升点对点映射稳定性（`middleware/murasaki_translator/documents/epub.py`）。
-
-### 远程与服务管理
-
-*   远程翻译链路增强：日志/进度处理更稳健（避免覆盖后端 JSON_PROGRESS）、补拉剩余日志、完成后下载缓存，并记录远程执行信息到历史（`GUI/src/main/index.ts`）。
-*   远程断开时若存在活跃任务，统一走取消流程并确保发送 `process-exit`，避免前端状态悬挂（`GUI/src/main/index.ts`）。
-*   ServiceView 与 RemoteStatusBar 全面 i18n，新增内联提示条与更清晰的自动连接失败提示，日志查看器接入语言参数（`ServiceView.tsx`，`RemoteStatusBar.tsx`，`LogViewerModal.tsx`，`useRemoteRuntime.ts`）。
-
-### UI / UX 与国际化
+#### [GUI界面层] UI / UX 与国际化
 
 *   i18n 扩展：新增 `common/errorBoundary/remoteStatusBar/serviceView/logViewer` 等模块，移除大量硬编码文本（`GUI/src/renderer/src/lib/i18n.ts` 及相关组件）。
 *   语言选择持久化（`app_lang`），Sidebar 切换即保存；App 初始化使用持久化语言（`Sidebar.tsx`，`App.tsx`）。
@@ -220,95 +248,111 @@
 *   高级设置补充硬件/模型信息失败提示（`AdvancedView.tsx`）。
 *   新增 `scroller-hide` 样式、补充 `vite-env.d.ts`（`index.css`，`vite-env.d.ts`）。
 
-### IPC / 类型契约与清理
+#### [GUI界面层] 术语表与校对
+
+*   Glossary 管理完善：新增读取/保存/删除/重命名 IPC，GlossaryView 支持表格/原文编辑、重命名、错误提示与通知（`GUI/src/main/index.ts`，`preload/index.ts`，`GlossaryView.tsx`，`types/api.d.ts`）。
+*   校对与检查体验增强：Proofread 支持正则错误提示、术语加载失败提示与缓存加载错误弹窗；ResultChecker 增强缓存读取错误提示；TermExtract 支持队列加载失败提示与格式校验弹窗（`ProofreadView.tsx`，`ResultChecker.tsx`，`TermExtractModal.tsx`）。
+*   EPUB 保护锚点恢复增强：容错全角/空白/跨块的 `@id/@end` 标记，提升点对点映射稳定性（`middleware/murasaki_translator/documents/epub.py`）。
+
+#### [GUI界面层] 规则系统与文本处理
+
+*   规则引擎新增 `python` 脚本规则：安全执行（禁用危险调用、长度限制、超时、允许 `re`、安全内建）、严格行数模式保护，并记录执行日志（`middleware/rule_processor.py`）。
+*   RuleEditor 支持规则配置组（创建/重命名/删除/切换/导入/导出），新增 Python 脚本编辑与模板插入，沙盒执行链路与交互优化，全面接入 i18n（`GUI/src/renderer/src/components/RuleEditor.tsx`）。
+*   新增 `test-rules` IPC，沙盒调用后端规则引擎并从 stdout/stderr 提取 JSON 结果（`GUI/src/main/index.ts`）。
+*   单文件配置新增预处理/后处理配置组覆盖（`rulesPreProfileId/rulesPostProfileId`），Dashboard 启动时按配置组解析规则（`GUI/src/renderer/src/types/common.ts`，`Dashboard.tsx`，`LibraryView.tsx`）。
+
+#### [GUI界面层] 远程与服务管理
+
+*   远程翻译链路增强：日志/进度处理更稳健（避免覆盖后端 JSON_PROGRESS）、补拉剩余日志、完成后下载缓存，并记录远程执行信息到历史（`GUI/src/main/index.ts`）。
+*   远程断开时若存在活跃任务，统一走取消流程并确保发送 `process-exit`，避免前端状态悬挂（`GUI/src/main/index.ts`）。
+*   ServiceView 与 RemoteStatusBar 全面 i18n，新增内联提示条与更清晰的自动连接失败提示，日志查看器接入语言参数（`ServiceView.tsx`，`RemoteStatusBar.tsx`，`LogViewerModal.tsx`，`useRemoteRuntime.ts`）。
+
+#### [主进程编排层] IPC / 类型契约与清理
 
 *   Preload 与类型契约同步：新增 Glossary CRUD API，移除过期 `remote-translate/*` IPC 与 `remove*Listener`/`offHfDownload*` 接口，统一订阅返回 `unsubscribe`（`preload/index.ts`，`types/api.d.ts`，`GUI/src/main/index.ts`）。
 *   清理未使用模块与导出：移除 `useConfig/useBackup/useFileQueue/hooks index`、`ThinkingStream`、`Skeleton`，删除未使用的 `modelConfig`/`utils` 导出与 `USER_TIPS` 配置（对应相关文件）。
 *   平台检测简化：移除 GPU 异步检测与缓存刷新入口（`GUI/src/main/platform.ts`）。
 
-### 后端与运行环境
+#### [中间件执行层] 后端与运行环境
 
 *   Linux 后端支持 `MURASAKI_FORCE_CPU` 强制 CPU，并在 GPU/Vulkan 后端缺失时自动回退 CPU（`middleware/server/translation_worker.py`，`middleware/cli/murasaki_server.py`）。
 
 ## [1.7.0] - 2026-02-13
 
-### 远程翻译模式 (Remote Translation)
+### Changed
+
+#### [主进程编排层] 性能修复
+
+*   **修复本地翻译速度回退**：本地 Daemon `api_v1` 模式下翻译现在直接 spawn `main.py`，不再走 HTTP API 桥接路径，消除轮询延迟和 JSON 序列化开销。
+*   `RemoteClient` 仅在用户明确选择远程执行模式（`executionMode === "remote"`）时创建，避免本地翻译被错误路由到 HTTP API 路径。
+
+#### [主进程编排层] 远程翻译模式 (Remote Translation)
 
 *   新增远程翻译执行模式：支持通过 HTTP API 将翻译任务分发到远程服务器，前端实时显示进度与日志。
 *   远程翻译链路完整实现：文件上传 → 任务创建 → 状态轮询 → 结果下载 → 缓存回传，全流程与本地模式体验一致。
 *   `RemoteClient` 模块新增：封装远程 API 协议，支持 `connect / createTranslation / getStatus / downloadResult` 等操作。
 
-### 服务端架构重构
-
-*   本地 Daemon 模式重构：从直接管理 `llama-server` 二进制改为通过 `api_server.py`（FastAPI）统一管理，支持 API Key 鉴权、端口扫描、健康检查。
-*   `translation_worker.py` 翻译执行器：封装 `main.py` 调用逻辑，支持常驻 `llama-server`（避免冷启动）、进程组销毁（避免僵尸进程）、并发控制、配置热切换。
-*   `ServerManager.ts` 扩展：支持 `api_v1` 模式下的依赖检查（FastAPI/Uvicorn/Pydantic）、端口冲突自动规避、API Key 自动生成。
-
-### 安全性增强
-
-*   API Key 管理：`api_server.py` 支持 `MURASAKI_API_KEY` 环境变量控制访问，使用 `secrets.compare_digest` 防时序攻击。
-*   路径遍历防御：`translation_worker.py` 使用 `pathlib.resolve()` + `relative_to()` 安全校验，限制文件操作在 `uploads/` 和 `outputs/` 目录内。
-*   CORS 安全策略：支持 `MURASAKI_CORS_ORIGINS` 配置白名单，默认开放（本地部署友好）。
-
-### 性能修复
-
-*   **修复本地翻译速度回退**：本地 Daemon `api_v1` 模式下翻译现在直接 spawn `main.py`，不再走 HTTP API 桥接路径，消除轮询延迟和 JSON 序列化开销。
-*   `RemoteClient` 仅在用户明确选择远程执行模式（`executionMode === "remote"`）时创建，避免本地翻译被错误路由到 HTTP API 路径。
-
-### Linux 部署增强
+#### [中间件执行层] Linux 部署增强
 
 *   `start_server.sh` 支持 `--enable-openai-proxy` 与 `--openai-port`，实现任务型 API（`/api/v1/*`）与 OpenAI 兼容 API（`/v1/*`）并存启动。
 *   健康检查接口增强：`GET /health` 返回 `capabilities` 能力声明，用于 GUI 自动识别协议。
 *   发布文档重写：明确 GUI 使用 `/api/v1/*`，第三方 SDK 使用 `/v1/*`。
 *   GitHub Actions 修复 Linux/Windows 发布文档打包步骤，确保 release 产物内包含对应 readme。
 
+#### [中间件执行层] 安全性增强
+
+*   API Key 管理：`api_server.py` 支持 `MURASAKI_API_KEY` 环境变量控制访问，使用 `secrets.compare_digest` 防时序攻击。
+*   路径遍历防御：`translation_worker.py` 使用 `pathlib.resolve()` + `relative_to()` 安全校验，限制文件操作在 `uploads/` 和 `outputs/` 目录内。
+*   CORS 安全策略：支持 `MURASAKI_CORS_ORIGINS` 配置白名单，默认开放（本地部署友好）。
+
+#### [中间件执行层] 服务端架构重构
+
+*   本地 Daemon 模式重构：从直接管理 `llama-server` 二进制改为通过 `api_server.py`（FastAPI）统一管理，支持 API Key 鉴权、端口扫描、健康检查。
+*   `translation_worker.py` 翻译执行器：封装 `main.py` 调用逻辑，支持常驻 `llama-server`（避免冷启动）、进程组销毁（避免僵尸进程）、并发控制、配置热切换。
+*   `ServerManager.ts` 扩展：支持 `api_v1` 模式下的依赖检查（FastAPI/Uvicorn/Pydantic）、端口冲突自动规避、API Key 自动生成。
 
 ---
 
 ## [1.6.3] - 2026-02-11
 
-### 核心稳定性
+### Changed
 
-*   远程任务状态流加固：修复取消/完成竞态，支持 `pending` 状态即时取消，避免终态被覆盖（`middleware/server/api_server.py`）。
-*   翻译 Worker 配置切换修复：重启判定覆盖 `model/ctx/gpu_layers/flash_attn/kv_cache_type`，避免“切参未生效”（`middleware/server/translation_worker.py`）。
-*   本地与远程默认参数对齐：`preset=novel`、`kv_cache_type=f16`（`middleware/server/api_server.py`, `GUI/src/main/remoteClient.ts`）。
-
-### 远程链路与容错
-
-*   `config_server` 正式接入主翻译链路：优先远程 URL，未配置时回落到本地/daemon（`GUI/src/main/index.ts`）。
-*   RemoteClient 协议对齐与健壮性增强：`snake_case -> camelCase`、URL 归一化、请求/上传/下载超时与重试（`GUI/src/main/remoteClient.ts`）。
-*   API 服务补充可配置安全策略：CORS 白名单与可选 WebSocket 鉴权（`middleware/server/api_server.py`）。
-
-### 本地部署与文件安全
-
-*   主进程文件 IPC 路径校验加强，并将核心读写改为异步，降低越权和阻塞风险（`GUI/src/main/index.ts`）。
-*   服务端路径校验改为安全归属判断（`relative_to` 语义），替代脆弱前缀判断（`middleware/server/api_server.py`, `middleware/server/translation_worker.py`）。
-
-### UI / Preload 与性能
+#### [GUI界面层] UI / Preload 与性能
 
 *   Preload 事件接口改为“订阅返回 `unsubscribe`”，移除 `removeAllListeners` 的全局误删风险，相关 UI 监听已迁移。
 *   Dashboard 高频监控改为 ring buffer + 节流刷新，降低长会话渲染压力（`GUI/src/renderer/src/components/Dashboard.tsx`）。
 *   远程连接测试与错误处理链路进一步对齐（`AdvancedView`, `index.ts`）。
 
-### 类型与日志链路
+#### [主进程编排层] 类型与日志链路
 
 *   `api.d.ts` 与 preload 实现对齐，清理陈旧声明并补齐 remote/HF/进度监听类型（`GUI/src/renderer/src/types/api.d.ts`）。
 *   主进程日志序列化加固，避免循环对象导致日志链路崩溃（`GUI/src/main/index.ts`）。
 *   `ServerManager` 日志改为固定上限，Windows 终止流程改为异步，降低主线程阻塞（`GUI/src/main/serverManager.ts`）。
 
+#### [中间件执行层] 本地部署与文件安全
+
+*   主进程文件 IPC 路径校验加强，并将核心读写改为异步，降低越权和阻塞风险（`GUI/src/main/index.ts`）。
+*   服务端路径校验改为安全归属判断（`relative_to` 语义），替代脆弱前缀判断（`middleware/server/api_server.py`, `middleware/server/translation_worker.py`）。
+
+#### [中间件执行层] 核心稳定性
+
+*   远程任务状态流加固：修复取消/完成竞态，支持 `pending` 状态即时取消，避免终态被覆盖（`middleware/server/api_server.py`）。
+*   翻译 Worker 配置切换修复：重启判定覆盖 `model/ctx/gpu_layers/flash_attn/kv_cache_type`，避免“切参未生效”（`middleware/server/translation_worker.py`）。
+*   本地与远程默认参数对齐：`preset=novel`、`kv_cache_type=f16`（`middleware/server/api_server.py`, `GUI/src/main/remoteClient.ts`）。
+
+#### [中间件执行层] 远程链路与容错
+
+*   `config_server` 正式接入主翻译链路：优先远程 URL，未配置时回落到本地/daemon（`GUI/src/main/index.ts`）。
+*   RemoteClient 协议对齐与健壮性增强：`snake_case -> camelCase`、URL 归一化、请求/上传/下载超时与重试（`GUI/src/main/remoteClient.ts`）。
+*   API 服务补充可配置安全策略：CORS 白名单与可选 WebSocket 鉴权（`middleware/server/api_server.py`）。
+
 ---
 
 ## [1.6.2] - 2026-02-10
 
-### 新增功能 (Features)
+### Changed
 
-*   **仪表盘队列新增单文件设置入口 (`Dashboard.tsx`)**：在队列项操作区新增“设置”按钮，支持在 Dashboard 内直接弹出单文件配置，不再依赖页面跳转。
-
-*   **单文件配置新增模型覆盖 (`LibraryView.tsx`)**：`FileConfigModal` 新增每文件模型选择器，并支持读取本地模型列表，形成 `customConfig.model` 覆盖链路。
-
-*   **复用组件导出 (`LibraryView.tsx`)**：`FileConfigModal` 改为可导出组件，供 Dashboard 与 Library 复用同一套单文件配置逻辑。
-
-### 变更调整 (Changed)
+#### [GUI界面层] 变更调整 (Changed)
 
 *   **Prompt Preset 迁移至 Dashboard (`Dashboard.tsx`, `AdvancedView.tsx`)**：全局预设下拉从高级页面迁移到首页仪表盘，`config_preset` 写入入口同步迁移，避免“必须先保存高级设置”才生效。
 
@@ -316,7 +360,19 @@
 
 *   **提交参数优先级统一 (`Dashboard.tsx`)**：翻译启动与重名检测统一采用 `customConfig > dashboard global` 优先级，模型、预设等参数在提交前按最终有效值计算。
 
-### 问题修复 (Fixed)
+#### [GUI界面层] 性能优化 (Performance)
+
+*   **Proofread 渲染缓存优化 (`ProofreadView.tsx`)**：为筛选分页与显示层原文处理引入 `useMemo` 缓存，并将对齐标记正则提升到模块级复用，降低大文本重绘开销与输入卡顿概率。
+
+#### [GUI界面层] 新增功能 (Features)
+
+*   **仪表盘队列新增单文件设置入口 (`Dashboard.tsx`)**：在队列项操作区新增“设置”按钮，支持在 Dashboard 内直接弹出单文件配置，不再依赖页面跳转。
+
+*   **单文件配置新增模型覆盖 (`LibraryView.tsx`)**：`FileConfigModal` 新增每文件模型选择器，并支持读取本地模型列表，形成 `customConfig.model` 覆盖链路。
+
+*   **复用组件导出 (`LibraryView.tsx`)**：`FileConfigModal` 改为可导出组件，供 Dashboard 与 Library 复用同一套单文件配置逻辑。
+
+#### [GUI界面层] 问题修复 (Fixed)
 
 *   **Proofread 行模式原文不可单独复制 (`ProofreadView.tsx`)**：修复点击交互冲突，原文列可独立选择与复制，且不再误触发译文编辑态。
 
@@ -332,22 +388,20 @@
 
 *   **运行环境诊断与自动修复稳定性修复 (`index.ts`, `preload/index.ts`, `SettingsView.tsx`)**：增强 macOS/Linux/Windows 的 GPU/Python 探测回退链路，改进 env-fix 结果 JSON 提取鲁棒性，并修复“打开运行目录”的跨平台路径处理。
 
-### 性能优化 (Performance)
-
-*   **Proofread 渲染缓存优化 (`ProofreadView.tsx`)**：为筛选分页与显示层原文处理引入 `useMemo` 缓存，并将对齐标记正则提升到模块级复用，降低大文本重绘开销与输入卡顿概率。
-
 ---
 
 ## [1.6.1] - 2026-02-08
 
-### 中间件核心 (Middleware Core)
+### Changed
+
+#### [中间件执行层] 中间件核心 (Middleware Core)
 
 *   **环境检测系统重写 (`env_fixer.py`)**：重构 Python 环境搜索算法，适配新的 `bin/{platform}/` 目录结构，修复了环境检查的路径错误问题。
 *   **翻译缓存性能与安全优化 (`cache.py`)**：引入 `threading.Lock()` 全类线程安全锁，并新增 `_index_map` 索引优化查找复杂度至 O(1)，采用“内存交换/锁外 IO”模式提升高并发性能。
 *   **精准续传机制改进 (`main.py`)**：
     *   **覆盖写重构**：断点续传模式强制改为覆盖写 ('w') 模式，对齐物理文件与进度索引。
 
-### 文本修复器 (Post-Processing Fixers)
+#### [中间件执行层] 文本修复器 (Post-Processing Fixers)
 
 *   **KanaFixer（日语残留修复）**：逻辑大幅增强，支持句尾残留助词（如 `の`、`は`）的智能清理，并新增**符号保护机制**，防止误删引号/括号内的内容。
 *   **NumberFixer（数字修复）**：支持实心圆圈数字（❶等），并修复了译文数字重复时的越界崩溃风险。
@@ -358,7 +412,9 @@
 
 ## [1.6.0] - 2026-02-08
 
-### 新增功能 (Features)
+### Changed
+
+#### [中间件执行层] 新增功能 (Features)
 
 *   **新增环境诊断与修复系统**：
     *   新增 `EnvFixerModal` 弹窗，提供 Python、CUDA、Vulkan、Llama 后端、中间件、文件权限六大组件的一站式诊断。
@@ -374,44 +430,47 @@
 
 ---
 
-
 ## [1.5.2] - 2026-02-08
 
-### 性能优化 (Performance)
+### Changed
+
+#### [GUI界面层] 性能优化 (Performance)
 
 *   **翻译历史异步懒加载**：重构 `localStorage` 存储结构，将基本信息与详细数据分离存储。主历史列表 (`translation_history`) 只保留轻量摘要，详情 (`logs`/`triggers`) 按记录 ID 独立存储于 `history_detail_{id}`，展开卡片时按需加载，彻底解决大小说（80万字+）翻译后页面卡顿问题。
 *   **日志保留上限提升至 10000 条**：得益于懒加载机制，日志不再在页面加载时立即解析，10000 条日志也不会造成任何性能影响。
 
-### 新增功能 (Features)
-
-*   **触发事件自动折叠**：翻译历史详情中，当触发事件超过 10 条时自动折叠，点击"展开全部 N 条"可查看完整列表，避免界面过长。
-
-### 代码重构 (Refactor)
+#### [中间件执行层] 代码重构 (Refactor)
 
 *   **子组件抽象**：将历史记录详情区域抽象为独立的 `RecordDetailContent` 子组件，符合 React Hooks 规则，避免 IIFE 内使用 `useState` 导致的渲染错误。
 *   **数据迁移兼容**：`getRecordDetail` 函数内置旧格式检测逻辑，自动将旧版嵌入式 `logs`/`triggers` 迁移至新的独立存储结构。
+
+#### [中间件执行层] 新增功能 (Features)
+
+*   **触发事件自动折叠**：翻译历史详情中，当触发事件超过 10 条时自动折叠，点击"展开全部 N 条"可查看完整列表，避免界面过长。
 
 ---
 
 ## [1.5.1] - 2026-02-08
 
-### 新增功能 (Features)
+### Changed
+
+#### [中间件执行层] 性能优化 (Performance)
+
+*   **系统诊断异步化**：将 `execSync` 全部替换为 `promisify(exec)`，GPU/Python/CUDA/Vulkan 检测现在并行运行，避免主线程阻塞导致窗口卡死。
+*   **UI 组件优化**：修复日志查看器内部组件定义问题，避免每次渲染时组件重复挂载。
+
+#### [中间件执行层] 新增功能 (Features)
 
 *   **运行环境诊断模块**：设置页面新增完整的系统诊断面板，一键检测操作系统、GPU、Python、CUDA、Vulkan 及推理后端状态。支持 5 分钟缓存和手动刷新。
 *   **主进程日志系统**：新增主进程日志缓冲区（最多 1000 条），调试工具箱新增"查看终端日志"按钮，支持复制和导出。
 
-### 核心修复 (Critical Fixes)
+#### [中间件执行层] 核心修复 (Critical Fixes)
 
 *   **多块合并换行丢失**：修复了多个翻译块合并时段落之间缺少换行符的问题。
 *   **被终止任务自动重建**：翻译任务被用户中断后，现在会自动触发文档重建流程，确保已翻译的内容正确写入输出文件。
 *   **移除冗余输出文件**：不再生成无意义的 `xxx.txt.txt` 中间文件，输出目录更加整洁。
 
-### 性能优化 (Performance)
-
-*   **系统诊断异步化**：将 `execSync` 全部替换为 `promisify(exec)`，GPU/Python/CUDA/Vulkan 检测现在并行运行，避免主线程阻塞导致窗口卡死。
-*   **UI 组件优化**：修复日志查看器内部组件定义问题，避免每次渲染时组件重复挂载。
-
-### 界面优化 (UI/UX)
+#### [中间件执行层] 界面优化 (UI/UX)
 
 *   **常驻模式提示框**：背景色从琥珀色调整为浅蓝色。
 *   **日志查看器样式**：从黑底绿字改为 slate 色调，复制按钮移至右上角，添加高度限制和滚动支持。
@@ -420,13 +479,9 @@
 
 ## [1.5.0] - 2026-02-08
 
-### 跨平台支持 (Cross-Platform Support)
+### Changed
 
-*   **macOS 原生支持**：新增 Apple Silicon (M1/M2/M3/M4) 和 Intel Mac 支持，使用 Metal 加速。统一内存架构下，16GB+ 内存即可流畅运行。
-*   **Linux 桌面支持**：提供 AppImage 格式，开箱即用。支持 NVIDIA (CUDA) 和 AMD/Intel (Vulkan) 显卡。
-*   **Windows Vulkan 版本**：新增 AMD/Intel 显卡支持版本，不再强制依赖 NVIDIA。
-
-### Linux CLI 服务端 (Linux Server)
+#### [中间件执行层] Linux CLI 服务端 (Linux Server)
 
 *   **无界面服务器部署**：新增 `murasaki-server` 命令行版本，专为 Linux 服务器设计。
 *   **OpenAI 兼容 API**：提供标准 API 接口，可与任意前端集成，适用于远程推理场景。
@@ -437,54 +492,65 @@
     ./start.sh --model /path/to/model.gguf --port 8000
     ```
 
-### Prompt 预设系统重构 - 兼容 Murasaki v0.2 (Preset System Refactor)
+#### [中间件执行层] Prompt 预设系统重构 - 兼容 Murasaki v0.2 (Preset System Refactor)
 
 *   **为 Murasaki v0.2 模型优化**：本次重构专为适配 Murasaki 模型系列 v0.2 版本设计，确保新版模型开箱即用。
 *   **策略模式重构**：将 `prompt.py` 的 if-elif 链式判断改为字典策略模式 (`PRESET_PROMPTS`)，新增预设只需添加字典项，无需修改核心逻辑。
 *   **预设命名统一**：前后端 Preset 参数完全对齐 `[novel, script, short]`，替换旧版 `[minimal, training, short]`。
 *   **UI 说明更新**：轻小说模式适合所有小说和连贯性长文本；剧本模式适合 Galgame、动画字幕、漫画；单句模式（不推荐）。
 
-### 模型识别增强 (Model Detection Enhancement)
-
-*   **IQ 系列量化支持**：修复 IQ1_S/M、IQ2_XXS/XS/S/M、IQ3_XXS/XS/S/M、IQ4_XXS/XS/NL 等量化格式无法识别的问题。
-*   **动态输出命名**：输出文件名从硬编码 `_Murasaki-8B-v0.1_novel_doc` 改为动态 `_<模型文件名>`，自动适配不同版本模型。
-*   **跨平台路径处理**：增强 Windows/POSIX 路径分隔符兼容，防止模型路径含 `\` 或 `/` 时解析失败。
-
-### 底层优化 (Core Improvements)
+#### [中间件执行层] 底层优化 (Core Improvements)
 
 *   **跨平台 GPU 检测**：重构硬件检测模块，自动识别并适配 NVIDIA/AMD/Intel/Apple Silicon 显卡。
 *   **硬件监控扩展**：仪表盘现支持所有平台的 GPU 状态显示（Apple Silicon 显示统一内存使用情况）。
 *   **打包体积优化**：精简 Release 产物，移除冗余文件。
 *   **循环检测阈值**：默认阈值从 20 提高到 40，减少对正常重复内容的误判。
 
-### 代码质量 (Code Quality)
+#### [中间件执行层] 模型识别增强 (Model Detection Enhancement)
+
+*   **IQ 系列量化支持**：修复 IQ1_S/M、IQ2_XXS/XS/S/M、IQ3_XXS/XS/S/M、IQ4_XXS/XS/NL 等量化格式无法识别的问题。
+*   **动态输出命名**：输出文件名从硬编码 `_Murasaki-8B-v0.1_novel_doc` 改为动态 `_<模型文件名>`，自动适配不同版本模型。
+*   **跨平台路径处理**：增强 Windows/POSIX 路径分隔符兼容，防止模型路径含 `\` 或 `/` 时解析失败。
+
+#### [中间件执行层] 跨平台支持 (Cross-Platform Support)
+
+*   **macOS 原生支持**：新增 Apple Silicon (M1/M2/M3/M4) 和 Intel Mac 支持，使用 Metal 加速。统一内存架构下，16GB+ 内存即可流畅运行。
+*   **Linux 桌面支持**：提供 AppImage 格式，开箱即用。支持 NVIDIA (CUDA) 和 AMD/Intel (Vulkan) 显卡。
+*   **Windows Vulkan 版本**：新增 AMD/Intel 显卡支持版本，不再强制依赖 NVIDIA。
+
+#### [测试工程层] 代码质量 (Code Quality)
 
 *   **TypeScript Lint 修复**：修复了大量 TypeScript 格式和类型检查错误，提升代码规范性。
 *   **同步维护标注**：为前后端重复的 `QUANT_PATTERNS` 正则添加 `KEEP IN SYNC WITH` 注释，防止修改时遗漏同步。
 
 ---
 
-
 ## [1.4.0] - 2026-01-31
 
-### 术语表自动提取 (Term Extraction)
-- **一键术语提取 (One-Click Extract)**:
-    - 新增独立的术语表提取工具 (`term_extractor.py`)，支持从 TXT/EPUB/SRT/ASS 等格式中自动识别高频词汇和专有名词。
-    - **智能过滤算法**: 内置停用词过滤、假名占比过滤、英文通用词过滤等多重策略，有效剔除无意义词汇。
+### Changed
 
-### 校对界面重构 (Proofread View Refactor)
+#### [GUI界面层] 校对界面重构 (Proofread View Refactor)
+
 - **Line Mode 布局**:
     - 引入 `display: grid` + `contents` 技巧实现原文/译文的**严格行对齐**。解决了长久以来"一段原文对应多行译文"导致的高度错位问题。
     - 重构了索引管理逻辑，支持缓存文件索引混乱时的自动修复。
 - **视觉优化**:
     - 优化了编辑区域的滚动行为和行号显示。
 
-### 分块大小优化 (Chunk Size Optimization)
+#### [中间件执行层] 分块大小优化 (Chunk Size Optimization)
+
 - **安全余量公式**:
     - 优化了 `ctx → chunk_size` 的自动换算公式，新增 **10% 安全余量** (`ctx * 0.9`)，有效防止边界情况下的输出截断。
     - 同步更新了 Dashboard 和 AdvancedView 的显示逻辑，确保 UI 与实际计算一致。
 
-### 核心修复与优化 (Fixes & Optimization)
+#### [中间件执行层] 术语表自动提取 (Term Extraction)
+
+- **一键术语提取 (One-Click Extract)**:
+    - 新增独立的术语表提取工具 (`term_extractor.py`)，支持从 TXT/EPUB/SRT/ASS 等格式中自动识别高频词汇和专有名词。
+    - **智能过滤算法**: 内置停用词过滤、假名占比过滤、英文通用词过滤等多重策略，有效剔除无意义词汇。
+
+#### [中间件执行层] 核心修复与优化 (Fixes & Optimization)
+
 - **ASS 字幕优化**:
     - 将 `[Speaker]\nText` 改为 `[Speaker] Text` 行内注入格式，减少 Token 消耗并降低模型将角色名视为独立行翻译的概率。
 - **AdvancedView 状态锁**:
@@ -498,22 +564,10 @@
 
 ## [1.3.0] - 2026-01-30
 
-### 资源库与高级队列管理 (Library & Advanced Queue)
-- **全新资源库视图 (Library View)**:
-    - 引入了独立的“资源库”界面，提供更强大的文件管理能力。原有的简单文件列表升级为包含元数据（文件类型、添加时间、状态）的结构化表格。
-    - **独立文件配置 (Per-File Configuration)**: 彻底打破了“全局设置”的限制。现在可以为队列中的每个文件单独指定不同的模型、Prompt、温度、术语表或输出路径。系统支持“批量配置”模式，可一次性调整选定文件的参数。
-- **智能队列系统**:
-    - **结构化对象重构**: 内部队列数据结构由简单的 `string[]` 升级为 `QueueItem[]` 对象数组，支持存储更丰富的上下文信息。
-    - **无缝状态同步**: 实现了 Dashboard 与 Library 视图之间的双向状态同步。无论在一个视图中添加、移除文件或修改配置，切换视图后数据状态始终保持一致，且支持 LocalStorage 持久化存储。
+### Changed
 
-### 高性能 I/O 与并发扫描 (High-Performance I/O)
-- **递归目录扫描引擎**:
-    - **并发控制技术**: 重写了目录扫描逻辑，引入 `Batch Concurrency` 控制（默认并发数 8）。在处理包含数万个文件的深层文件夹（如 `node_modules` 或游戏资源目录）时，能有效防止 `EMFILE` 错误及主进程卡死。
-    - **符号链接防御**: 内置了针对 Symbolic Link 的智能检测，自动跳过循环引用路径，防止扫描过程陷入无限递归死锁。
-- **增强型拖放支持**:
-    - 现在支持将文件夹直接拖入 Dashboard 或 Library 视图。系统会自动递归扫描文件夹下的所有支持格式文件（.txt, .epub, .srt, .ass），并自动过滤重复项。
+#### [GUI界面层] 交互体验升级 (UX Improvements)
 
-### 交互体验升级 (UX Improvements)
 - **Portal 悬浮层重构**:
     - **渲染层级优化**: 将所有 Tooltip 组件重构为基于 `React Portal` 的实现，直接渲染至 `document.body` 节点。彻底解决了在 `overflow: hidden` 的容器（如侧边栏或滚动列表）中，提示信息被裁剪或遮挡的长期 Bug。
     - **智能定位**: 新的浮层支持自适应边界检测，确保提示信息始终完整可见。
@@ -521,17 +575,52 @@
     - **一键跳转校对**: 在资源库列表中新增了“校对”快捷入口。系统会根据翻译历史智能定位缓存文件，直接跳转至 Proofread 视图加载该文件的最新翻译结果，无需手动查找路径。
     - **拖拽排序**: 优化了列表的拖拽排序体验，支持在文件拖入时即时显示插入位置指引。
 
-### 架构重构与数据迁移 (Architecture & Migration)
+#### [GUI界面层] 架构重构与数据迁移 (Architecture & Migration)
+
 - **数据自动迁移**:
     - 引入了向后兼容的迁移策略。系统启动时会自动检测旧版的 `file_queue` 数据，并将其无损升级为新的 `library_queue` 结构，确保用户升级后任务队列不丢失。
 - **状态提升 (State Lifting)**:
     - 将核心的 `isRunning` 状态提升至 App 全局层级，确保在翻译进行中切换视图时，所有子组件都能正确响应“只读/禁用”状态，防止运行中的配置冲突。
 
+#### [GUI界面层] 资源库与高级队列管理 (Library & Advanced Queue)
+
+- **全新资源库视图 (Library View)**:
+    - 引入了独立的“资源库”界面，提供更强大的文件管理能力。原有的简单文件列表升级为包含元数据（文件类型、添加时间、状态）的结构化表格。
+    - **独立文件配置 (Per-File Configuration)**: 彻底打破了“全局设置”的限制。现在可以为队列中的每个文件单独指定不同的模型、Prompt、温度、术语表或输出路径。系统支持“批量配置”模式，可一次性调整选定文件的参数。
+- **智能队列系统**:
+    - **结构化对象重构**: 内部队列数据结构由简单的 `string[]` 升级为 `QueueItem[]` 对象数组，支持存储更丰富的上下文信息。
+    - **无缝状态同步**: 实现了 Dashboard 与 Library 视图之间的双向状态同步。无论在一个视图中添加、移除文件或修改配置，切换视图后数据状态始终保持一致，且支持 LocalStorage 持久化存储。
+
+#### [中间件执行层] 高性能 I/O 与并发扫描 (High-Performance I/O)
+
+- **递归目录扫描引擎**:
+    - **并发控制技术**: 重写了目录扫描逻辑，引入 `Batch Concurrency` 控制（默认并发数 8）。在处理包含数万个文件的深层文件夹（如 `node_modules` 或游戏资源目录）时，能有效防止 `EMFILE` 错误及主进程卡死。
+    - **符号链接防御**: 内置了针对 Symbolic Link 的智能检测，自动跳过循环引用路径，防止扫描过程陷入无限递归死锁。
+- **增强型拖放支持**:
+    - 现在支持将文件夹直接拖入 Dashboard 或 Library 视图。系统会自动递归扫描文件夹下的所有支持格式文件（.txt, .epub, .srt, .ass），并自动过滤重复项。
+
 ---
 
 ## [1.2.3] - 2026-01-29
 
-### 辅助对齐模式与漫画/游戏优化 (Auxiliary Alignment & Comic/Game Optimization)
+### Changed
+
+#### [GUI界面层] UI 框架与交互优化 (UI Framework & UX)
+
+- **自定义 Tooltip 系统**:
+    - 引入了基于 Tailwind 的轻量化浮层组件，支持多行文本、Backdrop Blur 磨砂玻璃特效及自适应定位。
+    - 为“辅助对齐”和“CoT导出”新增了详细的功能说明浮层，降低新手用户的理解成本。
+- **状态持久化与视觉反馈**:
+    - 所有新增开关均支持 `LocalStorage` 状态记忆。
+    - 优化了 Dashboard 底部控制栏的视觉层级：对齐模式采用 **Indigo (靛蓝)** 主题色，CoT 模式采用 **Amber (琥珀)** 主题色，通过色彩语言区分功能属性。
+
+#### [中间件执行层] 代码审计与健壮性修复 (Refactor & Robustness)
+
+- **关键路径变量保护**: 修复了在 `main.py` 中可能因逻辑覆盖导致 `.txt` 文件在对齐模式下被误判为普通文档的 Bug，确保 `is_structured_doc` 标志位在全局生命周期内的一致性。
+- **预览清洗逻辑**: 针对对齐模式重写了 `process_result` 逻辑。GUI 预览窗口现在会自动剥离逻辑锚点标签，确保用户在翻译过程中看到的依然是纯净的译文内容，而不会被底层技术标签干扰。
+
+#### [中间件执行层] 辅助对齐模式与漫画/游戏优化 (Auxiliary Alignment & Comic/Game Optimization)
+
 - **逻辑 ID 注入技术 (Logical ID Tagging)**:
     - 针对 TXT 格式引入了全新的“辅助对齐模式”。系统会自动为每一行非空文本注入双端逻辑锚点 `@id=n@`，将无序的文本流转变为可追踪的结构化数据。
     - **物理行精准回填**: 引入“背景画布”重构算法。无论模型在推理过程中是否合并了行、调整了顺序甚至产生了幻觉，重构引擎都能根据逻辑 ID 将译文精准还原至原始文件的物理行号，彻底解决漫画/游戏文本翻译中的“跳行”和“位移”难题。
@@ -540,23 +629,22 @@
 - **智能文本分块增强**:
     - **数字保护 (Numeric Protection)**: 优化了 `Chunker` 算法，引入数字敏感度检查。当一行中包含数字（如 ID 锚点、页码、数值数据）时，分块器会主动撤销“软换行”建议，强制保持上下文连贯，防止核心锚点被截断导致解析失败。
 
-### UI 框架与交互优化 (UI Framework & UX)
-- **自定义 Tooltip 系统**:
-    - 引入了基于 Tailwind 的轻量化浮层组件，支持多行文本、Backdrop Blur 磨砂玻璃特效及自适应定位。
-    - 为“辅助对齐”和“CoT导出”新增了详细的功能说明浮层，降低新手用户的理解成本。
-- **状态持久化与视觉反馈**:
-    - 所有新增开关均支持 `LocalStorage` 状态记忆。
-    - 优化了 Dashboard 底部控制栏的视觉层级：对齐模式采用 **Indigo (靛蓝)** 主题色，CoT 模式采用 **Amber (琥珀)** 主题色，通过色彩语言区分功能属性。
-
-### 代码审计与健壮性修复 (Refactor & Robustness)
-- **关键路径变量保护**: 修复了在 `main.py` 中可能因逻辑覆盖导致 `.txt` 文件在对齐模式下被误判为普通文档的 Bug，确保 `is_structured_doc` 标志位在全局生命周期内的一致性。
-- **预览清洗逻辑**: 针对对齐模式重写了 `process_result` 逻辑。GUI 预览窗口现在会自动剥离逻辑锚点标签，确保用户在翻译过程中看到的依然是纯净的译文内容，而不会被底层技术标签干扰。
-
 ---
 
 ## [1.2.2] - 2026-01-29
 
-### 实时遥测与多维图表 (Telemetry & Multi-metric Charting)
+### Changed
+
+#### [GUI界面层] 代码审计与交互修复 (Refactor & UX)
+
+- **图表闭包优化**: 重构了 Dashboard 的日志监听逻辑，通过 `useRef` 状态同步机制解决了高频更新下的闭包陷阱问题。
+- **进程生命周期**: 清理了停止翻译时多余的 `process-exit` IPC 信号，使进程退出过程更加自然且符合状态机规范。
+- **布局微调**:
+    - 优化了图表容器的高度自适应逻辑，彻底消除了 `ResponsiveContainer` 在某些分辨率下可能出现的 0 尺寸报错。
+    - 控制栏与日志抽屉代码结构优化，增强了 UI 组件的嵌套健壮性。
+
+#### [中间件执行层] 实时遥测与多维图表 (Telemetry & Multi-metric Charting)
+
 - **多指标监控看板**:
     - 图表现在支持四种数据模式切换：**每秒字符 (Chars/s)**、**每秒 Token (Tokens/s)**、**显存占用 (VRAM %)** 和 **GPU 负载 (GPU %)**。
     - 为不同指标配置了专属主题色（紫色/绿色/琥珀色），并支持平滑的动态切换。
@@ -564,25 +652,27 @@
     - **历史回溯**: 引入 `Brush` 组件，支持在长达 100,000 个采样点的时间轴上自由缩放和滚动查看。
     - **智能降采样**: 采用采样过滤算法，将图表显示点数限制在 1000 以内，在保证视觉精度的同时显著降低渲染开销，即使长时间运行也不会造成 UI 卡顿。
 
-### 核心算法优化 (Core Logic Optimization)
+#### [中间件执行层] 核心算法优化 (Core Logic Optimization)
+
 - **解决断点续传速率抖动**:
     - 修复了“读取缓存后速度瞬间爆表”的问题。系统现在会将断点恢复的块标记为 `is_restorer`，在计算当前 Session 生成速度时自动剔除预加载的数据，使速率指标真实反映模型当前的推理性能。
 - **高频采样引擎**:
     - 将后端监控轮询周期从 2.0s 压缩至 **0.5s**，配合前端的 `isAnimationActive={false}` 配置，实现了真正意义上的实时丝滑曲线。
     - 采用直接内存计数（Direct Counter Access）技术计算瞬时速度，解决了因 HTTP 请求延迟导致的速率数值波动。
 
-### 代码审计与交互修复 (Refactor & UX)
-- **图表闭包优化**: 重构了 Dashboard 的日志监听逻辑，通过 `useRef` 状态同步机制解决了高频更新下的闭包陷阱问题。
-- **进程生命周期**: 清理了停止翻译时多余的 `process-exit` IPC 信号，使进程退出过程更加自然且符合状态机规范。
-- **布局微调**:
-    - 优化了图表容器的高度自适应逻辑，彻底消除了 `ResponsiveContainer` 在某些分辨率下可能出现的 0 尺寸报错。
-    - 控制栏与日志抽屉代码结构优化，增强了 UI 组件的嵌套健壮性。
-
 ---
 
 ## [1.2.1] - 2026-01-29
 
-### 代码审计与健壮性修复 (Code Audit & Robustness)
+### Changed
+
+#### [GUI界面层] 代码质量 (Code Quality)
+
+- **分块器注释 (`chunker.py`)**: 优化了尾部平衡跳过逻辑的注释说明。
+- **类型注解 (`quality_checker.py`)**: 修正了 `calculate_glossary_coverage` 的返回值类型签名。
+
+#### [中间件执行层] 代码审计与健壮性修复 (Code Audit & Robustness)
+
 - **进程管理 (`serverManager.ts`)**:
     - 引入 Windows 专用 `taskkill /F /T` 终止逻辑，确保 Python 子进程及其衍生进程被彻底清理，防止端口占用和内存泄露。
 - **循环检测精度 (`engine.py`)**:
@@ -599,15 +689,20 @@
 - **日志模块 (`main.py`)**:
     - 将 `logger` 提升为模块级变量，解决嵌套函数中可能出现的 `NameError`。
 
-### 代码质量 (Code Quality)
-- **分块器注释 (`chunker.py`)**: 优化了尾部平衡跳过逻辑的注释说明。
-- **类型注解 (`quality_checker.py`)**: 修正了 `calculate_glossary_coverage` 的返回值类型签名。
-
 ---
 
 ## [1.2.0] - 2026-01-28
 
-### EPUB 引擎重构 (EPUB Engine Refactor)
+### Changed
+
+#### [GUI界面层] 界面与交互 (GUI & UX)
+
+- **Dashboard 优化**:
+    - **快捷键作用域**: 修复了快捷键（如 `ESC` 停止）的作用域问题，现在仅在 Dashboard 激活时生效，防止在设置页面修改参数时误触停止任务。
+    - **参数同步**: 高级设置界面已同步跟进新的重试策略参数，默认术语覆盖率重试次数调整为更合理的 2 次，温度步进调整为 0.05。
+
+#### [中间件执行层] EPUB 引擎重构 (EPUB Engine Refactor)
+
 - **无损容器映射 (Lossless Container Mapping)**:
     - **底层重写**: 完全弃用了 `ebooklib` 库，转为基于 `zipfile` + `BeautifulSoup` 的底层实现。现在直接对 EPUB 的 XML/HTML 结构进行手术式修改，而非重新打包。
     - **样式完美保留**: 彻底解决了旧版本可能导致 CSS 样式丢失、竖排文本（Vertical Text）变横排、或元数据损坏的问题。现在的处理方式能够 100% 保留书籍原始的排版、字体设置和 SVG 图片属性。
@@ -616,44 +711,46 @@
     - **智能解析器**: 新增自动检测机制，根据文件内容智能切换 `lxml` (XML) 或 `html.parser`，大幅提升了对非标准 EPUB 文件的容错率。
     - **标准合规**: 严格遵循 EPUB 标准，强制确保 `mimetype` 文件不压缩且位于压缩包首位，修复了生成文件在部分阅读器（如 iBooks）中无法打开的问题。
 
-### 统一重试策略 (Unified Retry Strategy)
-- **策略归一化**:
-    - 将“批量翻译”与“单块重翻”的重试逻辑统一收敛至 `translate_block_with_retry` 内核。遵循完全一致的 **四级重试机制**（空输出检测 / 严格行数检查 / 宽松行数检查 / 术语覆盖率检查）。
-- **动态惩罚步进 (Dynamic Penalty Step)**:
-    - **参数调整**: 移除了粗糙的 `Retry Rep Boost`，引入了更精细的 **`Repetition Penalty Step` (惩罚步进)**。
-    - **死循环逃逸**: 当检测到模型陷入重复输出的死循环时，系统会按照设定的步进值（默认 0.1）微调惩罚参数，配合温度扰动，帮助模型更平滑地跳出局部最优解，而非粗暴地破坏生成质量。
+#### [中间件执行层] 系统稳定性与环境隔离 (Stability & Environment)
 
-### 系统稳定性与环境隔离 (Stability & Environment)
 - **环境净化 (Environment Sanitization)**:
     - **反污染机制**: 在启动推理引擎前，现在会强制剥离 `PYTHONHOME` 和 `PYTHONPATH` 环境变量。
     - **解决依赖冲突**: 这一改动彻底解决了用户系统中安装的 Anaconda、全局 Python 或其他虚拟环境干扰软件内置 Python 环境的问题，显著减少了 `Module Not Found` 或动态链接库错误。
 - **结构化文档安全**:
     - 针对 EPUB/SRT 等结构化文档，现在采用“先文本落地，后结构重建”的策略。翻译过程中实时写入临时 TXT 文件，仅在最后阶段进行二进制重组，有效防止了程序崩溃导致整个文档损坏的风险。
 
-### 界面与交互 (GUI & UX)
-- **Dashboard 优化**:
-    - **快捷键作用域**: 修复了快捷键（如 `ESC` 停止）的作用域问题，现在仅在 Dashboard 激活时生效，防止在设置页面修改参数时误触停止任务。
-    - **参数同步**: 高级设置界面已同步跟进新的重试策略参数，默认术语覆盖率重试次数调整为更合理的 2 次，温度步进调整为 0.05。
+#### [中间件执行层] 统一重试策略 (Unified Retry Strategy)
+
+- **策略归一化**:
+    - 将“批量翻译”与“单块重翻”的重试逻辑统一收敛至 `translate_block_with_retry` 内核。遵循完全一致的 **四级重试机制**（空输出检测 / 严格行数检查 / 宽松行数检查 / 术语覆盖率检查）。
+- **动态惩罚步进 (Dynamic Penalty Step)**:
+    - **参数调整**: 移除了粗糙的 `Retry Rep Boost`，引入了更精细的 **`Repetition Penalty Step` (惩罚步进)**。
+    - **死循环逃逸**: 当检测到模型陷入重复输出的死循环时，系统会按照设定的步进值（默认 0.1）微调惩罚参数，配合温度扰动，帮助模型更平滑地跳出局部最优解，而非粗暴地破坏生成质量。
 
 ---
 
 ## [1.1.4] - 2026-01-28
 
-### 校对与文档重构 (Proofreading & Reconstruction)
-- **所见即所得 (True WYSIWYG)**:
-    - **文档重构 (Rebuild)**: 彻底解决了校对界面“保存”按钮仅更新 JSON 缓存的痛点。现在针对 **EPUB/SRT/ASS** 等复杂格式，保存操作会调用后端引擎，读取原始文档结构并将校对后的译文精确回填，直接生成最终文件。
-    - **源文件追踪**: 缓存文件 (`.cache.json`) 现已包含 `sourcePath` 字段。这意味着即使在翻译任务结束后重启软件，系统也能通过缓存找到源文件并重建文档。
-- **未保存更改拦截**:
-    - 引入了**导航守卫 (Navigation Guard)**。当校对界面存在未保存的修改或正在进行的重翻任务时，切换侧边栏或加载新文件将触发弹窗警告，防止进度意外丢失。
+### Changed
 
-### 智能重翻代理 (Agentic Retranslation)
+#### [GUI界面层] 智能重翻代理 (Agentic Retranslation)
+
 - **术语覆盖率守卫 (Glossary Guard)**:
     - **自动重试机制**: 单块重翻（Manual Retranslate）现在具备 Agent 属性。系统会自动计算术语表（Glossary）在译文中的覆盖率。
     - **自适应策略**: 如果发现关键术语遗漏，系统会在后台自动触发重试（默认最多 3 次），并逐次提升温度（Temperature）与重复惩罚基数，同时注入包含遗漏词汇的**反馈提示词 (Feedback Prompt)**，大幅提升难句修正成功率。
 - **虚拟终端 (Virtual Log)**:
     - **透明化推理**: 新增了重翻日志模态框。点击重翻按钮旁的“终端”图标，即可实时查看后台的推理日志、思维链 (CoT) 输出以及术语覆盖率检查报告，让模型的“思考过程”一目了然。
 
-### 核心与交互优化 (Core & UX)
+#### [中间件执行层] 校对与文档重构 (Proofreading & Reconstruction)
+
+- **所见即所得 (True WYSIWYG)**:
+    - **文档重构 (Rebuild)**: 彻底解决了校对界面“保存”按钮仅更新 JSON 缓存的痛点。现在针对 **EPUB/SRT/ASS** 等复杂格式，保存操作会调用后端引擎，读取原始文档结构并将校对后的译文精确回填，直接生成最终文件。
+    - **源文件追踪**: 缓存文件 (`.cache.json`) 现已包含 `sourcePath` 字段。这意味着即使在翻译任务结束后重启软件，系统也能通过缓存找到源文件并重建文档。
+- **未保存更改拦截**:
+    - 引入了**导航守卫 (Navigation Guard)**。当校对界面存在未保存的修改或正在进行的重翻任务时，切换侧边栏或加载新文件将触发弹窗警告，防止进度意外丢失。
+
+#### [中间件执行层] 核心与交互优化 (Core & UX)
+
 - **并发控制**:
     - 为手动重翻和保存操作实施了**全局互斥锁**。在进行耗时操作（如文档重建或大模型推理）时，相关按钮会自动禁用，防止因用户快速点击导致的数据竞争或显存冲突。
 - **进程管理**:
@@ -664,7 +761,10 @@
 
 ## [1.1.3] - 2026-01-27
 
-### 字幕与结构化文档增强 (Subtitle & Structured Docs)
+### Changed
+
+#### [中间件执行层] 字幕与结构化文档增强 (Subtitle & Structured Docs)
+
 - **ASS/SSA 字幕支持**:
     - **原生解析**: 新增 `AssDocument` 处理器，能够解析 `[Events]` 块并提取时间轴。
     - **上下文注入**: 自动提取 `Actor`（角色）和 `Style`（样式）信息，并将其作为上下文前缀注入 Prompt，辅助模型识别说话人语气。
@@ -675,7 +775,8 @@
     - **三级策略**: 引入 `Off` (关闭) / `Subs` (仅字幕) / `All` (强制开启) 三种模式。
     - **强校验**: 在严格模式下，如果输出行数与输入不完全一致（容差为 0），将直接触发重试。这有效防止了字幕错位问题。
 
-### 核心逻辑修复与优化 (Core & Middleware)
+#### [中间件执行层] 核心逻辑修复与优化 (Core & Middleware)
+
 - **规则熔断机制 (Rule Melting)**:
     - 针对字幕文件（SRT/ASS），系统现在会自动禁用 `clean_empty_lines`（空行清理）和 `merge_short_lines`（短行合并）等可能改变行数的后处理规则，确保结构安全。
 - **文本保护器增强 (TextProtector Hardening)**:
@@ -687,7 +788,8 @@
     - 修正了 `clean_empty` 与 `clean_empty_lines` 的命名不一致问题，确保 TXT 文档的空行清理功能正常生效。
     - 恢复了缺失的 `merge_short_lines` 逻辑，提升碎片化文本的整理能力。
 
-### 界面优化 (GUI)
+#### [中间件执行层] 界面优化 (GUI)
+
 - **高级设置调整**:
     - 新增“严格对齐模式”下拉菜单。
     - 移除了设置页面中冗余且为空的“实验性功能”区块，保持界面整洁。
@@ -697,7 +799,10 @@
 
 ## [1.1.2] - 2026-01-27
 
-### 续传逻辑重构与重复修复 (Resume Logic Refactor)
+### Changed
+
+#### [中间件执行层] 续传逻辑重构与重复修复 (Resume Logic Refactor)
+
 - **GUI**: 删除了高级设置中的“增量翻译”开关。现在统一由文件检测逻辑驱动，操作更简便。
 - **Middleware**: 修复了追加模式下可能导致输出内容重复写入的 Bug。
 - **Middleware**: 优化了 `calculate_skip_blocks` 算法，采用精确行数判定，确保续传时的数据完整性。
@@ -707,26 +812,10 @@
 
 ## [1.1.1] - 2026-01-27
 
-###  核心架构重构 (Core Architecture)
-- **文档处理管道抽象化**: 引入 `DocumentFactory` 体系，支持多种格式的智能解析与回填。
-    - **新增 EPUB 支持**: 原生支持电子书格式，解析 HTML 结构并自动剥离 Ruby 注音，翻译后精准回填。
-    - **新增 SRT 支持**: 支持字幕文件，完美保留时间戳元数据。
-    - **统一加载逻辑**: 所有文档格式现在都通过统一的项（Item）和元数据（Metadata）流程处理。
-- **规则引擎一体化**: 彻底废除硬编码的文本修复开关。
-    - 原有的注音清理、标点修复、假名修复、繁体转换全部整合进 `RuleProcessor` 插件系统。
-    - 支持**严格行数模式 (Strict Line Count)**：针对 EPUB/SRT 自动禁用会改变行数的规则，确保翻译不串行。
-- **智能元数据分块**: `Chunker` 现在能够携带元数据，并根据文档类型自动调整切分策略（如结构化文档自动禁用尾部平衡）。
+### Changed
 
-###  新增功能 (Features)
-- **Python 驱动规则沙盒**:
-    - 弃用前端 JS 模拟正则，改由真实的 Python 后端驱动测试。
-    - **阶梯式追踪**: 可视化展示每一条规则对文本产生的增量修改，确保“所见即所得”。
-- **可视化规则编辑器**:
-    - 移除分散的配置项，整合为统一的拖拽式编辑器。
-    - 新增 10+ 种内置算法预设（内置处理器），涵盖排版优化、字符修复及实验性假名清理。
-- **动态保护系统**: `TextProtector` 现在支持多规则聚合，可根据用户定义的规则自动激活多个不变量保护标签。
+#### [中间件执行层] 修复与优化 (Fixes & Optimization)
 
-###  修复与优化 (Fixes & Optimization)
 - **Windows 兼容性强化**:
     - 为所有 Python 子进程强制开启 `PYTHONIOENCODING=utf-8`。
     - 解决了 Windows 环境下非 ASCII 路径和字符导致的进程崩溃。
@@ -736,11 +825,35 @@
 - **术语表 (Glossary) 日志**: 详细记录术语命中详情及跳过原因，便于调试术语库覆盖率。
 - **依赖更新**: 新增 `beautifulsoup4` 和 `lxml` 支持，增强 HTML/EPUB 解析稳定性。
 
+#### [中间件执行层] 新增功能 (Features)
+
+- **Python 驱动规则沙盒**:
+    - 弃用前端 JS 模拟正则，改由真实的 Python 后端驱动测试。
+    - **阶梯式追踪**: 可视化展示每一条规则对文本产生的增量修改，确保“所见即所得”。
+- **可视化规则编辑器**:
+    - 移除分散的配置项，整合为统一的拖拽式编辑器。
+    - 新增 10+ 种内置算法预设（内置处理器），涵盖排版优化、字符修复及实验性假名清理。
+- **动态保护系统**: `TextProtector` 现在支持多规则聚合，可根据用户定义的规则自动激活多个不变量保护标签。
+
+#### [中间件执行层] 核心架构重构 (Core Architecture)
+
+- **文档处理管道抽象化**: 引入 `DocumentFactory` 体系，支持多种格式的智能解析与回填。
+    - **新增 EPUB 支持**: 原生支持电子书格式，解析 HTML 结构并自动剥离 Ruby 注音，翻译后精准回填。
+    - **新增 SRT 支持**: 支持字幕文件，完美保留时间戳元数据。
+    - **统一加载逻辑**: 所有文档格式现在都通过统一的项（Item）和元数据（Metadata）流程处理。
+- **规则引擎一体化**: 彻底废除硬编码的文本修复开关。
+    - 原有的注音清理、标点修复、假名修复、繁体转换全部整合进 `RuleProcessor` 插件系统。
+    - 支持**严格行数模式 (Strict Line Count)**：针对 EPUB/SRT 自动禁用会改变行数的规则，确保翻译不串行。
+- **智能元数据分块**: `Chunker` 现在能够携带元数据，并根据文档类型自动调整切分策略（如结构化文档自动禁用尾部平衡）。
+
 ---
 
 ## [1.1.0] - 2026-01-26
 
 ### Added
+
+#### [中间件执行层] 功能新增
+
 - **并行翻译引擎 (Parallel Translation Engine)**：引入多线程架构，支持最高 16 个并发任务。通过同时处理多个文本块，最大化高端硬件（如 RTX 3090/4090）的 GPU 利用率。
 - **推理质量控制 (Quality Control)**：在高级视图（AdvancedView）中添加了细粒度的推理参数控制：
     - **Flash Attention (-fa)**：优化显存占用，提高长上下文稳定性（需 RTX 20 系列及以上显卡）。
@@ -755,6 +868,9 @@
 - **线程安全日志 (Thread-Safe Logging)**：为标准输出实现全局锁，防止并行处理期间 JSON 日志交织错乱。
 
 ### Changed
+
+#### [中间件执行层] 行为调整
+
 - **服务器架构**：`ServerManager` 现在会动态计算总上下文池大小（单槽上下文 * 并发数），并将其限制在 32k token 以内，防止引擎崩溃。
 - **仪表盘逻辑**：重构了计时器和进度计算，支持非线性并行完成。添加了“平滑 ETA”逻辑，提供更准确的预计剩余时间。
 - **缩进保留**：更新 `parser.py` 和 `rule_processor.py`，使用 `rstrip()` 替代 `strip()`，以保留 CJK 小说中常见的段落缩进。
@@ -762,6 +878,9 @@
 - **引擎核心**：`InferenceEngine` 切换至使用 `requests.Session` 保持持久连接，减少高并发场景下的 TCP 开销。
 
 ### Fixed
+
+#### [中间件执行层] 缺陷修复
+
 - **上下文处理**：修复了上下文溢出可能静默发生的问题；系统现在会显式警告并截断上下文窗口。
 - **流式解析**：添加了针对未闭合 `<think>` 标签的正则支持，确保即使模型输出被截断也能捕获思维链（CoT）内容。
 
@@ -770,10 +889,16 @@
 ## [1.0.5] - 2026-01-26
 
 ### Added
+
+#### [中间件执行层] 功能新增
+
 - **纯 CPU 模式支持**：增强 `get_specs.py` 的系统内存检测与优雅回退逻辑，确保在没有 NVIDIA GPU 或 CUDA 驱动的机器上也能正常加载 GUI。
 - **硬件鲁棒性**：对 `pynvml` 和 `nvidia-smi` 调用添加了健壮的异常处理，防止在驱动缺失时启动崩溃。
 
 ### Changed
+
+#### [中间件执行层] 行为调整
+
 - **省略号规则优化**：更新 `ellipsis` 规则，仅标准化 3 个或更多字符的序列（如 `...` 或 `。。。`），确保双句号（`。。`）得以保留。
 - **引号配对安全**：为 `smart_quotes` 规则实现了 **偶数校验 (Even-count parity check)**（同步至 TS/Python）。单行直引号仅在成对出现时才会转换，有效防止由于符号缺失导致的格式“漂移”。
 
@@ -782,17 +907,26 @@
 ## [1.0.4] - 2026-01-26
 
 ### Added
+
+#### [中间件执行层] 功能新增
+
 - **默认后处理设置**：将“强制双换行”和“统一引号”设为初始启动和系统重置时的默认规则。
 - **省略号规则**：新增内置格式化规则（需手动选择），可将各种形式的省略号统一为 `……`。
 - **后端一致性**：完成 Python 端 `rule_processor.py` 与前端逻辑的同步，确保翻译过程中的一致性。
 
 ### Changed
+
+#### [中间件执行层] 行为调整
+
 - **预设优化**：精炼了“小说”和“通用”预设以确保最佳间距，将新的省略号规则保留为可选手动项。
 - **鲁棒引号配对**：增强 `smart_quotes` 规则，加入单行偶数验证机制，仅在成对时将直引号（`"`、`'`）安全转换为角引号。
 - **代码质量**：在标点符号映射中将不稳定的 `any` 类型替换为严格的 TypeScript Records。
 - **重置逻辑**：将规则编辑器的全局重置提示替换为局部的确认对话框，并通过 `DEFAULT_POST_RULES` 常量集中定义默认规则。
 
 ### Fixed
+
+#### [中间件执行层] 缺陷修复
+
 - **智能引号逻辑**：统一前后端 `smart_quotes` 逻辑，严格转换至日/中式角引号 「」『』。
 - **重置重复问题**：修复了重置规则时偶尔会产生重复条目的 Bug。
 - **版本同步**：解决了 `package-lock.json` 与主项目版本不一致的问题。
@@ -802,14 +936,23 @@
 ## [1.0.3] - 2026-01-26
 
 ### Added
+
+#### [GUI界面层] 功能新增
+
 - **完整本地化**：实现了 `AdvancedView`、`ProofreadView` 和 `RuleEditor` 在中、英、日三语下的 100% 本地化覆盖。
 - **结构完整性**：修复了 `i18n.ts` 中缺失的翻译键值和 JSON 结构错误，防止运行时崩溃。
 
 ### Changed
+
+#### [GUI界面层] 行为调整
+
 - **UI/UX 优化**：调整了 `GlossaryConverter` 的布局，将关键提示移至顶部以提高可见性。
 - **代码审计**：完成了最终的 i18n 审计，消除了残留的硬编码字符串，确保各语言块键值一致。
 
 ### Fixed
+
+#### [中间件执行层] 缺陷修复
+
 - **语法错误**：修复了语言配置文件中残留的语法问题（如缺失逗号）。
 
 ---
@@ -817,31 +960,49 @@
 ## [1.0.2] - 2026-01-26
 
 ### Added
+
+#### [GUI界面层] 功能新增
+
 - **i18n 支持**：为术语表（Glossary）系统实现了全面的国际化支持（中/英/日）。
 - **术语转换器 UI**：添加了一个完全本地化的可视化界面，用于将旧版文本术语表转换为标准 Murasaki JSON 格式。
 
 ### Changed
+
+#### [中间件执行层] 行为调整
+
 - **UI 清晰度**：改进了旧版术语格式的提示和指示器，方便用户理解格式转换的好处。
 - **软件更新 UI**：重构了设置中的更新检查界面，采用更紧凑的布局和 LED 风格的状态指示灯，并改为仅手动触发以防止 API 速率限制。
 - **版本统一管理**：集中化版本控制，所有 UI 组件现在动态引用来自 `package.json` 的 `APP_CONFIG.version`。
 
 ### Fixed
+
+#### [GUI界面层] 缺陷修复
+
 - **硬编码消除**：消除了 `GlossaryView.tsx` 和 `GlossaryConverter.tsx` 中剩余的所有硬编码中文，确保一致的本地化体验。
 
 ---
 
 ## [1.0.1] - 2026-01-26
 
-### Fixed
-- **UI 溢出**：修复了质量检查（Quality Check）结果面板在条目较多时不滚动的 Bug。
-- **链接处理**：将 `window.open` 替换为带有 **协议验证 (http/https)** 的 `shell.openExternal` 以增强安全性。
-- **更新检查**：为 GitHub API 调用添加了 HTTP 200 状态验证，防止解析错误。
-- **IPC 可靠性**：修复了 `TypeError: window.api.invoke is not a function`，通过在预加载桥接中显式暴露 `checkUpdate` 解决。
-
 ### Added
+
+#### [中间件执行层] 功能新增
+
 - **更新系统**：实现了具有 **语义化版本比较 (Semantic Versioning)** 和网络提示的简易更新检查机制。
 - **开发工具**：添加了 `dev_start.bat` 用于简化本地环境搭建。
 - **Git 配置**：更新 `.gitignore`，包含开发脚本和私有变更日志。
 
 ### Changed
+
+#### [中间件执行层] 行为调整
+
 - **版本提升**：在 `package.json` 和内部配置中将应用版本提升至 1.0.1。
+
+### Fixed
+
+#### [中间件执行层] 缺陷修复
+
+- **UI 溢出**：修复了质量检查（Quality Check）结果面板在条目较多时不滚动的 Bug。
+- **链接处理**：将 `window.open` 替换为带有 **协议验证 (http/https)** 的 `shell.openExternal` 以增强安全性。
+- **更新检查**：为 GitHub API 调用添加了 HTTP 200 状态验证，防止解析错误。
+- **IPC 可靠性**：修复了 `TypeError: window.api.invoke is not a function`，通过在预加载桥接中显式暴露 `checkUpdate` 解决。
