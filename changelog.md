@@ -1,5 +1,31 @@
 # Murasaki Translator - Changelog
 
+## [2.0.3] - 2026-02-23
+
+### 稳定性与并发互斥（主链路）
+
+*   修复 V1 启停竞态与 `runId` 串扰：启动冲突会明确拒绝并回发 `process-exit`，旧进程退出不再误伤新任务。
+*   修复启动早退未闭环问题：脚本缺失/模型缺失/平台检测失败等路径统一回发 `process-exit`，避免前端卡运行态。
+*   新增 V1/V2 双向互斥：V2 运行时阻止 V1 启动，V1/remote 运行时阻止 V2 启动，避免功能对冲。
+*   远程模式取消链路增强：取消超时与回退退出事件绑定正确 `runId`，轮询异常时增加后台 best-effort cancel 重试。
+
+### Worker 取消响应与参数一致性
+
+*   修复 `translation_worker` 在“静默输出”场景下取消不及时：读取子进程输出改为短超时轮询，循环优先检查取消请求并及时终止进程树。
+*   统一 `lineTolerancePct` 归一化逻辑，兼容 `0.2` 与 `20` 两种输入口径，避免参数被重复缩放或误传。
+
+### 队列可达性、i18n 与清理
+
+*   Watch Folder 入队稳定性提升：提交时二次去重，恢复监听后回读并对齐 active/enabled 状态。
+*   增加跨页面队列同步兜底：非 Library 页面收到 watch 新文件时也会写入队列并广播更新事件。
+*   Dashboard 去除硬编码文案并补齐中/英/日三语键值，完善 API 方案相关提示。
+*   清理无引用死代码：移除 `RemoteClient.translateAndWait`。
+
+### 测试与仓库规范
+
+*   新增单测覆盖：`translation_worker` 静默输出场景下取消请求可及时生效。
+*   全仓行尾规范统一为 LF：新增 `.gitattributes`（`* text=auto eol=lf`），消除 CRLF/mixed 行尾差异噪音。
+
 ## [2.0.2] - 2026-02-23
 
 ### EPUB结构翻译优化
