@@ -829,7 +829,7 @@ class PipelineRunner:
         joiner = str(context_cfg.get("joiner") or "\n")
         if before <= 0 and after <= 0:
             return {"before": "", "after": ""}
-        # block_end 鏍囪瘑鍧楃殑缁撴潫琛岋紙涓嶅惈锛夛紝鐢ㄤ簬鍒嗗潡妯″紡 context
+        # block_end 表示块的结束行（不含），用于分块模式的 context 计算。
         content_end = block_end if block_end is not None else line_index + 1
         start = max(0, line_index - before)
         end = min(len(source_lines), content_end + after)
@@ -1260,7 +1260,7 @@ class PipelineRunner:
                 processing_processor.apply_pre(line) for line in source_lines
             ]
 
-        # --- Dashboard 鏃ュ織鍗忚 ---
+        # --- Dashboard 日志协议 ---
         temp_progress_file = None
         temp_lock = threading.Lock()
         try:
@@ -1416,7 +1416,7 @@ class PipelineRunner:
                         line_index = meta
                         break
                         
-            # 瀵逛簬鍧楁ā寮忔垨缂哄け鐪熷疄琛屽彿鐨勭粨鏋勫寲妯″紡锛屾垜浠笉鑳戒吉閫?line_index
+            # 分块模式或缺少真实行号时，不能伪造 line_index。
             fallback_index = line_index if line_index is not None else idx
                 
             # 分块模式的 context 以整块行范围为准，而不是仅使用首行。
