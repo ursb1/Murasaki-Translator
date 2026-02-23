@@ -295,3 +295,48 @@ describe("apiStatsStore persistence", () => {
     }
   });
 });
+
+describe("apiStatsStore event cache eviction", () => {
+  it("caps in-memory event cache size via LRU eviction", async () => {
+    const root = mkdtempSync(join(tmpdir(), "api-stats-cache-"));
+    try {
+      __testOnly.clearEventCache();
+      const service = createApiStatsService({
+        getProfilesDir: () => root,
+      });
+      const cacheLimit = __testOnly.getEventCacheLimit();
+      const profilesCount = cacheLimit + 10;
+
+      for (let index = 0; index < profilesCount; index += 1) {
+        const apiProfileId = `profile_${index}`;
+        await service.appendEvent({
+          apiProfileId,
+          requestId: `req_${index}`,
+          phase: "request_start",
+          ts: "2026-02-22T01:00:00.000Z",
+          source: "api_test",
+          origin: "unit_test",
+        });
+        await service.appendEvent({
+          apiProfileId,
+          requestId: `req_${index}`,
+          phase: "request_end",
+          ts: "2026-02-22T01:00:01.000Z",
+          source: "api_test",
+          origin: "unit_test",
+          statusCode: 200,
+        });
+      }
+
+      for (let index = 0; index < profilesCount; index += 1) {
+        const { eventsPath } = __testOnly.buildPaths(root, `profile_${index}`);
+        await __testOnly.loadEvents(eventsPath);
+      }
+
+      expect(__testOnly.getEventCacheSize()).toBeLessThanOrEqual(cacheLimit);
+    } finally {
+      __testOnly.clearEventCache();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

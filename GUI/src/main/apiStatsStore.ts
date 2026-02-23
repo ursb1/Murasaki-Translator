@@ -156,9 +156,22 @@ const SENSITIVE_KEY_RE =
   /(authorization|api[_-]?key|secret|password|(^|[_-])token($|[_-]))/i;
 // Cap stored raw payload preview size to avoid oversized stats files.
 const MAX_RAW_VALUE_CHARS = 100_000;
+const MAX_EVENT_CACHE_ENTRIES = 64;
 
 const fileWriteLocks = new Map<string, Promise<void>>();
 const eventCache = new Map<string, EventCacheEntry>();
+
+const touchEventCache = (eventsPath: string, entry: EventCacheEntry) => {
+  if (eventCache.has(eventsPath)) {
+    eventCache.delete(eventsPath);
+  }
+  eventCache.set(eventsPath, entry);
+  while (eventCache.size > MAX_EVENT_CACHE_ENTRIES) {
+    const oldestKey = eventCache.keys().next().value as string | undefined;
+    if (!oldestKey) break;
+    eventCache.delete(oldestKey);
+  }
+};
 
 const withFileWriteLock = async <T>(
   target: string,
@@ -395,6 +408,7 @@ const loadEvents = async (eventsPath: string): Promise<ApiStatsEventRecord[]> =>
     cached.mtimeMs === fileStat.mtimeMs &&
     cached.size === fileStat.size
   ) {
+    touchEventCache(eventsPath, cached);
     return cached.events;
   }
   const raw = await readFile(eventsPath, "utf-8").catch(() => "");
@@ -412,7 +426,7 @@ const loadEvents = async (eventsPath: string): Promise<ApiStatsEventRecord[]> =>
     }
   }
   events.sort((a, b) => parseTsMs(a.ts) - parseTsMs(b.ts));
-  eventCache.set(eventsPath, {
+  touchEventCache(eventsPath, {
     mtimeMs: fileStat.mtimeMs,
     size: fileStat.size,
     events,
@@ -1170,4 +1184,9 @@ export const __testOnly = {
   computeBreakdown,
   normalizeApiProfileId,
   normalizePhase,
+  buildPaths,
+  loadEvents,
+  getEventCacheSize: () => eventCache.size,
+  getEventCacheLimit: () => MAX_EVENT_CACHE_ENTRIES,
+  clearEventCache: () => eventCache.clear(),
 };
