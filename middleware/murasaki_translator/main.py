@@ -432,7 +432,6 @@ def translate_block_with_retry(
     anchor_attempts = 0
     kana_retry_attempts = 0
     kana_retry_budget = 1
-    structural_retry_happened = False
     anchor_retry_budget = 0
     if getattr(args, "anchor_check", False):
         try:
@@ -442,12 +441,17 @@ def translate_block_with_retry(
     
     final_output = None
 
-    total_retry_budget = max(0, args.max_retries, args.coverage_retries, anchor_retry_budget)
-
     while True:
-        attempt = global_attempts + glossary_attempts + anchor_attempts
-        if attempt > total_retry_budget:
-            break
+        # 每轮重置结构性重试标记，避免前一轮状态污染后续重试链路。
+        structural_retry_happened = False
+        # 采用“分预算”策略：行数/术语/锚点/假名各自控制重试次数，互不抢占。
+        # 这里仅用于反馈注入与调温，不作为总预算拦截条件。
+        attempt = (
+            global_attempts
+            + glossary_attempts
+            + anchor_attempts
+            + kana_retry_attempts
+        )
 
         current_temp = args.temperature
         current_rep_base = args.rep_penalty_base

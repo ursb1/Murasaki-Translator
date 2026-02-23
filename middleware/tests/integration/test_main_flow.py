@@ -114,6 +114,33 @@ def test_main_flow_strict_line_check_retry():
 
 
 @pytest.mark.integration
+def test_main_flow_structural_retry_does_not_skip_followup_glossary_retry():
+    glossary = {"foo": "bar"}
+    args = _make_args(
+        max_retries=1,
+        coverage_retries=1,
+        output_hit_threshold=100,
+        line_check=True,
+        line_tolerance_abs=0,
+        line_tolerance_pct=0.0,
+    )
+    result = _run_flow(
+        "foo\nfoo",
+        [
+            "foo",  # 触发行数重试
+            "foo\nfoo",  # 行数恢复，但仍未命中术语
+            "bar\nbar",  # 术语重试后命中
+        ],
+        args,
+        glossary=glossary,
+    )
+    retry_types = [item.get("type") for item in result["retry_history"]]
+    assert "line_check" in retry_types
+    assert "glossary" in retry_types
+    assert result["out_text"].splitlines() == ["bar", "bar"]
+
+
+@pytest.mark.integration
 def test_main_flow_glossary_retry():
     glossary = {"foo": "bar"}
     args = _make_args(max_retries=0, coverage_retries=1, output_hit_threshold=100)
