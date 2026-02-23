@@ -9,7 +9,6 @@ import {
   Info,
   X,
   RefreshCw,
-  Server,
   Sparkles,
 } from "lucide-react";
 import { Button, Card, CardContent, Switch } from "./ui/core";

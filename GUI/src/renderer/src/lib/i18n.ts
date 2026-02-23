@@ -32,7 +32,12 @@ export const translations = {
       title: "硬件监控",
       waiting: "等待硬件数据...",
       apiWaiting: "等待API响应...",
+      apiRpmLabel: "RPM",
+      apiRpmTooltip: "每分钟请求数（近窗口）",
       apiConcurrency: "实时请求并发",
+      apiConcurrencyTooltip: "当前请求并发上限",
+      apiLatencyLabel: "请求延迟",
+      apiLatencyTooltip: "请求发出到收到响应的耗时（非 Ping）",
       gpuLoad: "核心利用率",
       vramLoad: "显存控制器/带宽负载",
     },
@@ -611,6 +616,7 @@ export const translations = {
         lineMismatch: "行数不匹配，已重试",
         anchorMissing: "核心锚点缺失，已重试",
         providerError: "接口请求异常，已重试",
+        kanaResidue: "检测到源语言残留，已触发重试",
       },
       errorTitle: "翻译出错",
       errorUnknown: "未知错误",
@@ -637,6 +643,9 @@ export const translations = {
       providerTypeOpenAI: "OpenAI 兼容 API",
       lineCheck: "行数验证 (Line Check)",
       lineCheckDesc: "当输出行数与原文差异过大时自动重试翻译",
+
+      qcKanaTrace: "源语言残留检查",
+      qcKanaTraceDesc: "仅在 V1 质量检查阶段检测假名残留并记录告警。",
       anchorCheck: "核心锚点校验 (Anchor Check)",
       anchorCheckDesc:
         "在翻译EPUB/SRT/ASS以及辅助对齐模式的TXT文件的核心结构锚点缺失时，自动进行重试",
@@ -1193,6 +1202,24 @@ export const translations = {
         seed: "可选",
         stop: "可填字符串或 JSON 数组，留空使用系统默认停止词",
       },
+      apiSamplingHints: {
+        temperature: "控制输出随机性，越高越发散。",
+        topP: "控制采样范围，越低越保守。",
+        maxTokens: "限制单次输出长度。",
+        presencePenalty: "提高新词和新话题出现概率。",
+        frequencyPenalty: "降低重复词句。",
+        seed: "固定后结果更易复现。",
+        stop: "命中后提前停止输出。",
+      },
+      apiSamplingTooltips: {
+        temperature: "越高越发散，越低越稳定。",
+        topP: "核采样阈值，常用 0.8~1.0。",
+        maxTokens: "限制输出长度。",
+        presencePenalty: "鼓励新内容。",
+        frequencyPenalty: "抑制重复词句。",
+        seed: "用于提高复现性。",
+        stop: "命中后立即截断输出。",
+      },
       apiAdvancedTabs: {
         sampling: "采样参数",
         headers: "Headers / Params",
@@ -1253,14 +1280,27 @@ export const translations = {
         model: "填写实际使用的模型标识",
         timeout: "留空则使用默认值",
         concurrency: "0 表示自动模式，从中位值起步并根据响应动态调整",
-        strictConcurrency: "固定并发上限（按并发数执行，不自适应）",
+        strictConcurrency: "严格并发模式：固定并发上限，不启用自适应调节",
         rpm: "商业 API 通常有 RPM 限制，本地推理可留空或调高",
         maxRetries: "API 异常或产生幻觉时的轮询上限",
-        group: "用于 UI 分组展示，可在 YAML 中覆盖",
+        group: "仅用于分组显示，不影响请求。",
         members: "轮询模式下直接填写 API 配置 ID（每行一个）",
         strategy: "轮询为默认策略，随机适合多节点分流",
         headers: "请输入 JSON 对象（Key-Value）",
         params: "请输入 JSON 对象（请求参数）",
+      },
+      formTooltips: {
+        baseUrl: "/v1 可留空，系统会自动追加。",
+        apiKey: "支持多 Key 轮询；每行一个，留空则按匿名方式请求。",
+        model: "填写服务端真实模型 ID；与后端不一致会直接报错。",
+        concurrency: "0 为自适应并发，推荐使用。大部分API可以承受128-256级别的并发",
+        strictConcurrency: "开启后同一时间的并发不会超过指定上限，适合自建服务器提供的模型接口以稳定请求量。",
+        rpm: "用于节流保护；本地推理可提高或留空，公网接口建议按限额填写。",
+        maxRetries: "请求异常触发重试机制的重试次数，建议 3 次",
+        timeout: "单请求超时秒数；过短会误判失败，过长会拖慢重试恢复。",
+        group: "仅用于分组显示，不影响请求。",
+        strategy: "选择系统构造分段的策略，通用API建议使用默认行配置。",
+        parser: "决定如何从模型输出提取译文，建议使用默认的多级联解析。",
       },
       poolEndpointsTitle: "轮询节点",
       poolEndpointsDesc:
@@ -1396,17 +1436,17 @@ export const translations = {
         onMismatch: "选择行数不匹配时的处理方式",
         trim: "先裁剪空白再检测",
         similarityThreshold: "0~1，越低越严格",
-        sourceLang: "假名检查仅支持日语代码",
+        sourceLang: "目前仅支持源语言为日语",
       },
       policyChecks: {
         emptyLine: "空行检查",
         similarity: "相似度检查",
-        kanaTrace: "日语假名检查",
+        kanaTrace: "源语言残留检查",
       },
       policyChecksDesc: {
         emptyLine: "仅当原文非空但译文为空时触发",
         similarity: "基于 Jaccard，相似度过高会触发",
-        kanaTrace: "仅日语时启用",
+        kanaTrace: "仅日语适用",
       },
       chunkSections: {
         modeTitle: "分块策略设置",
@@ -1445,6 +1485,12 @@ export const translations = {
         enableBalance: "平衡尾部块大小",
         balanceThreshold: "默认 0.6",
         balanceCount: "默认 3",
+      },
+      chunkTooltips: {
+        targetChars: "理想块长，建议按模型上下文能力控制在 800-1500。",
+        maxChars: "硬上限，超过会强制切分；通常建议为目标值的 1.4-2.0 倍。",
+        balanceThreshold: "末尾块低于该比例时触发重平衡（0.3-0.8 常用）。",
+        balanceCount: "参与尾部平衡的块数量，值越大越平滑但改动范围更大。",
       },
       strategyOptions: {
         round_robin: "轮询（按顺序）",
@@ -1885,6 +1931,10 @@ export const translations = {
           seedLabel: "随机种子 (Seed)",
           stopLabel: "Stop",
           extraParamsLabel: "额外参数 (JSON)",
+          kanaRetryLabel: "源语言残留重试",
+          kanaRetrySourceLangLabel: "源语言",
+          kanaRetryThresholdLabel: "触发阈值",
+          kanaRetryMinCharsLabel: "最小检测长度",
         },
         placeholders: {
           id: "例如 pipeline_demo",
@@ -1909,6 +1959,8 @@ export const translations = {
           seed: "例如 42",
           stop: '例如 ["###", "---"]',
           extraParams: '{ "response_format": {"type": "json_object"} }',
+          kanaRetryThreshold: "0.30",
+          kanaRetryMinChars: "32",
         },
         hints: {
           linePolicy: "决定行数不一致时的处理方式",
@@ -1922,6 +1974,14 @@ export const translations = {
             "当前分块策略为分块模式，建议切换为分行分块或改用分行模式。",
           modeMismatchBlock:
             "当前分块策略为分行模式，建议切换为分块策略或改用分块模式。",
+          kanaRetry:
+            "块模式下检测译文中源语言残留比例，超阈值自动重试本块。",
+          kanaRetrySourceLang:
+            "选择过滤的源语言",
+          kanaRetryThreshold:
+            "不建议过低，以避免误判",
+          kanaRetryMinChars: "译文达到该长度后才检测。",
+          kanaRetryLineDisabled: "当前为分行策略，源语言残留重试仅在分块策略下生效。",
         },
         sections: {
           samplingTitle: "采样参数",
@@ -1930,6 +1990,11 @@ export const translations = {
           requestDesc: "可选覆盖模型、超时与 Headers",
           advancedTitle: "高级参数",
           advancedDesc: "其他模型特性可放入 JSON",
+          qualityTitle: "块模式质量检查",
+          qualityDesc: "块模式源语言残留重试设置。",
+        },
+        options: {
+          kanaRetrySourceLangJa: "日语 (ja)",
         },
         sync: "从 YAML 同步",
         apply: "生成 YAML",
@@ -3112,7 +3177,12 @@ export const translations = {
       title: "Hardware Monitor",
       waiting: "Waiting for hardware data...",
       apiWaiting: "Waiting for API response...",
+      apiRpmLabel: "RPM",
+      apiRpmTooltip: "Requests per minute (recent window)",
       apiConcurrency: "Active Concurrency",
+      apiConcurrencyTooltip: "Current in-flight concurrency limit",
+      apiLatencyLabel: "Request Latency",
+      apiLatencyTooltip: "Request round-trip time (not ICMP ping)",
       gpuLoad: "Core Usage",
       vramLoad: "VRAM Controller/Bandwidth Load",
     },
@@ -3712,6 +3782,7 @@ export const translations = {
         lineMismatch: "Line count mismatch, retrying",
         anchorMissing: "Core anchors missing, retrying",
         providerError: "Provider error detected, retrying",
+        kanaResidue: "Kana residue detected, retrying",
       },
       errorTitle: "Translation Error",
       errorUnknown: "Unknown error",
@@ -3739,6 +3810,9 @@ export const translations = {
       lineCheck: "Line Check",
       lineCheckDesc:
         "Automatically retry if output line count differs significantly from input.",
+      qcKanaTrace: "Kana Residue Check",
+      qcKanaTraceDesc:
+        "Run kana residue checks in V1 QC stage and keep warning traces.",
       anchorCheck: "Anchor Check",
       anchorCheckDesc:
         "Retry when core anchors are missing (EPUB/SRT/ASS/Alignment TXT).",
@@ -4296,7 +4370,7 @@ export const translations = {
       apiSetupHintPool:
         "Configure endpoint base_url / model / weight, then choose a strategy.",
       apiSamplingTitle: "Sampling Params",
-      apiSamplingDesc: "Common model sampling parameters",
+      apiSamplingDesc: "Common sampling params (empty = backend default).",
       apiSamplingHint: "Leave empty to use system defaults.",
       apiSamplingFields: {
         temperature: "Temperature",
@@ -4315,6 +4389,24 @@ export const translations = {
         frequencyPenalty: "Empty",
         seed: "Optional",
         stop: "String or JSON array. Empty uses system default stop tokens",
+      },
+      apiSamplingHints: {
+        temperature: "Empty = backend default; typical 0.6~1.0.",
+        topP: "Empty = backend default; typical 0.8~1.0.",
+        maxTokens: "Single-response output cap.",
+        presencePenalty: "Increase topic diversity.",
+        frequencyPenalty: "Reduce repeated wording.",
+        seed: "Set for easier reproducibility.",
+        stop: "Stop early on match; supports JSON array.",
+      },
+      apiSamplingTooltips: {
+        temperature: "Higher = more diverse, lower = more stable.",
+        topP: "Nucleus sampling threshold, common range 0.8~1.0.",
+        maxTokens: "Limits output length.",
+        presencePenalty: "Encourages new content.",
+        frequencyPenalty: "Suppresses repeated wording.",
+        seed: "Used for reproducibility.",
+        stop: "Output is truncated when matched.",
       },
       apiAdvancedTabs: {
         sampling: "Sampling",
@@ -4381,15 +4473,38 @@ export const translations = {
         concurrency:
           "0 enables auto mode, starting at the midpoint and adapting to responses",
         strictConcurrency:
-          "Use fixed in-flight concurrency from the Concurrency value (no adaptive scaling).",
+          "Use fixed in-flight limit (no adaptive scaling).",
         rpm: "Commercial APIs usually enforce RPM limits; local inference can be blank or higher",
         maxRetries:
           "Retry ceiling when API errors or hallucinated output occurs",
-        group: "Used for UI grouping, can be overridden in YAML",
+        group: "UI grouping only; does not affect requests.",
         members: "Rotation mode uses API Profile IDs (one per line)",
         strategy: "Round robin is default, random balances across nodes",
         headers: "Enter a JSON object (key-value)",
         params: "Enter a JSON object (request params)",
+      },
+      formTooltips: {
+        baseUrl:
+          "Check whether the endpoint already includes a version prefix like /v1; wrong prefixes often cause 404 or double-prefix paths.",
+        apiKey:
+          "Supports multi-key rotation (one key per line). Leave empty for unauthenticated local/internal endpoints.",
+        model:
+          "Use the exact model id exposed by your backend. A mismatch usually fails immediately.",
+        concurrency:
+          "0 means adaptive concurrency. For fixed values, increase gradually after load testing.",
+        strictConcurrency:
+          "Fixes in-flight request limit and disables adaptive scaling.",
+        rpm:
+          "Used for client-side throttling. Keep aligned with provider limits to avoid burst 429/5xx.",
+        maxRetries:
+          "Retries request failures or malformed outputs only. Excessive retries increase tail latency.",
+        timeout:
+          "Per-request timeout in seconds. Too low causes false failures; too high delays recovery.",
+        group: "UI grouping only; does not affect requests.",
+        strategy:
+          "Select the line/block strategy combo that defines chunking and validation behavior.",
+        parser:
+          "Controls how model output is extracted. Cascade parsers are safer for mixed output formats.",
       },
       poolEndpointsTitle: "Rotation endpoints",
       poolEndpointsDesc:
@@ -4579,6 +4694,16 @@ export const translations = {
         enableBalance: "Balance tail blocks",
         balanceThreshold: "Default 0.6",
         balanceCount: "Default 3",
+      },
+      chunkTooltips: {
+        targetChars:
+          "Target chunk size. 800-1500 is usually stable for long-form translation.",
+        maxChars:
+          "Hard cap before forced split. A common range is 1.4x-2.0x of target chars.",
+        balanceThreshold:
+          "Trigger tail rebalance when the last chunk ratio falls below this value.",
+        balanceCount:
+          "Number of tail chunks included in rebalance. Higher values smooth output but move more text.",
       },
       strategyOptions: {
         round_robin: "Round robin (ordered)",
@@ -5022,6 +5147,10 @@ export const translations = {
           seedLabel: "Seed",
           stopLabel: "Stop",
           extraParamsLabel: "Extra Params (JSON)",
+          kanaRetryLabel: "Kana Residue Retry",
+          kanaRetrySourceLangLabel: "Source Language",
+          kanaRetryThresholdLabel: "Trigger Threshold",
+          kanaRetryMinCharsLabel: "Min Checked Chars",
         },
         placeholders: {
           id: "e.g. pipeline_demo",
@@ -5046,6 +5175,8 @@ export const translations = {
           seed: "e.g. 42",
           stop: 'e.g. ["###", "---"]',
           extraParams: '{ "response_format": {"type": "json_object"} }',
+          kanaRetryThreshold: "0.30",
+          kanaRetryMinChars: "32",
         },
         hints: {
           linePolicy: "Define how to handle line count mismatches",
@@ -5062,6 +5193,16 @@ export const translations = {
             "Selected chunk policy is chunk mode. Use a line chunk policy or switch to line mode.",
           modeMismatchBlock:
             "Selected chunk policy is line mode. Use a chunk policy or switch to chunk mode.",
+          kanaRetry:
+            "In block mode, retry the block when Japanese kana residue ratio exceeds the threshold.",
+          kanaRetrySourceLang:
+            "Use ja (legacy jp is normalized to ja).",
+          kanaRetryThreshold:
+            "Accepts 0~1 or 0~100 (0.30 = 30%).",
+          kanaRetryMinChars:
+            "Detection runs after this length is reached.",
+          kanaRetryLineDisabled:
+            "Current strategy is line mode. Kana residue retry is block-mode only.",
         },
         sections: {
           samplingTitle: "Sampling Params",
@@ -5070,6 +5211,11 @@ export const translations = {
           requestDesc: "Optional overrides for model, timeout, and headers",
           advancedTitle: "Advanced Params",
           advancedDesc: "Put model-specific fields into JSON",
+          qualityTitle: "Block Quality Check",
+          qualityDesc: "Japanese residue retry settings for block mode.",
+        },
+        options: {
+          kanaRetrySourceLangJa: "Japanese (ja)",
         },
         sync: "Sync from YAML",
         apply: "Generate YAML",
@@ -6268,7 +6414,12 @@ export const translations = {
       title: "ハードウェアモニター",
       waiting: "ハードウェアデータを待機中...",
       apiWaiting: "API応答を待機中...",
+      apiRpmLabel: "RPM",
+      apiRpmTooltip: "1分あたりのリクエスト数（直近）",
       apiConcurrency: "リアルタイム並行実行",
+      apiConcurrencyTooltip: "現在の同時リクエスト上限",
+      apiLatencyLabel: "応答遅延",
+      apiLatencyTooltip: "リクエスト送信から応答受信までの時間（Ping ではない）",
       gpuLoad: "コア使用率",
       vramLoad: "VRAMコントローラー/帯域幅負荷",
     },
@@ -6854,6 +7005,7 @@ export const translations = {
         lineMismatch: "行数不一致のため再試行",
         anchorMissing: "重要アンカー欠落のため再試行",
         providerError: "API エラーのため再試行",
+        kanaResidue: "かな残留を検出したため再試行",
       },
       errorTitle: "翻訳エラー",
       errorUnknown: "不明なエラー",
@@ -6880,6 +7032,9 @@ export const translations = {
       providerTypeOpenAI: "OpenAI 互換 API",
       lineCheck: "行数チェック",
       lineCheckDesc: "出力行数が入力と大きく異なる場合に自動リトライ。",
+
+      qcKanaTrace: "かな残留チェック",
+      qcKanaTraceDesc: "V1 の品質チェック段階でかな残留を検出し、警告履歴を記録します。",
       anchorCheck: "アンカーチェック",
       anchorCheckDesc: "EPUB/SRT/ASS/整列TXTの重要アンカー欠落時に自動再試行。",
       anchorCheckRetries: "アンカー再試行回数",
@@ -7426,7 +7581,7 @@ export const translations = {
       apiSetupHintPool:
         "エンドポイントの base_url / モデル / 重みを設定します。",
       apiSamplingTitle: "サンプリング設定",
-      apiSamplingDesc: "よく使うサンプリングパラメータ",
+      apiSamplingDesc: "よく使うサンプリング設定（空欄=サーバー既定値）",
       apiSamplingHint: "空欄はシステムの既定値を使用します。",
       apiSamplingFields: {
         temperature: "Temperature",
@@ -7445,6 +7600,24 @@ export const translations = {
         frequencyPenalty: "空欄",
         seed: "任意",
         stop: "文字列 または JSON 配列（空欄は既定の停止語）",
+      },
+      apiSamplingHints: {
+        temperature: "空欄=サーバー既定値。一般に 0.6~1.0。",
+        topP: "空欄=サーバー既定値。一般に 0.8~1.0。",
+        maxTokens: "1回の出力上限です。",
+        presencePenalty: "話題の多様性を上げます。",
+        frequencyPenalty: "繰り返し表現を抑えます。",
+        seed: "固定すると再現しやすくなります。",
+        stop: "一致時に出力を打ち切ります。複数は JSON 配列。",
+      },
+      apiSamplingTooltips: {
+        temperature: "高いほど発散、低いほど安定。",
+        topP: "核サンプリング閾値（通常 0.8~1.0）。",
+        maxTokens: "出力長の上限です。",
+        presencePenalty: "新しい語の出現を促します。",
+        frequencyPenalty: "反復語句を抑制します。",
+        seed: "再現性向上に使います。",
+        stop: "一致時に即時打ち切ります。",
       },
       apiAdvancedTabs: {
         sampling: "サンプリング",
@@ -7507,14 +7680,35 @@ export const translations = {
         model: "実際のモデル ID を入力",
         timeout: "空欄は既定値",
         concurrency: "0 は自動モード（中位値から開始し応答に応じて調整）",
-        strictConcurrency: "並列数の値で在席リクエスト数を固定します（自動調整なし）。",
+        strictConcurrency: "在席リクエスト上限を固定します（自動調整なし）。",
         rpm: "商用 API は RPM 制限が一般的。ローカル推論は空欄または高めで可",
         maxRetries: "API 障害や幻覚出力が発生した場合の再試行上限",
-        group: "UI のグループ表示に使用、YAML で上書き可能",
+        group: "表示用のグループ分けです。リクエストには影響しません。",
         members: "ローテーションは API Profile ID を行ごとに指定",
         strategy: "標準はラウンドロビン、ランダムは分散向き",
         headers: "JSON オブジェクトを入力",
         params: "JSON オブジェクトを入力",
+      },
+      formTooltips: {
+        baseUrl:
+          "/v1 などのバージョン接頭辞が既に含まれているか確認してください。重複すると 404 の原因になります。",
+        apiKey:
+          "複数キーのローテーションに対応（1行1キー）。ローカル/内部 API は空欄運用も可能です。",
+        model: "サーバーで実際に公開されているモデル ID を指定してください。",
+        concurrency:
+          "0 は自動並列です。固定値は小さく始め、負荷試験しながら段階的に上げてください。",
+        strictConcurrency:
+          "在席リクエスト上限を固定し、自動調整を無効化します。",
+        rpm:
+          "クライアント側のスロットリング上限です。プロバイダーの制限値に合わせると安定します。",
+        maxRetries:
+          "通信失敗や異常出力のみ再試行します。大きすぎる値は遅延を増やします。",
+        timeout:
+          "1 リクエストあたりのタイムアウト秒数。短すぎると誤失敗、長すぎると復旧が遅れます。",
+        group: "表示用です。実際のリクエストには影響しません。",
+        strategy: "line/block の戦略組み合わせを選択し、分割と検証挙動を決定します。",
+        parser:
+          "モデル出力の抽出方式を指定します。混在出力にはカスケード解析が安全です。",
       },
       poolEndpointsTitle: "ローテーションエンドポイント",
       poolEndpointsDesc:
@@ -7702,6 +7896,16 @@ export const translations = {
         enableBalance: "末尾ブロックの均衡",
         balanceThreshold: "既定 0.6",
         balanceCount: "既定 3",
+      },
+      chunkTooltips: {
+        targetChars:
+          "目標チャンク長です。長文翻訳では 800-1500 が安定しやすいです。",
+        maxChars:
+          "強制分割の上限値です。通常は目標値の 1.4-2.0 倍が扱いやすいです。",
+        balanceThreshold:
+          "末尾チャンクの比率がこの値を下回ると尾部リバランスを実行します。",
+        balanceCount:
+          "尾部リバランス対象のチャンク数。大きいほど滑らかですが調整範囲が広がります。",
       },
       strategyOptions: {
         round_robin: "ラウンドロビン（順番）",
@@ -8145,6 +8349,10 @@ export const translations = {
           seedLabel: "Seed",
           stopLabel: "Stop",
           extraParamsLabel: "Extra Params (JSON)",
+          kanaRetryLabel: "かな残留リトライ",
+          kanaRetrySourceLangLabel: "ソース言語",
+          kanaRetryThresholdLabel: "発火しきい値",
+          kanaRetryMinCharsLabel: "最小検出文字数",
         },
         placeholders: {
           id: "例: pipeline_demo",
@@ -8169,6 +8377,8 @@ export const translations = {
           seed: "例: 42",
           stop: '例: ["###", "---"]',
           extraParams: '{ "response_format": {"type": "json_object"} }',
+          kanaRetryThreshold: "0.30",
+          kanaRetryMinChars: "32",
         },
         hints: {
           linePolicy: "行数不一致時の扱いを定義",
@@ -8185,6 +8395,16 @@ export const translations = {
             "選択した分割ポリシーは分割モードです。行分割ポリシーに切替えるか、行モードに変更してください。",
           modeMismatchBlock:
             "選択した分割ポリシーは行モードです。分割ポリシーに切替えるか、分割モードに変更してください。",
+          kanaRetry:
+            "block モードで訳文中のかな残留率がしきい値を超えた場合、このブロックを自動再試行します。",
+          kanaRetrySourceLang:
+            "ja を使用します（旧 jp は ja に正規化）。",
+          kanaRetryThreshold:
+            "0~1 または 0~100（0.30 = 30%）で入力できます。",
+          kanaRetryMinChars:
+            "この文字数以上で検出します。",
+          kanaRetryLineDisabled:
+            "現在は line 戦略です。かな残留リトライは block 戦略でのみ有効です。",
         },
         sections: {
           samplingTitle: "サンプリング設定",
@@ -8193,6 +8413,11 @@ export const translations = {
           requestDesc: "モデル/タイムアウト/Headers を任意で上書き",
           advancedTitle: "高度なパラメータ",
           advancedDesc: "モデル固有の項目は JSON で指定",
+          qualityTitle: "block 品質チェック",
+          qualityDesc: "block モードのかな残留リトライ設定。",
+        },
+        options: {
+          kanaRetrySourceLangJa: "日本語 (ja)",
         },
         sync: "YAML から同期",
         apply: "YAML 生成",

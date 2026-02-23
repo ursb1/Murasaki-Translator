@@ -217,7 +217,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
     const [monitorData, setMonitorData] = useState<MonitorData | null>(null);
     const [apiMonitorData, setApiMonitorData] = useState<ApiMonitorData>({
       url: "",
-      ping: null,
+      latencyMs: null,
       rpm: 0,
       concurrency: 0,
     });
@@ -362,7 +362,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           if (isSubscribed) {
             setApiMonitorData((prev) => ({
               ...prev,
-              ping: pingRes?.ok ? Math.max(0, Date.now() - startAt) : null,
+              latencyMs: pingRes?.ok ? Math.max(0, Date.now() - startAt) : null,
             }));
           }
         } catch (e) {
@@ -1296,7 +1296,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
               ) {
                 setApiMonitorData((prev) => ({
                   ...prev,
-                  ping: data.api_ping !== undefined ? data.api_ping : prev.ping,
+                  latencyMs:
+                    data.api_ping !== undefined ? data.api_ping : prev.latencyMs,
                   concurrency:
                     data.api_concurrency !== undefined
                       ? data.api_concurrency
@@ -1375,11 +1376,13 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                   ? "rep_penalty_increase"
                   : data.type === "glossary"
                     ? "glossary_missed"
-                    : data.type === "empty"
-                      ? "empty_retry"
-                      : data.type === "anchor_missing"
-                        ? "anchor_missing"
-                        : data.type === "provider_error"
+                    : data.type === "kana_residue"
+                      ? "kana_residue"
+                      : data.type === "empty"
+                        ? "empty_retry"
+                        : data.type === "anchor_missing"
+                          ? "anchor_missing"
+                          : data.type === "provider_error"
                           ? "provider_error"
                           : "line_mismatch";
               const retryMessages = t.dashboard.retryMessages;
@@ -1402,6 +1405,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                           "{coverage}",
                           coverageText,
                         )
+                      : data.type === "kana_residue"
+                        ? retryMessages.kanaResidue || retryMessages.lineMismatch
                       : data.type === "empty"
                         ? retryMessages.emptyBlock.replace(
                             "{block}",

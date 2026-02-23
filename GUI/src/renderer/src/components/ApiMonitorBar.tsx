@@ -4,7 +4,7 @@ import { Tooltip } from "./ui/core";
 
 export interface ApiMonitorData {
   url: string;
-  ping: number | null;
+  latencyMs: number | null;
   rpm: number;
   concurrency: number;
 }
@@ -18,6 +18,14 @@ interface ApiMonitorBarProps {
 export function ApiMonitorBar({ data, lang, isRunning }: ApiMonitorBarProps) {
   const t = translations[lang];
   const isOffline = !data.url;
+  const tone = {
+    info: "text-sky-500 dark:text-sky-400",
+    good: "text-emerald-500 dark:text-emerald-400",
+    warn: "text-amber-500 dark:text-amber-400",
+    bad: "text-rose-500 dark:text-rose-400",
+    neutral: "text-muted-foreground",
+    idle: "text-foreground/80",
+  } as const;
 
   // URL Display Logic: Extract hostname if possible
   let displayUrl = t.monitor.apiWaiting;
@@ -32,21 +40,34 @@ export function ApiMonitorBar({ data, lang, isRunning }: ApiMonitorBarProps) {
     }
   }
 
-  // Ping Color
-  const getPingColor = (ping: number | null) => {
-    if (ping === null) return "text-muted-foreground";
-    if (ping > 2000) return "text-red-400";
-    if (ping > 800) return "text-amber-400";
-    return "text-emerald-400";
+  const getLatencyColor = (latencyMs: number | null) => {
+    if (latencyMs === null) return tone.neutral;
+    // Latency is request round-trip time, not ICMP ping. Use relaxed thresholds.
+    if (latencyMs > 12000) return tone.bad;
+    if (latencyMs > 6000) return tone.warn;
+    return tone.good;
+  };
+
+  const getEndpointColor = () => {
+    if (isOffline) return tone.neutral;
+    if (!isRunning) return tone.idle;
+    if (data.latencyMs !== null && data.latencyMs > 12000) return tone.bad;
+    if (data.latencyMs !== null && data.latencyMs > 6000) return tone.warn;
+    return tone.info;
   };
 
   // RPM Color
   const getRpmColor = (rpm: number) => {
-    if (!isRunning) return "text-muted-foreground";
-    if (rpm > 100) return "text-red-400";
-    if (rpm > 30) return "text-amber-400";
-    if (rpm > 0) return "text-emerald-400";
-    return "text-muted-foreground";
+    if (!isRunning) return tone.neutral;
+    if (rpm > 500) return tone.bad;
+    if (rpm > 100) return tone.warn;
+    if (rpm > 0) return tone.good;
+    return tone.neutral;
+  };
+
+  const getConcurrencyColor = (concurrency: number) => {
+    if (!isRunning || concurrency <= 0) return tone.neutral;
+    return tone.good;
   };
 
   return (
@@ -57,7 +78,7 @@ export function ApiMonitorBar({ data, lang, isRunning }: ApiMonitorBarProps) {
       <div className="flex items-center gap-2 text-muted-foreground min-w-0 shrink flex-1 mr-2 overflow-hidden">
         <Globe className="w-3.5 h-3.5 shrink-0" />
         <span
-          className={`truncate font-medium ${isOffline ? "opacity-70" : isRunning ? "text-emerald-500/90" : "text-foreground/80"}`}
+          className={`truncate font-medium ${getEndpointColor()} ${isOffline ? "opacity-70" : ""}`}
           title={fullUrl}
         >
           {displayUrl}
@@ -66,10 +87,10 @@ export function ApiMonitorBar({ data, lang, isRunning }: ApiMonitorBarProps) {
 
       {/* RPM & Concurrency - 核心显示区域 */}
       <div className="flex items-center gap-4 text-muted-foreground justify-center min-w-[150px] shrink-0">
-        <Tooltip content="Requests Per Minute (RPM)">
+        <Tooltip content={t.monitor.apiRpmTooltip}>
           <div className="flex items-center gap-1.5 shrink-0">
             <Activity className="w-3.5 h-3.5" />
-            <span>RPM</span>
+            <span>{t.monitor.apiRpmLabel}</span>
             <span
               className={`font-mono font-bold w-10 text-right ${getRpmColor(data.rpm)}`}
             >
@@ -80,12 +101,12 @@ export function ApiMonitorBar({ data, lang, isRunning }: ApiMonitorBarProps) {
 
         <div className="w-px h-3.5 bg-border/60" />
 
-        <Tooltip content="Active Concurrency Limit">
+        <Tooltip content={t.monitor.apiConcurrencyTooltip}>
           <div className="flex items-center gap-1.5 shrink-0">
             <Server className="w-3.5 h-3.5" />
             <span>{t.monitor.apiConcurrency}</span>
             <span
-              className={`font-mono font-bold w-4 text-right ${isRunning && data.concurrency > 0 ? "text-emerald-400" : ""}`}
+              className={`font-mono font-bold w-4 text-right ${getConcurrencyColor(data.concurrency)}`}
             >
               {isRunning && data.concurrency > 0 ? `${data.concurrency}` : "-"}
             </span>
@@ -93,17 +114,17 @@ export function ApiMonitorBar({ data, lang, isRunning }: ApiMonitorBarProps) {
         </Tooltip>
       </div>
 
-      {/* Ping Stats - 紧凑显示 */}
+      {/* Latency Stats - 紧凑显示 */}
       <div className="flex items-center gap-3 text-muted-foreground shrink-0 ml-3">
         <div className="w-px h-3.5 bg-border" />
-        <Tooltip content="API Server Latency (Ping)">
+        <Tooltip content={t.monitor.apiLatencyTooltip}>
           <div className="flex items-center gap-1.5">
             <Clock className="w-3.5 h-3.5" />
-            <span>响应延迟</span>
+            <span>{t.monitor.apiLatencyLabel}</span>
             <span
-              className={`font-bold font-mono w-12 text-right ${getPingColor(data.ping)}`}
+              className={`font-bold font-mono w-14 text-right ${getLatencyColor(data.latencyMs)}`}
             >
-              {data.ping !== null ? `${data.ping}ms` : "-"}
+              {data.latencyMs !== null ? `${Math.round(data.latencyMs)}ms` : "-"}
             </span>
           </div>
         </Tooltip>

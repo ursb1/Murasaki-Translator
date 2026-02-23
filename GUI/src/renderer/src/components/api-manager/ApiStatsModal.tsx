@@ -825,7 +825,7 @@ export function ApiStatsModal({
                               }
                             />
                             <Tooltip
-                              formatter={(value: number) => formatTrendValue(Number(value))}
+                              formatter={(value) => formatTrendValue(Number(value ?? 0))}
                             />
                             <Line
                               type="monotone"
@@ -866,7 +866,7 @@ export function ApiStatsModal({
                             <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.25)" />
                             <XAxis dataKey="hour" tick={{ fontSize: 11 }} />
                             <YAxis tick={{ fontSize: 11 }} />
-                            <Tooltip formatter={(value: number) => formatNumber(Number(value))} />
+                            <Tooltip formatter={(value) => formatNumber(Number(value))} />
                             <Bar dataKey="count" fill="#3b82f6" radius={[4, 4, 0, 0]} />
                           </BarChart>
                         </ResponsiveContainer>
@@ -890,7 +890,11 @@ export function ApiStatsModal({
                         <ResponsiveContainer width="100%" height="100%">
                           <PieChart>
                             <Pie
-                              data={breakdownData}
+                              data={
+                                breakdownData as unknown as Array<
+                                  Record<string, string | number | undefined>
+                                >
+                              }
                               dataKey="count"
                               nameKey="key"
                               innerRadius={45}
@@ -904,7 +908,7 @@ export function ApiStatsModal({
                                 />
                               ))}
                             </Pie>
-                            <Tooltip formatter={(value: number) => formatNumber(value)} />
+                            <Tooltip formatter={(value) => formatNumber(Number(value))} />
                             <Legend />
                           </PieChart>
                         </ResponsiveContainer>
@@ -928,7 +932,7 @@ export function ApiStatsModal({
                             <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.25)" />
                             <XAxis dataKey="key" tick={{ fontSize: 11 }} />
                             <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
-                            <Tooltip formatter={(value: number) => formatNumber(Number(value))} />
+                            <Tooltip formatter={(value) => formatNumber(Number(value))} />
                             <Bar dataKey="count" radius={[4, 4, 0, 0]}>
                               {statusClassData.map((item) => (
                                 <Cell key={item.key} fill={item.color} />
