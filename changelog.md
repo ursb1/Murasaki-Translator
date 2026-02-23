@@ -2,7 +2,7 @@
 
 ## [2.0.2] - 2026-02-23
 
-### EPUB 文档工厂与结构稳定性
+### EPUB结构翻译优化
 
 *   EPUB 文档工厂默认剥离注音包装标签：`EpubDocument` 在 `load/save` 两侧统一移除 `<ruby>/<rb>/<rt>/<rp>/<rtc>`，仅保留正文基文本，降低模型输入中的标签噪声与结构干扰。
 *   EPUB 重建链路与加载链路对齐：保存阶段使用与加载阶段一致的 ruby 预处理，避免“翻译时已去注音、重建时标签形态不一致”导致的映射偏差。
@@ -11,11 +11,28 @@
     *   `save` 侧验证重建后的章节内容不再包含 `ruby/rb/rt` 标签；
     *   继续保留锚点归一化测试，确保结构化回填稳定。
 
-### V2 分块日语残留重试
+### API模式日语残留重试
 
 *   Pipeline V2 在 `block` 模式新增假名残留比例重试：当 `processing.source_lang` **显式配置**为 `ja/jp` 且译文假名比例达到阈值时，自动触发重翻。
-*   新增可配置项：`processing.kana_retry_enabled`（默认 `true`）、`processing.kana_retry_threshold`（默认 `0.30`）、`processing.kana_retry_min_chars`（默认 `20`）。
+*   新增可配置项：`processing.kana_retry_enabled`（默认 `true`）、`processing.kana_retry_threshold`（默认 `0.30`）、`processing.kana_retry_min_chars`（默认 `32`）。
 *   重试类型新增 `kana_residue`，并在 `request_retry` 事件元数据中补充 `kanaRetryRatio / kanaRetryThreshold / kanaChars / kanaEffectiveChars`，便于定位“输出残留日文”问题。
+*   分块策略支持就近覆盖：`chunk.options` 可覆盖 `kana_retry_enabled / kana_retry_threshold / kana_retry_min_chars`，并支持 `kana_retry_source_lang`（兼容 `source_lang`）按策略局部生效。
+
+### API 管理中心与 Sandbox 联调
+
+*   `ApiManagerView` 新增关键字段说明与提示：并发/严格并发/RPM/重试/Base URL/API Key/解析器/策略等配置补充 tooltip 与表单 hint，减少误配。
+*   Chunk 配置页新增“块模式质量检查”分组：支持在 `block` 模式配置 `kana_retry_source_lang / kana_retry_threshold / kana_retry_min_chars`，`line` 模式下自动禁用并给出提示。
+*   Pipeline Sandbox 调试链路补齐 `processing.kana_retry_*` 注入，联调时可直接验证 `kana_residue` 的触发与重试行为。
+
+### V1 重试与可观测性补强
+
+*   V1 单块重试新增 `kana_residue` 路径（预算 1 次，不占用 `max_retries`），用于拦截“译文残留较高比例假名”场景。
+*   主流程新增 `JSON_WARNING` 事件输出，补充 `retry_count / last_retry_type` 元数据，便于前端和日志侧定位重试上下文。
+
+### 文案与测试覆盖补齐
+
+*   Dashboard 补充 `kana_residue` 重试消息映射，三语 i18n 同步新增相关键值，避免重试类型显示回退到通用文案。
+*   新增/更新单元与集成测试：覆盖 EPUB ruby 清洗、V2 chunk 覆盖优先级、V1 `kana_residue` 不占用重试预算、worker 参数透传边界。
 
 ## [2.0.1] - 2026-02-23
 
