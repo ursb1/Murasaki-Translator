@@ -62,6 +62,34 @@
 - chore: GUI 脚本新增 `typecheck` 与 `lint:check`，CI 新增对应检查并统一使用 `npm ci`。
 - chore: GUI 版本号同步更新为 `2.1.0`（`package.json` / `package-lock.json`）。
 
+#### [主进程与中间件执行层] 远程 I/O 与任务并发一致性
+
+- fix: `RemoteClient` 的缓存下载与文件上传改为异步文件读写，移除同步 I/O 对主线程的阻塞路径。
+- fix: `translation_worker` 服务就绪探测改为 `asyncio.to_thread(requests.get)`，避免事件循环阻塞。
+- fix: `TranslationTask` 新增状态锁与快照读取接口，`get_task_status` 与 `websocket_logs` 改为快照读取，收敛日志/进度并发读写窗口。
+- fix: `api_server` 的 cancel/执行链路改为任务访问器读写，避免跨协程直接读写共享字段。
+
+#### [GUI界面层] 统计缓存与校对交互性能
+
+- fix: `apiStatsStore` 为 `eventCache` 增加 LRU 上限与触达更新策略，限制长时间运行内存增长。
+- fix: `ProofreadView` 搜索匹配与列表过滤统一正则口径，修复 regex 模式下结果与过滤不一致。
+- fix: `ProofreadView` 一致性扫描改为异步扫描并分段让出主线程，降低大批量扫描时的界面卡顿。
+
+#### [中间件执行层] V1 重试链路稳定性
+
+- fix: `translate_block_with_retry` 每轮重试重置结构性重试标记，避免前一轮状态污染后续重试分支。
+- fix: `translate_block_with_retry` 采用分预算重试策略，避免行数/术语/锚点/假名重试互相抢占预算导致提前退出。
+
+#### [测试工程层] 回归覆盖
+
+- test: 新增 `remoteClientIo` 用例，覆盖远程缓存下载与文件上传异步 I/O 路径。
+- test: 新增 `proofreadSearchConsistency` 用例，覆盖搜索过滤一致性、非法 regex 处理与一致性扫描结果。
+- test: 新增 `apiStatsStore` 缓存淘汰用例，验证 event cache 上限生效。
+- test: 新增 `translation_worker` 用例，覆盖 `to_thread` 探测与任务快照接口。
+- test: 新增 `api_server_tasks` 用例，覆盖任务状态快照窗口与 WebSocket 快照推送。
+- test: 新增 `main_flow` 用例，覆盖结构性重试后术语重试链路。
+- test: 新增 `flow_v2_providers` 线程隔离用例，覆盖 OpenAI 兼容 provider 的线程局部 session 行为。
+
 ## [2.0.3] - 2026-02-23
 
 ### Changed
