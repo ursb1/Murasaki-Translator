@@ -2,6 +2,13 @@
 
 ## [2.0.3] - 2026-02-23
 
+### 最小风险修复包（事件闭环与可观测性）
+
+*   `scan-directory` 异常路径补充结构化告警日志（`console.warn` + `replyLogUpdate WARN`），并保持返回协议不变（失败仍返回 `[]`）。
+*   退出清理流程新增 remote 日志队列强制 flush 与日志定时器清理，降低退出瞬间日志丢失风险。
+*   `Sidebar` 的 `View` 导入调整为 `type-only import`，消除运行时导入环，避免潜在加载阻塞。
+*   新增 `ipcDiagnostics` 单测，覆盖 `scan-directory` 失败信息的格式化输出。
+
 ### 稳定性与并发互斥（主链路）
 
 *   修复 V1 启停竞态与 `runId` 串扰：启动冲突会明确拒绝并回发 `process-exit`，旧进程退出不再误伤新任务。
