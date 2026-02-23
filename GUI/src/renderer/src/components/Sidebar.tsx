@@ -17,7 +17,7 @@ import {
 import { cn } from "../lib/utils";
 import { Tooltip } from "./ui/core";
 import { translations, Language } from "../lib/i18n";
-import { View } from "../App";
+import type { View } from "../App";
 import { APP_CONFIG } from "../lib/config";
 
 interface SidebarProps {
