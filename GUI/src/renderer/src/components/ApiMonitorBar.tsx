@@ -48,14 +48,6 @@ export function ApiMonitorBar({ data, lang, isRunning }: ApiMonitorBarProps) {
     return tone.good;
   };
 
-  const getEndpointColor = () => {
-    if (isOffline) return tone.neutral;
-    if (!isRunning) return tone.idle;
-    if (data.latencyMs !== null && data.latencyMs > 12000) return tone.bad;
-    if (data.latencyMs !== null && data.latencyMs > 6000) return tone.warn;
-    return tone.info;
-  };
-
   // RPM Color
   const getRpmColor = (rpm: number) => {
     if (!isRunning) return tone.neutral;
@@ -78,7 +70,7 @@ export function ApiMonitorBar({ data, lang, isRunning }: ApiMonitorBarProps) {
       <div className="flex items-center gap-2 text-muted-foreground min-w-0 shrink flex-1 mr-2 overflow-hidden">
         <Globe className="w-3.5 h-3.5 shrink-0" />
         <span
-          className={`truncate font-medium ${getEndpointColor()} ${isOffline ? "opacity-70" : ""}`}
+          className={`truncate font-medium text-foreground ${isOffline ? "opacity-70" : ""}`}
           title={fullUrl}
         >
           {displayUrl}
