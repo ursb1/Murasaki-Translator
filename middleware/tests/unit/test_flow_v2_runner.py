@@ -495,7 +495,7 @@ def test_flow_v2_runner_resolve_kana_retry_settings_default():
     enabled, threshold, min_chars = PipelineRunner._resolve_kana_retry_settings({})
     assert enabled is True
     assert threshold == pytest.approx(0.30)
-    assert min_chars == 20
+    assert min_chars == 32
 
 
 @pytest.mark.unit
@@ -512,6 +512,27 @@ def test_flow_v2_runner_resolve_kana_retry_settings_custom():
 
 
 @pytest.mark.unit
+def test_flow_v2_runner_resolve_kana_retry_settings_prefers_chunk_options():
+    processing_cfg = {
+        "kana_retry_enabled": False,
+        "kana_retry_threshold": 0.42,
+        "kana_retry_min_chars": 32,
+    }
+    chunk_options = {
+        "kana_retry_enabled": True,
+        "kana_retry_threshold": 0.55,
+        "kana_retry_min_chars": 48,
+    }
+    enabled, threshold, min_chars = PipelineRunner._resolve_kana_retry_settings(
+        processing_cfg,
+        chunk_options,
+    )
+    assert enabled is True
+    assert threshold == pytest.approx(0.55)
+    assert min_chars == 48
+
+
+@pytest.mark.unit
 def test_flow_v2_runner_resolve_kana_retry_settings_invalid_fallback():
     cfg = {
         "kana_retry_enabled": "yes",
@@ -521,7 +542,7 @@ def test_flow_v2_runner_resolve_kana_retry_settings_invalid_fallback():
     enabled, threshold, min_chars = PipelineRunner._resolve_kana_retry_settings(cfg)
     assert enabled is True
     assert threshold == pytest.approx(0.30)
-    assert min_chars == 20
+    assert min_chars == 32
 
 
 @pytest.mark.unit
@@ -1168,6 +1189,94 @@ def test_flow_v2_runner_block_mode_kana_residue_disabled_without_explicit_source
         event for event in captured_events if event.get("phase") == "request_retry"
     ]
     assert not any(event.get("errorType") == "kana_residue" for event in retry_events)
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_block_mode_kana_residue_reads_chunk_options_source_lang(
+    tmp_path,
+    monkeypatch,
+):
+    runner = _make_runner(tmp_path)
+    runner.pipeline = {
+        "provider": "provider_stub",
+        "prompt": "prompt_stub",
+        "parser": "parser_stub",
+        "chunk_policy": "chunk_stub",
+        "settings": {"max_retries": 1, "concurrency": 1},
+        "processing": {},
+    }
+
+    class _Provider:
+        profile = {"model": "stub-model", "base_url": "http://localhost:8000/v1"}
+
+        def __init__(self):
+            self.calls = 0
+
+        def build_request(self, _messages, _settings):
+            return object()
+
+        def send(self, _request):
+            self.calls += 1
+            if self.calls == 1:
+                return ProviderResponse(
+                    text="かなかなかなかなかなかなかなかなかなかなかなかな",
+                    raw={},
+                )
+            return ProviderResponse(text="中文输出", raw={})
+
+    class _Parser:
+        profile = {"type": "plain"}
+
+        def parse(self, text):
+            return type("Parsed", (), {"text": text})()
+
+    class _ChunkPolicyWithKanaOptions(_DummyBlockChunkPolicy):
+        profile = {
+            "chunk_type": "block",
+            "type": "block",
+            "options": {
+                "kana_retry_enabled": True,
+                "kana_retry_threshold": 0.30,
+                "kana_retry_min_chars": 20,
+                "kana_retry_source_lang": "ja",
+            },
+        }
+
+    provider = _Provider()
+    captured_events = []
+    doc = _DummyDoc(["source line"])
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.DocumentFactory.get_document",
+        lambda _path: doc,
+    )
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.build_messages",
+        lambda *_args, **_kwargs: [{"role": "user", "content": "x"}],
+    )
+    monkeypatch.setattr(runner.providers, "get_provider", lambda _ref: provider)
+    monkeypatch.setattr(runner.parsers, "get_parser", lambda _ref: _Parser())
+    monkeypatch.setattr(
+        runner.prompts, "get_prompt", lambda _ref: {"user_template": "{{source}}"}
+    )
+    monkeypatch.setattr(
+        runner.chunk_policies,
+        "get_chunk_policy",
+        lambda _ref: _ChunkPolicyWithKanaOptions(),
+    )
+    monkeypatch.setattr(
+        flow_v2_runner,
+        "emit_api_stats_event",
+        lambda payload: captured_events.append(payload),
+    )
+
+    output_path = str(tmp_path / "kana_chunk_option.txt")
+    runner.run("dummy-input.txt", output_path=output_path, save_cache=False)
+
+    assert provider.calls == 2
+    retry_events = [
+        event for event in captured_events if event.get("phase") == "request_retry"
+    ]
+    assert any(event.get("errorType") == "kana_residue" for event in retry_events)
 
 
 @pytest.mark.unit

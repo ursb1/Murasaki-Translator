@@ -8,3 +8,7 @@ options:
   enable_balance: true
   balance_threshold: 0.6
   balance_count: 3
+  kana_retry_enabled: true
+  kana_retry_threshold: 0.3
+  kana_retry_min_chars: 32
+  kana_retry_source_lang: ja

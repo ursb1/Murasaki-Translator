@@ -42,7 +42,7 @@ from murasaki_flow_v2.utils.api_stats_protocol import (
 
 MAX_CONCURRENCY = 256
 DEFAULT_KANA_RETRY_THRESHOLD = 0.30
-DEFAULT_KANA_RETRY_MIN_CHARS = 20
+DEFAULT_KANA_RETRY_MIN_CHARS = 32
 _KANA_CHAR_RE = re.compile(r"[\u3040-\u309F\u30A0-\u30FF]")
 _KANA_RATIO_BASE_RE = re.compile(
     r"[A-Za-z0-9\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]"
@@ -119,8 +119,30 @@ class PipelineRunner:
         return text in {"1", "true", "yes", "on"}
 
     @staticmethod
-    def _resolve_kana_retry_settings(processing_cfg: Dict[str, Any]) -> Tuple[bool, float, int]:
-        enabled_raw = processing_cfg.get("kana_retry_enabled")
+    def _resolve_kana_retry_settings(
+        processing_cfg: Dict[str, Any],
+        chunk_options: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[bool, float, int]:
+        chunk_options = (
+            dict(chunk_options) if isinstance(chunk_options, dict) else {}
+        )
+
+        def _pick(*keys: str) -> Any:
+            for container in (chunk_options, processing_cfg):
+                if not isinstance(container, dict):
+                    continue
+                for key in keys:
+                    if key not in container:
+                        continue
+                    value = container.get(key)
+                    if value is None:
+                        continue
+                    if isinstance(value, str) and not value.strip():
+                        continue
+                    return value
+            return None
+
+        enabled_raw = _pick("kana_retry_enabled", "kanaRetryEnabled")
         enabled = (
             True
             if enabled_raw is None
@@ -128,8 +150,8 @@ class PipelineRunner:
         )
 
         threshold = DEFAULT_KANA_RETRY_THRESHOLD
-        threshold_raw = processing_cfg.get("kana_retry_threshold")
-        if threshold_raw is not None and str(threshold_raw).strip() != "":
+        threshold_raw = _pick("kana_retry_threshold", "kanaRetryThreshold")
+        if threshold_raw is not None:
             try:
                 parsed_threshold = float(threshold_raw)
                 if 0 <= parsed_threshold <= 1:
@@ -138,8 +160,8 @@ class PipelineRunner:
                 pass
 
         min_chars = DEFAULT_KANA_RETRY_MIN_CHARS
-        min_chars_raw = processing_cfg.get("kana_retry_min_chars")
-        if min_chars_raw is not None and str(min_chars_raw).strip() != "":
+        min_chars_raw = _pick("kana_retry_min_chars", "kanaRetryMinChars")
+        if min_chars_raw is not None:
             try:
                 parsed_min_chars = int(min_chars_raw)
                 if parsed_min_chars >= 1:
@@ -932,6 +954,16 @@ class PipelineRunner:
             or chunk_policy.profile.get("type")
             or ""
         )
+        chunk_options_raw = (
+            chunk_policy.profile.get("options")
+            if isinstance(getattr(chunk_policy, "profile", None), dict)
+            else {}
+        )
+        chunk_options = (
+            dict(chunk_options_raw)
+            if isinstance(chunk_options_raw, dict)
+            else {}
+        )
         if chunk_type not in {"line", "block"}:
             # Keep behavior predictable for unknown/legacy values.
             chunk_type = "block"
@@ -1074,8 +1106,20 @@ class PipelineRunner:
             processing_enabled = True
         source_lang_raw = processing_cfg.get("source_lang")
         source_lang = str(source_lang_raw or "ja").strip() or "ja"
-        source_lang_explicit = bool(str(source_lang_raw or "").strip())
-        kana_retry_source_lang = source_lang if source_lang_explicit else ""
+        kana_retry_source_lang_raw = (
+            chunk_options.get("kana_retry_source_lang")
+            if chunk_options.get("kana_retry_source_lang") is not None
+            else chunk_options.get("kanaRetrySourceLang")
+        )
+        if kana_retry_source_lang_raw is None:
+            kana_retry_source_lang_raw = (
+                chunk_options.get("source_lang")
+                if chunk_options.get("source_lang") is not None
+                else chunk_options.get("sourceLang")
+            )
+        if kana_retry_source_lang_raw is None:
+            kana_retry_source_lang_raw = source_lang_raw
+        kana_retry_source_lang = str(kana_retry_source_lang_raw or "").strip()
         # 默认关闭质量检查，需要在 Pipeline YAML processing.enable_quality
         # 或 CLI --enable-quality 中显式启用。
         enable_quality = processing_cfg.get("enable_quality")
@@ -1091,7 +1135,7 @@ class PipelineRunner:
             kana_retry_enabled,
             kana_retry_threshold,
             kana_retry_min_chars,
-        ) = self._resolve_kana_retry_settings(processing_cfg)
+        ) = self._resolve_kana_retry_settings(processing_cfg, chunk_options)
 
         if processing_enabled:
             pre_rules = self._resolve_rules(rules_pre_spec)
@@ -1551,16 +1595,6 @@ class PipelineRunner:
                 current_request_headers: Dict[str, str] | None = None
                 current_request_url: Optional[str] = None
                 attempt_no = attempt + 1
-                chunk_options_raw = (
-                    chunk_policy.profile.get("options")
-                    if isinstance(getattr(chunk_policy, "profile", None), dict)
-                    else {}
-                )
-                chunk_options = (
-                    dict(chunk_options_raw)
-                    if isinstance(chunk_options_raw, dict)
-                    else {}
-                )
                 chunk_target_chars: Optional[int] = None
                 chunk_max_chars: Optional[int] = None
                 try:
