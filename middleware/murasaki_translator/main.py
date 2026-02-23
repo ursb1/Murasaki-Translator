@@ -88,6 +88,19 @@ def _calculate_kana_ratio(text: str) -> tuple:
     return kana_chars / effective_chars, kana_chars, effective_chars
 
 
+def _extract_interrupted_preview_text(data: Dict) -> str:
+    """
+    兼容中断重建的历史字段，优先读取当前主字段 out_text。
+    """
+    if not isinstance(data, dict):
+        return ""
+    for key in ("out_text", "preview_text", "output"):
+        value = data.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
 def load_glossary(path: Optional[str]) -> Dict[str, str]:
     """
     Robustly load glossary from JSON file.
@@ -2382,9 +2395,11 @@ def main():
                     for line in lines:
                         try:
                             data = json.loads(line.strip())
-                            if data.get('output'):
-                                rebuilt_blocks.append(data['output'])
-                        except: pass
+                            preview_text = _extract_interrupted_preview_text(data)
+                            if preview_text:
+                                rebuilt_blocks.append(preview_text)
+                        except Exception:
+                            pass
                     if rebuilt_blocks:
                         with open(rebuild_path, 'w', encoding='utf-8') as rf:
                             rf.write("\n\n".join(rebuilt_blocks))

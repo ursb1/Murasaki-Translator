@@ -10,6 +10,7 @@ from murasaki_translator.main import (
     get_missed_terms,
     build_retry_feedback,
     calculate_skip_blocks,
+    _extract_interrupted_preview_text,
     _normalize_anchor_stream,
     _parse_protect_pattern_lines,
     _parse_protect_pattern_payload,
@@ -145,3 +146,19 @@ def test_allow_text_protect_alignment_mode_txt():
 def test_allow_text_protect_alignment_mode_single_block():
     args = type("Args", (), {"alignment_mode": True, "single_block": "hello"})()
     assert _allow_text_protect(None, args) is True
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"out_text": "OUT", "preview_text": "PREVIEW", "output": "OUTPUT"}, "OUT"),
+        ({"preview_text": "PREVIEW", "output": "OUTPUT"}, "PREVIEW"),
+        ({"output": "OUTPUT"}, "OUTPUT"),
+        ({"out_text": ""}, ""),
+        ({}, ""),
+        ("invalid", ""),
+    ],
+)
+def test_extract_interrupted_preview_text(payload, expected):
+    assert _extract_interrupted_preview_text(payload) == expected

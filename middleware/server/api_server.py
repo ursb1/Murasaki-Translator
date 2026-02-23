@@ -233,8 +233,8 @@ async def verify_api_key(api_key: str = Security(api_key_header)):
 # Global State
 # ============================================
 worker: Optional[TranslationWorker] = None
+_worker_lock = threading.Lock()
 tasks: Dict[str, TranslationTask] = {}
-websocket_connections: List[WebSocket] = []
 
 # HuggingFace download tasks (remote server side)
 hf_download_tasks: Dict[str, Dict[str, Any]] = {}
@@ -888,6 +888,7 @@ async def get_task_status(
 @app.delete("/api/v1/translate/{task_id}", dependencies=[Depends(verify_api_key)])
 async def cancel_task(task_id: str):
     """取消任务"""
+    global worker
     task = _get_task(task_id)
     if not task:
         raise HTTPException(404, f"Task {task_id} not found")
@@ -897,6 +898,18 @@ async def cancel_task(task_id: str):
             _try_transition_task_status(task, TaskStatus.CANCELLED)
             task.add_log(f"[{datetime.now().strftime('%H:%M:%S')}] Cancelled before start")
             return {"message": "Task cancelled before start"}
+        # RUNNING: best-effort immediate kill to reduce cancel latency.
+        if task._process is not None and worker is not None:
+            try:
+                await worker._kill_process_tree(task._process)
+                task._process = None
+                _try_transition_task_status(task, TaskStatus.CANCELLED)
+                task.add_log(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] Cancelled by user (immediate stop)."
+                )
+                return {"message": "Task cancelled"}
+            except Exception as e:
+                logger.warning("Immediate cancel failed for task %s: %s", task_id, e)
         return {"message": "Cancel requested"}
     else:
         return {"message": f"Task is {task.status.value}, cannot cancel"}
@@ -980,7 +993,6 @@ async def websocket_logs(websocket: WebSocket, task_id: str):
             return
 
     await websocket.accept()
-    websocket_connections.append(websocket)
     
     try:
         task = _get_task(task_id)
@@ -1023,9 +1035,6 @@ async def websocket_logs(websocket: WebSocket, task_id: str):
             
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected for task {task_id}")
-    finally:
-        if websocket in websocket_connections:
-            websocket_connections.remove(websocket)
 
 
 # ============================================
@@ -1049,7 +1058,9 @@ async def execute_translation(task: TranslationTask):
         
         # 确保 worker 已初始化
         if worker is None:
-            worker = TranslationWorker()
+            with _worker_lock:
+                if worker is None:
+                    worker = TranslationWorker()
         
         # 执行翻译
         result = await worker.translate(task)
