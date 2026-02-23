@@ -450,8 +450,8 @@ export class RemoteClient {
       throw new Error(`Cache download failed: ${response.status}`);
     }
     const buffer = Buffer.from(await response.arrayBuffer());
-    const fs = await import("fs");
-    fs.writeFileSync(savePath, buffer);
+    const fs = await import("fs/promises");
+    await fs.writeFile(savePath, buffer);
   }
 
   /**
@@ -512,14 +512,18 @@ export class RemoteClient {
   async uploadFile(
     filePath: string,
   ): Promise<{ fileId: string; serverPath: string }> {
-    const fs = require("fs");
-    const path = require("path");
+    const fs = await import("fs/promises");
+    const path = await import("path");
 
     // 使用全局 FormData（Chromium 实现）而非 npm form-data 包，
     // 因为 Electron 的 fetch 无法正确序列化 npm form-data 的 stream body
-    const fileBuffer = fs.readFileSync(filePath);
+    const fileBuffer = await fs.readFile(filePath);
     const fileName = path.basename(filePath);
-    const blob = new Blob([fileBuffer]);
+    const fileArrayBuffer = fileBuffer.buffer.slice(
+      fileBuffer.byteOffset,
+      fileBuffer.byteOffset + fileBuffer.byteLength,
+    ) as ArrayBuffer;
+    const blob = new Blob([fileArrayBuffer]);
 
     const form = new FormData();
     form.append("file", blob, fileName);
