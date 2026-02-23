@@ -9,7 +9,7 @@
   session,
   clipboard,
 } from "electron";
-import type { IpcMainEvent as ElectronEvent } from "electron";
+import type { IpcMainEvent, IpcMainInvokeEvent } from "electron";
 import {
   join,
   basename,
@@ -39,8 +39,11 @@ import {
 } from "./pipelineV2Runner";
 import { createApiStatsService } from "./apiStatsStore";
 import { formatScanDirectoryFailure } from "./ipcDiagnostics";
+import { resolveRemoteOutputPrecheck } from "./remoteOutputPrecheck";
+import { resolveProfilesDirWithLegacyFallback } from "./profileDirMigration";
 
 let pythonProcess: ChildProcess | null = null;
+let translationStartInProgress = false;
 let translationStopRequested = false;
 let activeRunId: string | null = null;
 let remoteTranslationBridge: {
@@ -82,7 +85,7 @@ type WatchFolderEntry = {
 
 const watchFolderEntries = new Map<string, WatchFolderEntry>();
 
-// 涓昏繘绋嬫棩蹇楃紦鍐插尯 - 鐢ㄤ簬璋冭瘯宸ュ叿绠辨煡鐪嬪畬鏁寸粓绔棩蹇?
+// 主进程日志缓冲区，用于在调试工具中查看完整终端日志。
 const mainProcessLogs: string[] = [];
 const MAX_MAIN_LOGS = 1000;
 
@@ -98,6 +101,7 @@ type LogMeta = {
   runId?: string | null;
   taskId?: string | null;
 };
+type LogReplyEvent = IpcMainEvent | IpcMainInvokeEvent;
 
 const normalizeLogLines = (message: string): string[] =>
   message
@@ -185,22 +189,30 @@ const emitJsonLog = (
   send(`${prefix}${JSON.stringify(enriched)}\n`);
 };
 
+const sendEventLogUpdate = (event: LogReplyEvent, payload: string): void => {
+  if ("reply" in event && typeof event.reply === "function") {
+    event.reply("log-update", payload);
+    return;
+  }
+  event.sender.send("log-update", payload);
+};
+
 const replyLogUpdate = (
-  event: ElectronEvent,
+  event: LogReplyEvent,
   message: string,
   meta: LogMeta = {},
 ) => {
-  emitLogUpdate((payload) => event.reply("log-update", payload), message, meta);
+  emitLogUpdate((payload) => sendEventLogUpdate(event, payload), message, meta);
 };
 
 const replyJsonLog = (
-  event: ElectronEvent,
+  event: LogReplyEvent,
   prefix: string,
   payload: Record<string, unknown>,
   meta: LogMeta = {},
 ) => {
   emitJsonLog(
-    (payloadLine) => event.reply("log-update", payloadLine),
+    (payloadLine) => sendEventLogUpdate(event, payloadLine),
     prefix,
     payload,
     meta,
@@ -282,6 +294,46 @@ const requestRemoteTaskCancel = (reason?: string): boolean => {
     );
   });
   return true;
+};
+
+const requestStopForLocalTranslationProcess = (targetProcess: ChildProcess) => {
+  translationStopRequested = true;
+  const pid = targetProcess.pid;
+  console.log(`[Stop] Stopping translation process with PID: ${pid}`);
+
+  if (process.platform === "win32" && pid) {
+    console.log(`[Stop] Executing async: taskkill /pid ${pid} /f /t`);
+    const killProc = spawn("taskkill", ["/pid", pid.toString(), "/f", "/t"], {
+      stdio: "pipe",
+      windowsHide: true,
+    });
+    killProc.on("close", (code) => {
+      console.log(`[Stop] taskkill exited with code ${code}`);
+    });
+    killProc.on("error", (err) => {
+      console.error("[Stop] taskkill spawn error:", err.message);
+      // Fallback
+      try {
+        targetProcess.kill();
+      } catch {
+        // ignore fallback kill failure
+      }
+    });
+    // 超时兜底：3s 后若进程仍然存活。
+    setTimeout(() => {
+      try {
+        if (pythonProcess === targetProcess) {
+          targetProcess.kill("SIGKILL");
+        }
+      } catch {
+        // ignore force-kill failure
+      }
+    }, 3000);
+  } else {
+    targetProcess.kill();
+  }
+
+  console.log("[Stop] Translation process stopped signal sent");
 };
 
 const safeStringify = (value: unknown): string => {
@@ -403,12 +455,12 @@ function createWindow(): void {
 }
 
 /**
- * 娓呯悊鎵€鏈夊瓙杩涚▼
+ * 清理所有子进程。
  */
 async function cleanupProcesses(): Promise<void> {
   console.log("[App] Cleaning up processes...");
 
-  // 鍋滄缈昏瘧杩涚▼
+  // 停止翻译进程。
   if (pythonProcess) {
     try {
       pythonProcess.kill();
@@ -469,7 +521,7 @@ async function cleanupProcesses(): Promise<void> {
 }
 
 /**
- * 娓呯悊涓存椂鏂囦欢鐩綍锛堝惎鍔ㄦ椂璋冪敤锛岄槻姝㈡畫鐣欙級
+ * 清理临时目录（启动时执行，避免残留）。
  */
 function cleanupTempDirectory(): void {
   try {
@@ -519,7 +571,7 @@ async function setupMacOSGPUMonitoring(): Promise<void> {
   try {
     const { execSync, exec } = require("child_process");
 
-    // 妫€鏌ユ槸鍚﹀凡閰嶇疆鍏嶅瘑 sudo
+    // 检查是否已配置免密 sudo。
     try {
       execSync("sudo -n powermetrics --help", {
         timeout: 2000,
@@ -602,21 +654,21 @@ app.whenReady().then(() => {
     return getPipelineV2ProfilesDir();
   };
   const profilesDir = resolveProfilesDir();
+  let hasWarnedLegacyProfilesFallback = false;
   const ensureProfilesDir = () => {
     const legacyDir = join(getMiddlewarePath(), "pipeline_v2_profiles");
-    if (
-      legacyDir !== profilesDir &&
-      fs.existsSync(legacyDir) &&
-      !fs.existsSync(profilesDir)
-    ) {
-      try {
-        fs.mkdirSync(profilesDir, { recursive: true });
-        fs.cpSync(legacyDir, profilesDir, { recursive: true });
-      } catch (error) {
-        console.warn("[App] Profiles migration skipped:", error);
-      }
+    const resolved = resolveProfilesDirWithLegacyFallback({
+      profilesDir,
+      legacyDir,
+      fsLike: fs,
+    });
+    if (resolved.usedLegacyFallback && !hasWarnedLegacyProfilesFallback) {
+      hasWarnedLegacyProfilesFallback = true;
+      console.warn(
+        "[App] Profiles migration deferred: fallback to legacy directory.",
+      );
     }
-    return profilesDir;
+    return resolved.activeDir;
   };
   const apiStatsService = createApiStatsService({
     getProfilesDir: ensureProfilesDir,
@@ -634,7 +686,10 @@ app.whenReady().then(() => {
     getPythonPath,
     getMiddlewarePath,
     getMainWindow: () => mainWindow,
-    isTranslationBusy: () => Boolean(pythonProcess || remoteTranslationBridge),
+    isTranslationBusy: () =>
+      Boolean(
+        pythonProcess || remoteTranslationBridge || translationStartInProgress,
+      ),
     recordApiStatsEvent: (event) => {
       void apiStatsService.appendEvent(event);
     },
@@ -648,7 +703,7 @@ app.whenReady().then(() => {
     },
   });
 
-  // macOS: 閰嶇疆 GPU 鐩戞帶 sudo锛堝湪绐楀彛鍒涘缓鍚庯級
+  // macOS: 在窗口创建后配置 GPU 监控 sudo。
   setupMacOSGPUMonitoring();
 
   app.on("activate", function () {
@@ -905,10 +960,10 @@ const spawnPythonProcess = (
 
   if (pythonInfo.type === "bundle") {
     // Bundle mode: directly execute the bundle with args
-    // PyInstaller bundle 鍐呯疆鍏ュ彛鐐癸紝闇€瑕佺Щ闄よ剼鏈矾寰?
+    // PyInstaller bundle 内置入口，需要移除脚本路径参数。
     // args = ['path/to/main.py', '--file', ...] -> ['--file', ...]
     cmd = pythonInfo.path;
-    // 绉婚櫎鑴氭湰璺緞锛屼粎淇濈暀瀹為檯鍙傛暟
+    // 移除脚本路径，仅保留实际参数。
     finalArgs = args.slice(1);
     console.log(`[Spawn Bundle] ${cmd} ${finalArgs.join(" ")}`);
   } else {
@@ -2233,7 +2288,7 @@ ipcMain.handle("get-system-diagnostics", async () => {
     return `"${value.replace(/"/g, '\\"')}"`;
   };
 
-  // 杈呭姪鍑芥暟锛氬甫瓒呮椂鐨勫紓姝ユ墽琛?
+  // 辅助函数：带超时的异步执行。
   const execWithTimeout = async (
     cmd: string,
     timeout: number,
@@ -2583,7 +2638,7 @@ ipcMain.handle("get-system-diagnostics", async () => {
     }
   })();
 
-  // 骞惰绛夊緟鎵€鏈夋娴嬪畬鎴?
+  // 并行等待所有检测完成。
   await Promise.all([gpuPromise, pythonPromise, cudaPromise, vulkanPromise]);
 
   // llama-server Status Check (Use ServerManager's actual port)
@@ -2757,7 +2812,7 @@ ipcMain.handle("read-server-log", async () => {
     const maxBytes = 512 * 1024; // 鏈€澶氳鍙?512KB锛堢害 10000 琛岋級
     const lineCount = 500;
 
-    // 濡傛灉鏂囦欢杈冨皬锛岀洿鎺ヨ鍙?
+    // 小文件直接读取。
     if (stats.size <= maxBytes) {
       const content = fs.readFileSync(logPath, "utf-8");
       const lines = content.split("\n");
@@ -2769,7 +2824,7 @@ ipcMain.handle("read-server-log", async () => {
       };
     }
 
-    // 澶ф枃浠讹細浠呰鍙栨湯灏鹃儴鍒?
+    // 大文件仅读取末尾片段。
     return new Promise((resolve) => {
       const chunks: string[] = [];
       const startPos = Math.max(0, stats.size - maxBytes);
@@ -2781,7 +2836,7 @@ ipcMain.handle("read-server-log", async () => {
       stream.on("data", (chunk: string) => chunks.push(chunk));
       stream.on("end", () => {
         const content = chunks.join("");
-        // 璺宠繃绗竴琛岋紙鍙兘鏄笉瀹屾暣琛岋級
+        // 跳过第一行（可能是不完整行）。
         const lines = content.split("\n").slice(1);
         resolve({
           exists: true,
@@ -2934,7 +2989,7 @@ ipcMain.handle("get-model-info", async (_event, modelName: string) => {
   const paramsB = paramsMatch ? parseFloat(paramsMatch[1]) : null;
 
   // Extract quant (e.g., IQ4_XS, IQ3_M, Q4_K_M, Q5_K, Q8_0, F16)
-  // 浼樺厛鍖归厤 IQ 绯诲垪锛屽啀鍖归厤 Q 绯诲垪
+  // 优先匹配 IQ 系列，再匹配 Q 系列。
   const quantMatch = modelName.match(
     /IQ[1-4]_?(XXS|XS|S|M|NL)|Q[2-8]_?[Kk]?_?[MmSsLl]?|[Ff]16|BF16/i,
   );
@@ -3226,7 +3281,7 @@ ipcMain.handle("fix-env-component", async (_event, component: string) => {
     if (proc.stdout) {
       proc.stdout.on("data", (d) => {
         stdoutBuffer += d.toString();
-        // 瑙ｆ瀽杩涘害骞跺彂閫佸埌鍓嶇锛堝甫鍒嗙墖鎷兼帴锛岄伩鍏嶈法 chunk JSON 鏂锛?
+        // 解析进度并发送到前端，避免跨 chunk 的 JSON 断裂。
         const lines = stdoutBuffer.split(/\r?\n/);
         stdoutBuffer = lines.pop() || "";
         for (const line of lines) {
@@ -3241,7 +3296,7 @@ ipcMain.handle("fix-env-component", async (_event, component: string) => {
               console.log(
                 `[EnvFixer] Progress: ${progressData.stage} ${progressData.progress}%`,
               );
-              // 灏嗚繘搴︿簨浠跺彂閫佸埌鍓嶇
+              // 将进度事件发送到前端。
               if (mainWindow && !mainWindow.isDestroyed()) {
                 mainWindow.webContents.send("env-fix-progress", {
                   component,
@@ -3252,7 +3307,7 @@ ipcMain.handle("fix-env-component", async (_event, component: string) => {
               console.error("[EnvFixer] Failed to parse progress:", e);
             }
           } else if (trimmedLine.startsWith("{") && trimmedLine.endsWith("}")) {
-            // 鍙兘鏄粨鏋?JSON 琛岋紝鍏堟敹闆嗗悗缁熶竴瑙ｆ瀽
+            // 可能是结果 JSON 行，先收集后统一解析。
             output += line + "\n";
           } else {
             output += line + "\n";
@@ -3280,7 +3335,7 @@ ipcMain.handle("fix-env-component", async (_event, component: string) => {
       }
 
       try {
-        // 娓呯悊 output 涓彲鑳藉す鏉傜殑闈?JSON 鍐呭
+        // 清理 output 中可能夹杂的非 JSON 内容。
         const mergedOutput = [output, errorOutput].filter(Boolean).join("\n");
         const result = extractLastJsonObject<any>(mergedOutput);
         if (!result) {
@@ -3438,7 +3493,7 @@ ipcMain.handle("read-file", async (_event, path: string) => {
   return null;
 });
 
-// 鍐欏叆鏂囦欢锛堢敤浜庡鍑鸿瘧鏂囷級
+// 写入文件（用于导出译文）。
 ipcMain.handle("write-file", async (_event, path: string, content: string) => {
   try {
     const safePath = ensureLocalFilePathForUserOperation(path);
@@ -3467,7 +3522,7 @@ ipcMain.handle(
   },
 );
 
-// 鍔犺浇缈昏瘧缂撳瓨锛堢敤浜庢牎瀵圭晫闈級
+// 加载翻译缓存（用于校对界面）。
 ipcMain.handle("load-cache", async (_event, cachePath: string) => {
   try {
     const safePath = ensureLocalFilePathForUserOperation(cachePath);
@@ -3481,7 +3536,7 @@ ipcMain.handle("load-cache", async (_event, cachePath: string) => {
   return null;
 });
 
-// 淇濆瓨缈昏瘧缂撳瓨锛堢敤浜庢牎瀵圭晫闈級
+// 保存翻译缓存（用于校对界面）。
 ipcMain.handle(
   "save-cache",
   async (_event, cachePath: string, data: Record<string, unknown>) => {
@@ -3536,7 +3591,7 @@ ipcMain.handle(
   },
 );
 
-// 閲嶅缓鏂囨。锛堜粠缂撳瓨锛?
+// 重建文档（基于缓存）。
 ipcMain.handle("rebuild-doc", async (_event, { cachePath, outputPath }) => {
   let tempPatchedCachePath = "";
   try {
@@ -3699,7 +3754,7 @@ ipcMain.handle("rebuild-doc", async (_event, { cachePath, outputPath }) => {
   }
 });
 
-// 鍗曞潡閲嶇炕锛堢敤浜庢牎瀵圭晫闈級
+// 单块重翻（用于校对界面）。
 ipcMain.handle(
   "retranslate-block",
   async (
@@ -3934,7 +3989,7 @@ ipcMain.handle(
       if (config.deviceMode === "cpu") {
         args.push("--gpu-layers", "0");
       } else {
-        // 榛樿浣跨敤 -1锛堝敖鍙兘鍔犺浇鍒?GPU锛夛紝鑻ョ敤鎴锋寚瀹氬垯浣跨敤鐢ㄦ埛鍊?
+        // 默认使用 -1（尽可能加载到 GPU），用户指定时使用用户值。
         const gpuLayers =
           config.gpuLayers !== undefined ? config.gpuLayers : -1;
         args.push("--gpu-layers", gpuLayers.toString());
@@ -4153,7 +4208,7 @@ ipcMain.handle(
   },
 );
 
-// 淇濆瓨鏂囦欢瀵硅瘽妗?
+// 保存文件对话框。
 ipcMain.handle(
   "save-file",
   async (
@@ -4173,7 +4228,7 @@ ipcMain.handle(
   },
 );
 
-// 鎵撳紑鏂囦欢锛堜娇鐢ㄧ郴缁熼粯璁ょ▼搴忥級
+// 打开文件（使用系统默认程序）。
 ipcMain.handle("open-path", async (_event, filePath: string) => {
   if (fs.existsSync(filePath)) {
     return await shell.openPath(filePath);
@@ -4194,7 +4249,7 @@ ipcMain.handle("clipboard-write", async (_event, text: string) => {
   }
 });
 
-// 鍦ㄦ枃浠剁鐞嗗櫒涓樉绀烘枃浠?鏂囦欢澶?
+// 在文件管理器中显示文件或文件夹。
 ipcMain.handle("open-folder", async (_event, filePath: string) => {
   if (!filePath || typeof filePath !== "string") return false;
 
@@ -4252,17 +4307,16 @@ ipcMain.handle(
       const remoteUrl = String(
         safeConfig?.remoteUrl || safeConfig?.serverUrl || "",
       ).trim();
-      if (safeConfig?.executionMode === "remote" && remoteUrl) {
-        try {
-          const parsed = new URL(remoteUrl);
-          const host = parsed.hostname.toLowerCase();
-          const isLocalHost = host === "127.0.0.1" || host === "localhost";
-          if (!isLocalHost) {
-            return { exists: false };
-          }
-        } catch {
-          // ignore malformed URL and continue local detection
-        }
+      const remotePrecheckScope = resolveRemoteOutputPrecheck({
+        executionMode: safeConfig?.executionMode,
+        remoteUrl: remoteUrl || undefined,
+      });
+      if (remotePrecheckScope.skipLocalProbe) {
+        return {
+          exists: false,
+          remoteCheckSkipped: true,
+          remoteHost: remotePrecheckScope.remoteHost,
+        };
       }
 
       const candidateOutPaths: string[] = [];
@@ -4950,7 +5004,7 @@ const runTranslationViaRemoteApi = async (
       // ignore health fetch failure
     }
     emitRemoteLog(`System: Execution mode remote-api (${sourceLabel})`, "info");
-    // [Feature] 鍙戦€佽繙绋嬫墽琛屼俊鎭緵 Dashboard 璁板綍鍒扮炕璇戝巻鍙?
+    // [Feature] 发送远程执行信息，供 Dashboard 写入翻译历史。
     const remoteInfoPayload = {
       executionMode: "remote-api",
       source: sourceLabel,
@@ -5021,6 +5075,9 @@ const runTranslationViaRemoteApi = async (
       cancelRequested: false,
       runId,
     };
+    if (translationStopRequested) {
+      requestRemoteTaskCancel();
+    }
     emitRemoteLog(`System: Remote task created (${taskId})`, "info");
     appendRemoteMirrorMessage({
       taskId,
@@ -5093,7 +5150,7 @@ const runTranslationViaRemoteApi = async (
       if (wsActive && lastWsLogAt > 0 && Date.now() - lastWsLogAt > 2000) {
         wsActive = false;
       }
-      // 妫€鏌ユ棩蹇椾腑鏄惁宸插惈 main.py 杈撳嚭鐨?JSON_PROGRESS锛堝惈鐪熷疄閫熷害/token 鏁版嵁锛?
+      // 检查日志中是否包含 main.py 输出的 JSON_PROGRESS（真实速度/token 数据）。
       const logsContainProgress = taskLogs.some(
         (log) => typeof log === "string" && log.includes("JSON_PROGRESS:"),
       );
@@ -5112,7 +5169,7 @@ const runTranslationViaRemoteApi = async (
         nextLogIndex = Math.max(nextLogIndex, nextLogIndex + taskLogs.length);
       }
 
-      // 浠呭綋鏃ュ織涓棤 JSON_PROGRESS 鏃舵墠鍙戦€佽ˉ鍏呮€?block 杩涘害
+      // 仅在无 JSON_PROGRESS 时发送补充的 block 进度。
       // 閬垮厤鐢ㄧ‖缂栫爜闆跺€艰鐩?main.py 鐨勭湡瀹為€熷害/token 鏁版嵁
       const recentlySawProgress = Date.now() - lastProgressSeenAt < 1500;
       if (!logsContainProgress && !recentlySawProgress) {
@@ -5138,7 +5195,7 @@ const runTranslationViaRemoteApi = async (
       }
 
       if (status.status === "completed") {
-        // [Fix Bug 6/7] 杩藉姞鑾峰彇鎵€鏈夊墿浣欐棩蹇楋紝纭繚 JSON_FINAL/PREVIEW_BLOCK 涓嶈 200 琛屽垎椤垫埅鏂?
+        // [Fix Bug 6/7] 获取剩余日志，确保 JSON_FINAL/PREVIEW_BLOCK 不被 200 行分页截断。
         if (
           typeof status.logTotal === "number" &&
           nextLogIndex < status.logTotal
@@ -5158,12 +5215,12 @@ const runTranslationViaRemoteApi = async (
           }
         }
         await client.downloadResult(taskId, outputPath);
-        // [Fix Bug 8] 灏濊瘯涓嬭浇缂撳瓨鏂囦欢锛堢敤浜庢牎瀵癸級
+        // [Fix Bug 8] 尝试下载缓存文件（用于校对）。
         try {
           const cachePath = outputPath + ".cache.json";
           await client.downloadCache(taskId, cachePath);
         } catch (e) {
-          // 缂撳瓨涓嬭浇澶辫触涓嶅奖鍝嶄富娴佺▼
+          // 缓存下载失败不影响主流程。
         }
         appendRemoteMirrorMessage({
           taskId,
@@ -5221,7 +5278,7 @@ const runTranslationViaRemoteApi = async (
         return;
       }
 
-      // 鍔ㄦ€佽疆璇細杩愯涓揩閫熻幏鍙栬繘搴?200ms)锛岀┖闂?鎺掗槦鏃惰妭鐪佽祫婧?1000ms)
+      // 动态轮询：运行中用 200ms，空闲或排队时用 1000ms。
       const pollDelay = status.status === "running" ? 200 : 1000;
       await new Promise((resolve) => setTimeout(resolve, pollDelay));
     }
@@ -5277,7 +5334,12 @@ ipcMain.on(
   "start-translation",
   async (event, { inputFile, modelPath, config, runId }) => {
     const requestedRunId = normalizeRunId(runId) || randomUUID();
-    if (pythonProcess || remoteTranslationBridge || isPipelineV2RunnerBusy()) {
+    if (
+      pythonProcess ||
+      remoteTranslationBridge ||
+      translationStartInProgress ||
+      isPipelineV2RunnerBusy()
+    ) {
       replyLogUpdate(event, "WARN: Translation already running", {
         level: "warn",
         source: "main",
@@ -5291,6 +5353,7 @@ ipcMain.on(
       });
       return;
     }
+    translationStartInProgress = true;
     translationStopRequested = false;
     activeRunId = requestedRunId;
 
@@ -5331,8 +5394,23 @@ ipcMain.on(
         runId: requestedRunId,
       });
       cleanupTempRuleFiles();
+      translationStartInProgress = false;
       translationStopRequested = false;
       clearActiveRunIfMatch(requestedRunId);
+    };
+    const abortStartIfStopRequested = (): boolean => {
+      if (!translationStopRequested) return false;
+      event.reply("process-exit", {
+        code: 1,
+        signal: null,
+        stopRequested: true,
+        runId: requestedRunId,
+      });
+      cleanupTempRuleFiles();
+      translationStartInProgress = false;
+      translationStopRequested = false;
+      clearActiveRunIfMatch(requestedRunId);
+      return true;
     };
     // Use the proper translator script
     const scriptPath = join(middlewareDir, "murasaki_translator", "main.py");
@@ -5345,7 +5423,7 @@ ipcMain.on(
     const pythonCmd = getPythonPath();
     console.log("Using Python:", pythonCmd);
 
-    // 浣跨敤璺ㄥ钩鍙版娴嬭幏鍙栨纭殑浜岃繘鍒惰矾寰?
+    // 使用跨平台检测获取正确的二进制路径。
     let serverExePath: string;
     try {
       const platformInfo = detectPlatform();
@@ -5380,8 +5458,8 @@ ipcMain.on(
           ? "connected-local-daemon"
           : "connected-remote-session";
     } else if (daemonConnection?.url && config?.executionMode === "remote") {
-      // 浠呭綋鐢ㄦ埛鏄庣‘閫夋嫨杩滅▼妯″紡鏃舵墠涓烘湰鍦?daemon 鍒涘缓 RemoteClient銆?
-      // 鏈湴缈昏瘧涓嶈蛋 HTTP API 妗ユ帴锛岄伩鍏嶈疆璇㈠欢杩熷鑷寸殑鎬ц兘鍥為€€銆?
+      // 仅当用户明确选择远程模式时，才为本地 daemon 创建 RemoteClient。
+      // 本地翻译不走 HTTP API 桥接，避免轮询延迟带来的性能回退。
       remoteExecutionClient = new RemoteClient(
         {
           url: daemonConnection.url,
@@ -5436,6 +5514,9 @@ ipcMain.on(
     ).trim();
 
     if (remoteExecutionClient) {
+      if (abortStartIfStopRequested()) {
+        return;
+      }
       try {
         await runTranslationViaRemoteApi(event, {
           client: remoteExecutionClient,
@@ -5450,6 +5531,7 @@ ipcMain.on(
         const message = error instanceof Error ? error.message : String(error);
         failStartAndExit(`ERR: Remote execution crashed unexpectedly: ${message}`);
       }
+      translationStartInProgress = false;
       clearActiveRunIfMatch(requestedRunId);
       return;
     }
@@ -5515,7 +5597,7 @@ ipcMain.on(
 
     console.log("[start-translation] Model check passed, building args...");
 
-    // serverExePath 宸插湪涓婇潰鐨?try-catch 涓獙璇?
+    // serverExePath 已在上面的 try-catch 中验证。
     // Build args for murasaki_translator/main.py
     const args = [
       join("murasaki_translator", "main.py"),
@@ -5573,7 +5655,7 @@ ipcMain.on(
         args.push("--gpu-layers", "0");
         console.log("Mode: CPU Only (Forced gpu-layers 0)");
       } else {
-        // 榛樿浣跨敤 -1锛堝敖鍙兘鍔犺浇鍒?GPU锛夛紝鑻ョ敤鎴锋寚瀹氬垯浣跨敤鐢ㄦ埛鍊?
+        // 默认使用 -1（尽可能加载到 GPU），用户指定时使用用户值。
         const gpuLayers =
           config.gpuLayers !== undefined ? config.gpuLayers : -1;
         args.push("--gpu-layers", gpuLayers.toString());
@@ -5716,7 +5798,7 @@ ipcMain.on(
         args.push("--max-retries", config.maxRetries.toString());
       }
 
-      // Glossary Coverage Check锛堟湳璇鐩栫巼妫€娴嬶級
+      // Glossary Coverage Check（术语覆盖率检测）
       if (config.coverageCheck === false) {
         // Explicitly disable coverage retries on backend defaults
         args.push("--output-hit-threshold", "0");
@@ -5737,12 +5819,12 @@ ipcMain.on(
         );
       }
 
-      // Incremental Translation锛堝閲忕炕璇戯級
+      // Incremental Translation（增量翻译）
       if (config.resume) {
         args.push("--resume");
       }
 
-      // Text Protection锛堟枃鏈繚鎶わ級
+      // Text Protection（文本保护）
       if (config.textProtect) {
         args.push("--text-protect");
       }
@@ -5762,7 +5844,7 @@ ipcMain.on(
         }
       }
 
-      // Dynamic Retry Strategy锛堝姩鎬侀噸璇曠瓥鐣ワ級
+      // Dynamic Retry Strategy（动态重试策略）
       if (config.retryTempBoost !== undefined) {
         args.push("--retry-temp-boost", config.retryTempBoost.toString());
       }
@@ -5772,7 +5854,7 @@ ipcMain.on(
         args.push("--no-retry-prompt-feedback");
       }
 
-      // Save Cache锛堥粯璁ゅ惎鐢紝鐢ㄤ簬鏍″鐣岄潰锛?
+      // Save Cache（默认启用，用于校对界面）
       if (config.saveCache !== false) {
         args.push("--save-cache");
         // Cache Directory
@@ -5780,6 +5862,10 @@ ipcMain.on(
           args.push("--cache-path", config.cacheDir);
         }
       }
+    }
+
+    if (abortStartIfStopRequested()) {
+      return;
     }
 
     console.log("Spawning:", pythonCmd, args.join(" "), "in", middlewareDir);
@@ -5817,6 +5903,10 @@ ipcMain.on(
       });
       const launchedRunId = requestedRunId;
       pythonProcess = launchedProcess;
+      translationStartInProgress = false;
+      if (translationStopRequested) {
+        requestStopForLocalTranslationProcess(launchedProcess);
+      }
 
       let stdoutBuffer = "";
       let stderrBuffer = "";
@@ -5916,6 +6006,7 @@ ipcMain.on(
           },
         );
         cleanupTempRuleFiles();
+        translationStartInProgress = false;
         translationStopRequested = false;
         if (pythonProcess === launchedProcess) {
           pythonProcess = null;
@@ -5951,6 +6042,7 @@ ipcMain.on(
           flushBufferedLines(`${stderrBuffer}\n`, handleStderrLine);
         }
         const stopRequested = translationStopRequested;
+        translationStartInProgress = false;
         translationStopRequested = false;
         console.log(
           `[Translation] Process exited (code=${String(code)}, signal=${String(signal)}, stopRequested=${stopRequested})`,
@@ -5963,6 +6055,7 @@ ipcMain.on(
         cleanupTempRuleFiles();
       });
     } catch (e: unknown) {
+      translationStartInProgress = false;
       const errorMsg = e instanceof Error ? e.message : String(e);
       try {
         pythonProcess?.kill();
@@ -5981,45 +6074,15 @@ ipcMain.on("stop-translation", () => {
     return;
   }
 
-  if (pythonProcess) {
-    translationStopRequested = true;
-    const targetProcess = pythonProcess;
-    const pid = targetProcess.pid;
-    console.log(`[Stop] Stopping translation process with PID: ${pid}`);
-
-    if (process.platform === "win32" && pid) {
-      console.log(`[Stop] Executing async: taskkill /pid ${pid} /f /t`);
-      const killProc = spawn("taskkill", ["/pid", pid.toString(), "/f", "/t"], {
-        stdio: "pipe",
-        windowsHide: true,
-      });
-      killProc.on("close", (code) => {
-        console.log(`[Stop] taskkill exited with code ${code}`);
-      });
-      killProc.on("error", (err) => {
-        console.error("[Stop] taskkill spawn error:", err.message);
-        // Fallback
-        try {
-          targetProcess.kill();
-        } catch {
-          // ignore fallback kill failure
-        }
-      });
-      // 瓒呮椂鍏滃簳锛?s 鍚庤嫢杩涚▼浠嶇劧瀛樻椿
-      setTimeout(() => {
-        try {
-          if (pythonProcess === targetProcess) {
-            targetProcess.kill("SIGKILL");
-          }
-        } catch {
-          // ignore force-kill failure
-        }
-      }, 3000);
-    } else {
-      targetProcess.kill();
+  if (!pythonProcess) {
+    if (translationStartInProgress) {
+      translationStopRequested = true;
     }
+    return;
+  }
 
-    console.log("[Stop] Translation process stopped signal sent");
+  if (pythonProcess) {
+    requestStopForLocalTranslationProcess(pythonProcess);
   }
 });
 
@@ -6267,7 +6330,7 @@ ipcMain.handle(
       return { success: false };
     }
 
-    // 鍗曚緥淇濇姢锛氶槻姝㈠苟鍙戜笅杞藉鑷村鍎胯繘绋?
+    // 单例保护：防止并发下载导致孤儿进程。
     if (hfDownloadProcess !== null) {
       console.warn(
         "[HF Download] Download already in progress, rejecting new request",

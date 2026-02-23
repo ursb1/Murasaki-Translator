@@ -14,6 +14,7 @@ import { Language, translations } from "./lib/i18n";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { useAppHotkeys } from "./lib/useHotkeys";
 import { persistLibraryQueue } from "./lib/libraryQueueStorage";
+import type { QueueItem } from "./types/common";
 
 import { RuleEditor } from "./components/RuleEditor";
 import { AlertModal } from "./components/ui/AlertModal";
@@ -31,7 +32,6 @@ export type View =
   | "glossary"
   | "pre"
   | "post"
-  | "service"
   | "advanced"
   | "history"
   | "proofread";
@@ -51,7 +51,7 @@ const detectFileType = (
 const buildFallbackQueueItem = (
   path: string,
   fileType: "txt" | "epub" | "srt" | "ass" | "ssa",
-) => ({
+): QueueItem => ({
   id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
   path,
   fileName: path.split(/[/\\]/).pop() || path,
@@ -60,6 +60,11 @@ const buildFallbackQueueItem = (
   config: { useGlobalDefaults: true },
   status: "pending" as const,
 });
+
+const isQueueItem = (value: unknown): value is QueueItem =>
+  !!value &&
+  typeof value === "object" &&
+  typeof (value as { path?: unknown }).path === "string";
 
 function AppContent() {
   const [lang, setLang] = useState<Language>(() => {
@@ -89,7 +94,6 @@ function AppContent() {
         "api_manager",
         "settings",
         "model",
-        "service",
         "advanced",
         "glossary",
         "proofread",
@@ -138,9 +142,7 @@ function AppContent() {
       try {
         const raw = localStorage.getItem("library_queue");
         const parsed = raw ? JSON.parse(raw) : [];
-        const queue = Array.isArray(parsed)
-          ? (parsed as Array<{ path?: string }>)
-          : [];
+        const queue = Array.isArray(parsed) ? parsed.filter(isQueueItem) : [];
         if (queue.some((item) => String(item.path || "") === payload.path)) return;
         const nextQueue = [
           ...queue,

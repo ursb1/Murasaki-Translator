@@ -32,6 +32,7 @@ type RunnerDeps = {
 
 // --- 模块级状态：活动子进程 + stop 标记 ---
 let activeChild: ChildProcess | null = null;
+let startInProgress = false;
 let stopRequested = false;
 let activeStopFlagPath: string | null = null;
 let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
@@ -122,7 +123,12 @@ const cleanupStopFlag = () => {
 };
 
 const stopActivePipelineChild = () => {
-  if (!activeChild) return;
+  if (!activeChild) {
+    if (startInProgress) {
+      stopRequested = true;
+    }
+    return;
+  }
   if (stopRequested) return;
   stopRequested = true;
   const stopLogMessage = `[FlowV2] Stop requested, waiting child for graceful shutdown (timeout=${Math.round(
@@ -177,7 +183,13 @@ export const stopPipelineV2Runner = () => {
   stopActivePipelineChild();
 };
 
-export const isPipelineV2RunnerBusy = (): boolean => Boolean(activeChild);
+const isRunnerBusyState = (
+  child: ChildProcess | null,
+  starting: boolean,
+): boolean => Boolean(child || starting);
+
+export const isPipelineV2RunnerBusy = (): boolean =>
+  isRunnerBusyState(activeChild, startInProgress);
 
 /**
  * 将缓冲区按行分割，返回未完成的残余行。
@@ -316,7 +328,7 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
       }
 
       // 如果已有活动的 V2 进程，拒绝
-      if (activeChild) {
+      if (activeChild || startInProgress) {
         const message = "V2 pipeline already running";
         const win = deps.getMainWindow();
         if (win) {
@@ -334,322 +346,359 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
           error: { errors: [message] },
         };
       }
-
-      const python = deps.getPythonPath();
-      const middlewarePath = deps.getMiddlewarePath();
-      const scriptPath = join(middlewarePath, "murasaki_flow_v2", "main.py");
-
-      const precheck = await validatePipelineRun(profilesDir, pipelineId);
-      if (!precheck.ok) {
-        const message = `[FlowV2] Precheck failed: ${precheck.errors.join(", ")}`;
-        deps.sendLog({ runId, message, level: "error" });
-        const win = deps.getMainWindow();
-        if (win) {
-          win.webContents.send("process-exit", {
-            code: 1,
-            signal: null,
-            stopRequested: false,
-            runId,
-          });
-        }
-        return {
-          ok: false,
-          runId,
-          code: 1,
-          error: { errors: precheck.errors },
-        };
-      }
-
-      const scriptArgs = [
-        scriptPath,
-        "--file",
-        filePath,
-        "--pipeline",
-        pipelineId,
-        "--profiles-dir",
-        profilesDir,
-        "--run-id",
-        runId,
-      ];
-      const runtimeTempDir = ensureFlowV2SessionTempDir(middlewarePath);
-      cleanupLegacyTempFilesInDir(middlewarePath);
-      cleanupLegacyTempFilesInDir(runtimeTempDir);
-      const stopFlagPath = join(
-        runtimeTempDir,
-        `temp_flowv2_stop_${runId}.flag`,
-      );
-      try {
-        if (existsSync(stopFlagPath)) {
-          unlinkSync(stopFlagPath);
-        }
-      } catch (e) {
-        console.warn("[FlowV2] Failed to clear stale stop flag:", e);
-      }
-      scriptArgs.push("--stop-flag", stopFlagPath);
-      let resolvedOutputPath = outputPath;
-      if (!resolvedOutputPath && outputDir && existsSync(outputDir)) {
-        const ext = extname(filePath);
-        const baseName = ext ? basename(filePath, ext) : basename(filePath);
-        const outFilename = ext
-          ? `${baseName}_translated${ext}`
-          : `${baseName}_translated`;
-        resolvedOutputPath = join(outputDir, outFilename);
-      }
-      if (resolvedOutputPath) {
-        scriptArgs.push("--output", resolvedOutputPath);
-      }
-
-      const temporaryRulePaths: string[] = [];
-      const cleanupTemporaryRulePaths = () => {
-        for (const path of temporaryRulePaths) {
-          try {
-            if (existsSync(path)) {
-              unlinkSync(path);
-            }
-          } catch (e) {
-            console.warn(
-              "[FlowV2] Failed to cleanup temp rules file:",
-              path,
-              e,
-            );
-          }
-        }
-        temporaryRulePaths.length = 0;
-      };
-
-      let activeRulesPrePath = rulesPrePath;
-      if (
-        !activeRulesPrePath &&
-        rulesPre &&
-        Array.isArray(rulesPre) &&
-        rulesPre.length > 0
-      ) {
-        const uid = randomUUID().slice(0, 8);
-        activeRulesPrePath = join(runtimeTempDir, `temp_rules_pre_${uid}.json`);
-        writeFileSync(activeRulesPrePath, JSON.stringify(rulesPre), "utf8");
-        temporaryRulePaths.push(activeRulesPrePath);
-      }
-      if (activeRulesPrePath) {
-        scriptArgs.push("--rules-pre", activeRulesPrePath);
-      }
-
-      let activeRulesPostPath = rulesPostPath;
-      if (
-        !activeRulesPostPath &&
-        rulesPost &&
-        Array.isArray(rulesPost) &&
-        rulesPost.length > 0
-      ) {
-        const uid = randomUUID().slice(0, 8);
-        activeRulesPostPath = join(
-          runtimeTempDir,
-          `temp_rules_post_${uid}.json`,
-        );
-        writeFileSync(activeRulesPostPath, JSON.stringify(rulesPost), "utf8");
-        temporaryRulePaths.push(activeRulesPostPath);
-      }
-      if (activeRulesPostPath) {
-        scriptArgs.push("--rules-post", activeRulesPostPath);
-      }
-      if (glossaryPath) {
-        scriptArgs.push("--glossary", glossaryPath);
-      }
-      if (sourceLang) {
-        scriptArgs.push("--source-lang", sourceLang);
-      }
-      if (enableQuality === true) {
-        scriptArgs.push("--enable-quality");
-      } else if (enableQuality === false) {
-        scriptArgs.push("--disable-quality");
-      }
-      if (textProtect === true) {
-        scriptArgs.push("--text-protect");
-      } else if (textProtect === false) {
-        scriptArgs.push("--no-text-protect");
-      }
-      if (resume) {
-        scriptArgs.push("--resume");
-      }
-      if (cacheDir && existsSync(cacheDir)) {
-        scriptArgs.push("--cache-dir", cacheDir);
-      }
-      if (saveCache === false) {
-        scriptArgs.push("--no-cache");
-      }
-
+      startInProgress = true;
       stopRequested = false;
-      clearForceKillTimer();
-      cleanupStopFlag();
-      activeStopFlagPath = stopFlagPath;
+      try {
+        const python = deps.getPythonPath();
+        const middlewarePath = deps.getMiddlewarePath();
+        const scriptPath = join(middlewarePath, "murasaki_flow_v2", "main.py");
 
-      return await new Promise<{
-        ok: boolean;
-        runId: string;
-        code?: number;
-      }>((resolve) => {
-        let settled = false;
-        const finalize = (result: {
+        const precheck = await validatePipelineRun(profilesDir, pipelineId);
+        if (!precheck.ok) {
+          const message = `[FlowV2] Precheck failed: ${precheck.errors.join(", ")}`;
+          deps.sendLog({ runId, message, level: "error" });
+          const win = deps.getMainWindow();
+          if (win) {
+            win.webContents.send("process-exit", {
+              code: 1,
+              signal: null,
+              stopRequested,
+              runId,
+            });
+          }
+          startInProgress = false;
+          stopRequested = false;
+          return {
+            ok: false,
+            runId,
+            code: 1,
+            error: { errors: precheck.errors },
+          };
+        }
+
+        const scriptArgs = [
+          scriptPath,
+          "--file",
+          filePath,
+          "--pipeline",
+          pipelineId,
+          "--profiles-dir",
+          profilesDir,
+          "--run-id",
+          runId,
+        ];
+        const runtimeTempDir = ensureFlowV2SessionTempDir(middlewarePath);
+        cleanupLegacyTempFilesInDir(middlewarePath);
+        cleanupLegacyTempFilesInDir(runtimeTempDir);
+        const stopFlagPath = join(
+          runtimeTempDir,
+          `temp_flowv2_stop_${runId}.flag`,
+        );
+        try {
+          if (existsSync(stopFlagPath)) {
+            unlinkSync(stopFlagPath);
+          }
+        } catch (e) {
+          console.warn("[FlowV2] Failed to clear stale stop flag:", e);
+        }
+        scriptArgs.push("--stop-flag", stopFlagPath);
+        let resolvedOutputPath = outputPath;
+        if (!resolvedOutputPath && outputDir && existsSync(outputDir)) {
+          const ext = extname(filePath);
+          const baseName = ext ? basename(filePath, ext) : basename(filePath);
+          const outFilename = ext
+            ? `${baseName}_translated${ext}`
+            : `${baseName}_translated`;
+          resolvedOutputPath = join(outputDir, outFilename);
+        }
+        if (resolvedOutputPath) {
+          scriptArgs.push("--output", resolvedOutputPath);
+        }
+
+        const temporaryRulePaths: string[] = [];
+        const cleanupTemporaryRulePaths = () => {
+          for (const path of temporaryRulePaths) {
+            try {
+              if (existsSync(path)) {
+                unlinkSync(path);
+              }
+            } catch (e) {
+              console.warn(
+                "[FlowV2] Failed to cleanup temp rules file:",
+                path,
+                e,
+              );
+            }
+          }
+          temporaryRulePaths.length = 0;
+        };
+
+        let activeRulesPrePath = rulesPrePath;
+        if (
+          !activeRulesPrePath &&
+          rulesPre &&
+          Array.isArray(rulesPre) &&
+          rulesPre.length > 0
+        ) {
+          const uid = randomUUID().slice(0, 8);
+          activeRulesPrePath = join(runtimeTempDir, `temp_rules_pre_${uid}.json`);
+          writeFileSync(activeRulesPrePath, JSON.stringify(rulesPre), "utf8");
+          temporaryRulePaths.push(activeRulesPrePath);
+        }
+        if (activeRulesPrePath) {
+          scriptArgs.push("--rules-pre", activeRulesPrePath);
+        }
+
+        let activeRulesPostPath = rulesPostPath;
+        if (
+          !activeRulesPostPath &&
+          rulesPost &&
+          Array.isArray(rulesPost) &&
+          rulesPost.length > 0
+        ) {
+          const uid = randomUUID().slice(0, 8);
+          activeRulesPostPath = join(
+            runtimeTempDir,
+            `temp_rules_post_${uid}.json`,
+          );
+          writeFileSync(activeRulesPostPath, JSON.stringify(rulesPost), "utf8");
+          temporaryRulePaths.push(activeRulesPostPath);
+        }
+        if (activeRulesPostPath) {
+          scriptArgs.push("--rules-post", activeRulesPostPath);
+        }
+        if (glossaryPath) {
+          scriptArgs.push("--glossary", glossaryPath);
+        }
+        if (sourceLang) {
+          scriptArgs.push("--source-lang", sourceLang);
+        }
+        if (enableQuality === true) {
+          scriptArgs.push("--enable-quality");
+        } else if (enableQuality === false) {
+          scriptArgs.push("--disable-quality");
+        }
+        if (textProtect === true) {
+          scriptArgs.push("--text-protect");
+        } else if (textProtect === false) {
+          scriptArgs.push("--no-text-protect");
+        }
+        if (resume) {
+          scriptArgs.push("--resume");
+        }
+        if (cacheDir && existsSync(cacheDir)) {
+          scriptArgs.push("--cache-dir", cacheDir);
+        }
+        if (saveCache === false) {
+          scriptArgs.push("--no-cache");
+        }
+
+        clearForceKillTimer();
+        cleanupStopFlag();
+        activeStopFlagPath = stopFlagPath;
+
+        if (stopRequested) {
+          const win = deps.getMainWindow();
+          if (win) {
+            win.webContents.send("process-exit", {
+              code: 1,
+              signal: null,
+              stopRequested: true,
+              runId,
+            });
+          }
+          startInProgress = false;
+          stopRequested = false;
+          cleanupStopFlag();
+          cleanupTemporaryRulePaths();
+          return {
+            ok: false,
+            runId,
+            code: 1,
+          };
+        }
+
+        return await new Promise<{
           ok: boolean;
           runId: string;
           code?: number;
-        }) => {
-          if (settled) return;
-          settled = true;
-          resolve(result);
-        };
-        let child: ChildProcess;
-        try {
-          activeRunId = runId;
-          child = spawn(python.path, resolveExecutionArgs(python, scriptArgs), {
-            cwd: middlewarePath,
-            env: withMiddlewarePythonPath(process.env, middlewarePath),
-          });
-        } catch (err) {
-          console.error("[FlowV2] Spawn failed:", err);
-          const win = deps.getMainWindow();
-          if (win) {
-            const payload = {
-              title: "Pipeline V2 Error",
-              message: String((err as Error)?.message || err),
-            };
-            win.webContents.send(
-              "log-update",
-              `JSON_ERROR:${JSON.stringify(payload)}\n`,
-            );
-            win.webContents.send("process-exit", {
-              code: 1,
-              signal: null,
-              stopRequested: false,
-              runId,
+        }>((resolve) => {
+          let settled = false;
+          const finalize = (result: {
+            ok: boolean;
+            runId: string;
+            code?: number;
+          }) => {
+            if (settled) return;
+            settled = true;
+            resolve(result);
+          };
+          let child: ChildProcess;
+          try {
+            activeRunId = runId;
+            child = spawn(python.path, resolveExecutionArgs(python, scriptArgs), {
+              cwd: middlewarePath,
+              env: withMiddlewarePythonPath(process.env, middlewarePath),
             });
-          }
-          activeChild = null;
-          activeRunId = null;
-          stopRequested = false;
-          clearForceKillTimer();
-          cleanupStopFlag();
-          cleanupTemporaryRulePaths();
-          finalize({ ok: false, runId, code: 1 });
-          return;
-        }
-        activeChild = child;
-
-        let stdoutBuffer = "";
-
-        const handleStdoutLine = (line: string) => {
-          const statsEvent = parseApiStatsEventLine(line);
-          if (statsEvent) {
-            if (deps.recordApiStatsEvent) {
-              const enrichedEvent: ApiStatsEventInput = {
-                ...statsEvent,
-                runId:
-                  typeof statsEvent.runId === "string" &&
-                  statsEvent.runId.trim()
-                    ? statsEvent.runId
-                    : runId,
-                source:
-                  typeof statsEvent.source === "string" &&
-                  statsEvent.source.trim()
-                    ? statsEvent.source
-                    : "translation_run",
-                origin:
-                  typeof statsEvent.origin === "string" &&
-                  statsEvent.origin.trim()
-                    ? statsEvent.origin
-                    : "pipeline_v2_runner",
+          } catch (err) {
+            console.error("[FlowV2] Spawn failed:", err);
+            const win = deps.getMainWindow();
+            if (win) {
+              const payload = {
+                title: "Pipeline V2 Error",
+                message: String((err as Error)?.message || err),
               };
-              void Promise.resolve(
-                deps.recordApiStatsEvent(enrichedEvent),
-              ).catch(() => null);
+              win.webContents.send(
+                "log-update",
+                `JSON_ERROR:${JSON.stringify(payload)}\n`,
+              );
+              win.webContents.send("process-exit", {
+                code: 1,
+                signal: null,
+                stopRequested: false,
+                runId,
+              });
             }
+            startInProgress = false;
+            activeChild = null;
+            activeRunId = null;
+            stopRequested = false;
+            clearForceKillTimer();
+            cleanupStopFlag();
+            cleanupTemporaryRulePaths();
+            finalize({ ok: false, runId, code: 1 });
             return;
           }
-          const win = deps.getMainWindow();
-          if (!win) return;
-          win.webContents.send("log-update", `${line}\n`);
-        };
-
-        child.stdout?.on("data", (buf) => {
-          stdoutBuffer += buf.toString();
-          stdoutBuffer = flushBufferedLines(stdoutBuffer, handleStdoutLine);
-        });
-
-        child.stderr?.on("data", (buf) => {
-          const str = buf.toString();
-          // stderr 仅发到 pipelinev2-log 调试通道
-          deps.sendLog({ runId, message: str, level: "error" });
-          const win = deps.getMainWindow();
-          if (win && str.trim()) {
-            const payload = {
-              title: "Pipeline V2 Error (Stderr)",
-              message: str.trim(),
-            };
-            // Remove newlines in str to avoid breaking the JSON line parser
-            const safeStr = JSON.stringify(payload);
-            win.webContents.send("log-update", `JSON_ERROR:${safeStr}\n`);
+          activeChild = child;
+          startInProgress = false;
+          if (stopRequested) {
+            stopRequested = false;
+            stopActivePipelineChild();
           }
-        });
 
-        child.on("error", (err) => {
-          console.error("[FlowV2] Spawn error:", err);
-          const win = deps.getMainWindow();
-          if (win) {
-            const payload = {
-              title: "Pipeline V2 Error",
-              message: String(err?.message || err),
-            };
-            win.webContents.send(
-              "log-update",
-              `JSON_ERROR:${JSON.stringify(payload)}\n`,
+          let stdoutBuffer = "";
+
+          const handleStdoutLine = (line: string) => {
+            const statsEvent = parseApiStatsEventLine(line);
+            if (statsEvent) {
+              if (deps.recordApiStatsEvent) {
+                const enrichedEvent: ApiStatsEventInput = {
+                  ...statsEvent,
+                  runId:
+                    typeof statsEvent.runId === "string" &&
+                    statsEvent.runId.trim()
+                      ? statsEvent.runId
+                      : runId,
+                  source:
+                    typeof statsEvent.source === "string" &&
+                    statsEvent.source.trim()
+                      ? statsEvent.source
+                      : "translation_run",
+                  origin:
+                    typeof statsEvent.origin === "string" &&
+                    statsEvent.origin.trim()
+                      ? statsEvent.origin
+                      : "pipeline_v2_runner",
+                };
+                void Promise.resolve(
+                  deps.recordApiStatsEvent(enrichedEvent),
+                ).catch(() => null);
+              }
+              return;
+            }
+            const win = deps.getMainWindow();
+            if (!win) return;
+            win.webContents.send("log-update", `${line}\n`);
+          };
+
+          child.stdout?.on("data", (buf) => {
+            stdoutBuffer += buf.toString();
+            stdoutBuffer = flushBufferedLines(stdoutBuffer, handleStdoutLine);
+          });
+
+          child.stderr?.on("data", (buf) => {
+            const str = buf.toString();
+            // stderr 仅发到 pipelinev2-log 调试通道
+            deps.sendLog({ runId, message: str, level: "error" });
+            const win = deps.getMainWindow();
+            if (win && str.trim()) {
+              const payload = {
+                title: "Pipeline V2 Error (Stderr)",
+                message: str.trim(),
+              };
+              // Remove newlines in str to avoid breaking the JSON line parser
+              const safeStr = JSON.stringify(payload);
+              win.webContents.send("log-update", `JSON_ERROR:${safeStr}\n`);
+            }
+          });
+
+          child.on("error", (err) => {
+            console.error("[FlowV2] Spawn error:", err);
+            const win = deps.getMainWindow();
+            if (win) {
+              const payload = {
+                title: "Pipeline V2 Error",
+                message: String(err?.message || err),
+              };
+              win.webContents.send(
+                "log-update",
+                `JSON_ERROR:${JSON.stringify(payload)}\n`,
+              );
+              win.webContents.send("process-exit", {
+                code: 1,
+                signal: null,
+                stopRequested: false,
+                runId,
+              });
+            }
+            startInProgress = false;
+            activeChild = null;
+            activeRunId = null;
+            stopRequested = false;
+            clearForceKillTimer();
+            cleanupStopFlag();
+            cleanupTemporaryRulePaths();
+            finalize({ ok: false, runId, code: 1 });
+          });
+
+          child.on("close", (code, signal) => {
+            // 刷新剩余 stdout 缓冲
+            if (stdoutBuffer.trim()) {
+              flushBufferedLines(`${stdoutBuffer}\n`, handleStdoutLine);
+            }
+
+            const wasStopRequested = stopRequested;
+            stopRequested = false;
+            startInProgress = false;
+            activeChild = null;
+            activeRunId = null;
+            clearForceKillTimer();
+            cleanupStopFlag();
+            cleanupTemporaryRulePaths();
+
+            console.log(
+              `[FlowV2] Process exited (code=${String(code)}, signal=${String(signal)}, stopRequested=${wasStopRequested})`,
             );
-            win.webContents.send("process-exit", {
-              code: 1,
-              signal: null,
-              stopRequested: false,
-              runId,
-            });
-          }
-          activeChild = null;
-          activeRunId = null;
-          stopRequested = false;
-          clearForceKillTimer();
-          cleanupStopFlag();
-          cleanupTemporaryRulePaths();
-          finalize({ ok: false, runId, code: 1 });
+
+            // 发送 process-exit 到 Dashboard（格式与 V1 完全一致）
+            const win = deps.getMainWindow();
+            if (win) {
+              win.webContents.send("process-exit", {
+                code,
+                signal,
+                stopRequested: wasStopRequested,
+                runId,
+              });
+            }
+
+            finalize({ ok: code === 0, runId, code: code ?? undefined });
+          });
         });
-
-        child.on("close", (code, signal) => {
-          // 刷新剩余 stdout 缓冲
-          if (stdoutBuffer.trim()) {
-            flushBufferedLines(`${stdoutBuffer}\n`, handleStdoutLine);
-          }
-
-          const wasStopRequested = stopRequested;
-          stopRequested = false;
-          activeChild = null;
-          activeRunId = null;
-          clearForceKillTimer();
-          cleanupStopFlag();
-          cleanupTemporaryRulePaths();
-
-          console.log(
-            `[FlowV2] Process exited (code=${String(code)}, signal=${String(signal)}, stopRequested=${wasStopRequested})`,
-          );
-
-          // 发送 process-exit 到 Dashboard（格式与 V1 完全一致）
-          const win = deps.getMainWindow();
-          if (win) {
-            win.webContents.send("process-exit", {
-              code,
-              signal,
-              stopRequested: wasStopRequested,
-              runId,
-            });
-          }
-
-          finalize({ ok: code === 0, runId, code: code ?? undefined });
-        });
-      });
+      } finally {
+        if (!activeChild) {
+          startInProgress = false;
+        }
+      }
     },
   );
 };
@@ -661,4 +710,5 @@ export const __testOnly = {
   withMiddlewarePythonPath,
   parseApiStatsEventLine,
   isLegacyFlowV2TempFile,
+  isRunnerBusyState,
 };

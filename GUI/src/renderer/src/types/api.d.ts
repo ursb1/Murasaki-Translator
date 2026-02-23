@@ -459,6 +459,8 @@ export interface ElectronAPI {
     path?: string;
     isCache?: boolean;
     resumeOutputPath?: string;
+    remoteCheckSkipped?: boolean;
+    remoteHost?: string;
   }>;
   clipboardWrite: (text: string) => Promise<{ ok: boolean; error?: string }>;
 

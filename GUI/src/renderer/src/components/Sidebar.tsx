@@ -17,14 +17,13 @@ import {
 import { cn } from "../lib/utils";
 import { Tooltip } from "./ui/core";
 import { translations, Language } from "../lib/i18n";
-import type { View } from "../App";
 import { APP_CONFIG } from "../lib/config";
 
 interface SidebarProps {
   lang: Language;
   setLang: (lang: Language) => void;
-  view: View;
-  setView: (view: View) => void;
+  view: string;
+  setView: (view: string) => void;
 }
 
 export function Sidebar({ lang, setLang, view, setView }: SidebarProps) {
@@ -88,7 +87,7 @@ export function Sidebar({ lang, setLang, view, setView }: SidebarProps) {
             <button
               key={index}
               onClick={() => {
-                setView(item.id as View);
+                setView(item.id);
               }}
               className={cn(
                 "w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-all duration-200",

@@ -170,6 +170,8 @@ interface HistoryViewProps {
 
 /** Maximum number of history records to keep */
 const MAX_HISTORY_RECORDS = 50;
+const HISTORY_STORAGE_KEY = "translation_history";
+const HISTORY_BACKUP_STORAGE_KEY = "translation_history_backup";
 
 /** Storage key prefix for record details */
 const DETAIL_KEY_PREFIX = "history_detail_";
@@ -181,29 +183,58 @@ export interface RecordDetail {
   llamaLogs: string[];
 }
 
+const toLightweightRecords = (
+  records: TranslationRecord[],
+): TranslationRecord[] =>
+  records.map((r) => {
+    const { logs, triggers, llamaLogs, ...basic } = r as TranslationRecord & {
+      logs?: string[];
+      triggers?: TriggerEvent[];
+      llamaLogs?: string[];
+    };
+    return { ...basic, logs: [], triggers: [], llamaLogs: [] };
+  });
+
+const parseHistoryPayload = (raw: string): TranslationRecord[] | null => {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return toLightweightRecords(parsed as TranslationRecord[]);
+  } catch {
+    return null;
+  }
+};
+
 /**
  * Retrieves all translation history records from localStorage (lightweight, no logs/triggers).
  * @returns Array of TranslationRecord objects without logs/triggers for fast loading
  */
 export const getHistory = (): TranslationRecord[] => {
-  try {
-    const data = localStorage.getItem("translation_history");
-    if (!data) return [];
+  const data = localStorage.getItem(HISTORY_STORAGE_KEY);
+  if (!data) return [];
 
-    const records = JSON.parse(data) as TranslationRecord[];
-    // Migration: if old format contains logs/triggers in main array, strip them
-    return records.map((r) => {
-      // Keep basic fields only, remove heavy data if present
-      const { logs, triggers, llamaLogs, ...basic } = r as TranslationRecord & {
-        logs?: string[];
-        triggers?: TriggerEvent[];
-        llamaLogs?: string[];
-      };
-      return { ...basic, logs: [], triggers: [] } as TranslationRecord;
-    });
-  } catch {
-    return [];
+  const primary = parseHistoryPayload(data);
+  if (primary) {
+    return primary;
   }
+
+  const backup = localStorage.getItem(HISTORY_BACKUP_STORAGE_KEY);
+  const fallback = backup ? parseHistoryPayload(backup) : null;
+  if (fallback) {
+    try {
+      localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(fallback));
+    } catch {
+      // Ignore recovery write failures.
+    }
+    return fallback;
+  }
+
+  try {
+    localStorage.removeItem(HISTORY_STORAGE_KEY);
+  } catch {
+    // Ignore cleanup failures.
+  }
+  return [];
 };
 
 /**
@@ -217,7 +248,7 @@ export const getRecordDetail = (id: string): RecordDetail | null => {
     if (data) return JSON.parse(data);
 
     // Fallback: try to get from old format (migration)
-    const historyRaw = localStorage.getItem("translation_history");
+    const historyRaw = localStorage.getItem(HISTORY_STORAGE_KEY);
     if (historyRaw) {
       const records = JSON.parse(historyRaw) as (TranslationRecord & {
         logs?: string[];
@@ -264,16 +295,10 @@ const saveRecordDetail = (id: string, detail: RecordDetail) => {
  */
 export const saveHistory = (records: TranslationRecord[]) => {
   const trimmed = records.slice(-MAX_HISTORY_RECORDS);
-  // Strip heavy data from main history storage
-  const lightweight = trimmed.map((r) => {
-    const { logs, triggers, llamaLogs, ...basic } = r as TranslationRecord & {
-      logs?: string[];
-      triggers?: TriggerEvent[];
-      llamaLogs?: string[];
-    };
-    return { ...basic, logs: [], triggers: [] };
-  });
-  localStorage.setItem("translation_history", JSON.stringify(lightweight));
+  const lightweight = toLightweightRecords(trimmed);
+  const serialized = JSON.stringify(lightweight);
+  localStorage.setItem(HISTORY_STORAGE_KEY, serialized);
+  localStorage.setItem(HISTORY_BACKUP_STORAGE_KEY, serialized);
 };
 
 /**
@@ -374,7 +399,8 @@ export const clearHistory = () => {
       /* ignore */
     }
   });
-  localStorage.removeItem("translation_history");
+  localStorage.removeItem(HISTORY_STORAGE_KEY);
+  localStorage.removeItem(HISTORY_BACKUP_STORAGE_KEY);
 };
 
 // ============================================================================
@@ -383,7 +409,6 @@ export const clearHistory = () => {
 
 interface RecordDetailContentProps {
   record: TranslationRecord;
-  lang: Language;
   t: (typeof translations)["zh"];
   isLoading: boolean;
   getRecordDetail: (id: string) => RecordDetail | null;
@@ -394,7 +419,6 @@ interface RecordDetailContentProps {
 
 function RecordDetailContent({
   record,
-  lang,
   t,
   isLoading,
   getRecordDetail: getDetail,
@@ -425,7 +449,8 @@ function RecordDetailContent({
   const displayTriggers = triggersExpanded
     ? fullRecord.triggers
     : fullRecord.triggers.slice(0, COLLAPSE_THRESHOLD);
-  const speedUnit = lang === "en" ? "chars/s" : t.dashboard.charPerSec;
+  const v2t = t.historyView.v2;
+  const speedUnit = v2t.charsPerSecondUnit;
   const avgSpeedDisplay = Number(fullRecord.avgSpeed || 0).toFixed(1);
 
   if (isLoading) {
@@ -453,14 +478,14 @@ function RecordDetailContent({
             {v2c && (
               <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm bg-muted/30 px-3 py-2 rounded-md">
                 <span className="text-muted-foreground">
-                  {lang === "en" ? "Pipeline:" : "方案:"}{" "}
+                  {v2t.pipeline}:{" "}
                   <span className="font-medium text-foreground ml-1">
                     {v2c.pipelineName || v2c.pipelineId}
                   </span>
                 </span>
                 {v2c.providerName && (
                   <span className="text-muted-foreground">
-                    {lang === "en" ? "Provider:" : "接口:"}{" "}
+                    {v2t.provider}:{" "}
                     <span className="font-medium text-foreground ml-1">
                       {v2c.providerName}
                     </span>
@@ -468,15 +493,11 @@ function RecordDetailContent({
                 )}
                 {v2c.chunkType && (
                   <span className="text-muted-foreground">
-                    {lang === "en" ? "Mode:" : "模式:"}{" "}
+                    {v2t.mode}:{" "}
                     <span className="font-medium text-foreground ml-1">
                       {v2c.chunkType === "line"
-                        ? lang === "en"
-                          ? "Line"
-                          : "行翻译"
-                        : lang === "en"
-                          ? "Block"
-                          : "块翻译"}
+                        ? v2t.modeLine
+                        : v2t.modeBlock}
                     </span>
                   </span>
                 )}
@@ -487,7 +508,7 @@ function RecordDetailContent({
               {/* 翻译统计 */}
               <div className="space-y-3 bg-muted/20 p-3 rounded-lg border border-border/50">
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                  {lang === "en" ? "Translation Progress" : "翻译进度"}
+                  {v2t.translationProgress}
                 </p>
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   <div>
@@ -530,12 +551,12 @@ function RecordDetailContent({
               {v2s && (
                 <div className="space-y-3 bg-muted/20 p-3 rounded-lg border border-border/50">
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                    {lang === "en" ? "Request Telemetry" : "请求遥测"}
+                    {v2t.requestTelemetry}
                   </p>
                   <div className="grid grid-cols-2 gap-3 text-sm">
                     <div>
                       <p className="text-muted-foreground text-xs">
-                        {lang === "en" ? "Requests" : "发包数"}
+                        {v2t.requests}
                       </p>
                       <p className="font-medium">
                         {v2s.totalRequests.toLocaleString()}
@@ -551,7 +572,7 @@ function RecordDetailContent({
                     </div>
                     <div>
                       <p className="text-muted-foreground text-xs">
-                        {lang === "en" ? "Errors" : "报错数"}
+                        {v2t.errors}
                       </p>
                       <p
                         className={`font-medium ${v2s.totalErrors > 0 ? "text-destructive" : ""}`}
@@ -561,7 +582,7 @@ function RecordDetailContent({
                     </div>
                     <div>
                       <p className="text-muted-foreground text-xs">
-                        {lang === "en" ? "Success Rate" : "请求成功率"}
+                        {v2t.successRate}
                       </p>
                       <p className="font-medium">
                         {v2s.totalRequests > 0
@@ -582,12 +603,12 @@ function RecordDetailContent({
                 (v2s.totalInputTokens > 0 || v2s.totalOutputTokens > 0) && (
                   <div className="space-y-3 bg-muted/20 p-3 rounded-lg border border-border/50">
                     <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                      {lang === "en" ? "Token Usage" : "Token 消耗"}
+                      {v2t.tokenUsage}
                     </p>
                     <div className="grid grid-cols-2 gap-3 text-sm">
                       <div>
                         <p className="text-muted-foreground text-xs">
-                          {lang === "en" ? "Input Tokens" : "输入 Token"}
+                          {v2t.inputTokens}
                         </p>
                         <p className="font-medium">
                           {v2s.totalInputTokens.toLocaleString()}
@@ -595,7 +616,7 @@ function RecordDetailContent({
                       </div>
                       <div>
                         <p className="text-muted-foreground text-xs">
-                          {lang === "en" ? "Output Tokens" : "输出 Token"}
+                          {v2t.outputTokens}
                         </p>
                         <p className="font-medium">
                           {v2s.totalOutputTokens.toLocaleString()}
@@ -612,9 +633,7 @@ function RecordDetailContent({
                 <div className="pt-2">
                   <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
                     <AlertCircle className="w-3.5 h-3.5" />
-                    {lang === "en"
-                      ? "Error Status Codes"
-                      : "拦截到的异常状态码"}
+                    {v2t.errorStatusCodes}
                   </p>
                   <div className="flex flex-wrap gap-2">
                     {Object.entries(v2s.errorStatusCodes)
@@ -627,7 +646,7 @@ function RecordDetailContent({
                           HTTP {code}:{" "}
                           <span className="font-semibold">
                             {count}
-                            {lang === "en" ? "x" : " 次"}
+                            {v2t.countSuffix}
                           </span>
                         </span>
                       ))}
@@ -1444,7 +1463,6 @@ export function HistoryView({ lang, onNavigate }: HistoryViewProps) {
                 {expandedId === record.id && (
                   <RecordDetailContent
                     record={record}
-                    lang={lang}
                     t={t}
                     isLoading={loadingDetails === record.id}
                     getRecordDetail={getRecordDetail}

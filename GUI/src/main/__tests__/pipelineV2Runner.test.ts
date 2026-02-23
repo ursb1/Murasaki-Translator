@@ -139,3 +139,18 @@ describe("pipelineV2Runner temp artifact matcher", () => {
     expect(__testOnly.isLegacyFlowV2TempFile("notes.txt")).toBe(false);
   });
 });
+
+describe("pipelineV2Runner busy state", () => {
+  it("is busy when child is active", () => {
+    const fakeChild = { pid: 1234 } as any;
+    expect(__testOnly.isRunnerBusyState(fakeChild, false)).toBe(true);
+  });
+
+  it("is busy when startup is in progress even without child", () => {
+    expect(__testOnly.isRunnerBusyState(null, true)).toBe(true);
+  });
+
+  it("is idle only when no child and no startup lock", () => {
+    expect(__testOnly.isRunnerBusyState(null, false)).toBe(false);
+  });
+});

@@ -2110,6 +2110,16 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       setGlossaryPath(globalGlossary);
     };
 
+    const resolveRemotePrecheckUrl = (): string => {
+      if (!isRemoteModeRef.current) return "";
+      const sessionUrl = remoteRuntime?.runtime?.session?.url;
+      if (typeof sessionUrl === "string" && sessionUrl.trim()) {
+        return sessionUrl.trim();
+      }
+      const configuredUrl = localStorage.getItem("config_remote_url") || "";
+      return configuredUrl.trim();
+    };
+
     const startTranslation = (
       inputPath: string,
       forceResume?: boolean,
@@ -2784,12 +2794,37 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         engineMode: "v2",
         outputDir: outputDir || undefined,
         cacheDir: cacheDir || undefined,
+        executionMode: (isRemoteMode ? "remote" : "local") as
+          | "local"
+          | "remote",
+        remoteUrl: isRemoteMode ? resolveRemotePrecheckUrl() : undefined,
       };
 
       const checkResult = await window.api?.checkOutputFileExists(
         inputPath,
         config,
       );
+
+      if (checkResult?.remoteCheckSkipped) {
+        const remoteHost = String(
+          checkResult.remoteHost || resolveRemotePrecheckUrl() || "-",
+        );
+        showConfirm({
+          title: t.dashboard.remotePrecheckTitle,
+          description: t.dashboard.remotePrecheckDesc.replace(
+            "{host}",
+            remoteHost,
+          ),
+          variant: "warning",
+          confirmText: t.dashboard.remotePrecheckConfirm,
+          cancelText: t.dashboard.remotePrecheckCancel,
+          onConfirm: () => {
+            setCurrentQueueIndex(index);
+            startV2Translation(inputPath);
+          },
+        });
+        return;
+      }
 
       if (checkResult?.exists && checkResult.path) {
         setConfirmModal({
@@ -2874,6 +2909,10 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           customConfig?.outputDir || localStorage.getItem("config_output_dir"),
         modelPath: effectiveModelPath, // 传递模型路径用于生成输出文件名
         remoteModel: isRemoteMode ? effectiveModelPath : undefined,
+        executionMode: (isRemoteMode ? "remote" : "local") as
+          | "local"
+          | "remote",
+        remoteUrl: isRemoteMode ? resolveRemotePrecheckUrl() : undefined,
       };
 
       // --- Auto-Match Glossary Logic (Refined) ---
@@ -2904,6 +2943,27 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       console.log("[checkAndStart] inputPath:", inputPath);
       console.log("[checkAndStart] config:", config);
       console.log("[checkAndStart] checkResult:", checkResult);
+
+      if (checkResult?.remoteCheckSkipped) {
+        const remoteHost = String(
+          checkResult.remoteHost || resolveRemotePrecheckUrl() || "-",
+        );
+        showConfirm({
+          title: t.dashboard.remotePrecheckTitle,
+          description: t.dashboard.remotePrecheckDesc.replace(
+            "{host}",
+            remoteHost,
+          ),
+          variant: "warning",
+          confirmText: t.dashboard.remotePrecheckConfirm,
+          cancelText: t.dashboard.remotePrecheckCancel,
+          onConfirm: () => {
+            setCurrentQueueIndex(index);
+            startTranslation(inputPath, undefined, matchedGlossary || undefined);
+          },
+        });
+        return;
+      }
 
       if (checkResult?.exists && checkResult.path) {
         setConfirmModal({

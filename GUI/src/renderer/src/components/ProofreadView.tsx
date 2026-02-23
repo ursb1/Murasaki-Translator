@@ -697,13 +697,6 @@ export default function ProofreadView({
     };
   }, []);
 
-  // Auto-scroll log modal
-  useEffect(() => {
-    if (showLogModal !== null && logScrollRef.current) {
-      logScrollRef.current.scrollTop = logScrollRef.current.scrollHeight;
-    }
-  }, [blockLogs, showLogModal]);
-
   useEffect(() => {
     if (cacheData?.glossaryPath && !retryGlossaryPath) {
       setRetryGlossaryPath(cacheData.glossaryPath);
@@ -2197,6 +2190,7 @@ export default function ProofreadView({
                   <div className="relative">
                     <textarea
                       autoFocus
+                      ref={textareaRef}
                       className="w-full h-full outline-none resize-none border-none m-0 bg-transparent text-foreground"
                       style={{
                         paddingLeft: `${layoutMetrics.paddingLeft}px`,
@@ -2274,6 +2268,7 @@ export default function ProofreadView({
                 />
                 {/* Transparent textarea overlay for seamless editing */}
                 <textarea
+                  ref={textareaRef}
                   className="absolute inset-0 px-3 py-2 bg-transparent border-none outline-none resize-none"
                   style={{
                     lineHeight: "inherit",

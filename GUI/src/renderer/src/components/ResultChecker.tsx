@@ -722,5 +722,3 @@ export function ResultChecker({
     </div>
   );
 }
-
-export default ResultChecker;
