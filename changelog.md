@@ -34,6 +34,33 @@
 *   新增 `libraryQueueStorage` 单测，覆盖旧键迁移、异常 payload 兜底、写入清理旧键等路径。
 *   新增 `pipelineV2Shared` 单测，覆盖 `strict_concurrency` 与 chunk 类型兼容归一逻辑。
 *   更新 `test_flow_v2_profiles` 与 `test_rule_processor`，覆盖 profile 自动迁移回写与 Python 规则子进程执行链路。
+- test: 新增 `profileDirMigration`、`remoteOutputPrecheck`、`pipelineV2Runner` busy state 回归测试，覆盖启动锁、目录迁移与远程预检判断。
+- test: 新增 `historyStorageRecovery`、`proofreadViewStructure`、`dependencyGuards`，覆盖历史容灾、编辑区结构与组件依赖守卫。
+
+#### [主进程编排层] 启停链路与远程输出预检
+
+- fix: `pipelineV2Runner` 新增启动中状态锁，启动窗口内 stop 请求会在子进程创建后立刻执行，避免启动阶段卡运行态。
+- fix: `index.ts` 运行态判断扩展到 `translationStartInProgress`，并统一本地进程停止链路（Windows `taskkill` + 超时强杀兜底）。
+- fix: `check-output-file-exists` 新增远程预检分支，非 loopback 远程地址返回 `remoteCheckSkipped/remoteHost`，避免本地误判远端输出状态。
+- fix: profile 目录迁移改为优先 `rename`，迁移失败时自动回退 legacy 目录并继续服务，降低启动失败风险。
+
+#### [GUI界面层] 远程交互与历史容灾
+
+- fix: Dashboard 在远程模式遇到 `remoteCheckSkipped` 时改为确认弹窗，明确提示将直接提交远程任务。
+- fix: History 存储新增 `translation_history_backup` 备份键；主键损坏时自动回退并自愈，清空历史时同步清理主备键。
+- fix: History 详情页 V2 统计文案全面切换到 i18n 键，并补齐中/英/日三语。
+- fix: Proofread 编辑区恢复 `textareaRef` 绑定，避免编辑态焦点与结构回归；ResultChecker 移除无引用默认导出，Sidebar 去除对 `App.View` 的耦合。
+- fix: App 侧栏视图集合移除无效 `service` 项，队列恢复链路增加 `QueueItem` 类型守卫，避免异常 payload 进入运行队列。
+
+#### [中间件执行层] API 服务兼容性
+
+- fix: `api_server.py` 改为 FastAPI lifespan 清理 `worker`，并将 `@validator` 迁移为 `@field_validator`，兼容 Pydantic v2 运行时。
+
+#### [构建与发布层] 依赖与校验收敛
+
+- chore: 新增 `middleware/constraints-release.txt`，CI 与 Release 的 Python 依赖安装统一走 constraints 锁定版本。
+- chore: GUI 脚本新增 `typecheck` 与 `lint:check`，CI 新增对应检查并统一使用 `npm ci`。
+- chore: GUI 版本号同步更新为 `2.1.0`（`package.json` / `package-lock.json`）。
 
 ## [2.0.3] - 2026-02-23
 
