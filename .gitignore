@@ -94,6 +94,7 @@ middleware/uploads
 middleware/outputs
 
 .claude
+.keiyaku/
 local
 download-stats-output/
 .vite
