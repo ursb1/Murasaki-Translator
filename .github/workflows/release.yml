@@ -87,13 +87,13 @@ jobs:
           python_env/python.exe get-pip.py --no-warn-script-location
           
           # Install dependencies (包含 server 模块)
-          python_env/python.exe -m pip install -r middleware/requirements.txt --target python_env/Lib/site-packages --no-warn-script-location
-          python_env/python.exe -m pip install -r middleware/server/requirements.txt --target python_env/Lib/site-packages --no-warn-script-location
+          python_env/python.exe -m pip install -c middleware/constraints-release.txt -r middleware/requirements.txt --target python_env/Lib/site-packages --no-warn-script-location
+          python_env/python.exe -m pip install -c middleware/constraints-release.txt -r middleware/server/requirements.txt --target python_env/Lib/site-packages --no-warn-script-location
           python_env/python.exe -c "import fastapi, uvicorn, httpx, multipart, pydantic; print('embedded python deps ok')"
 
       - name: Install Node dependencies
         working-directory: GUI
-        run: npm install
+        run: npm ci
 
       - name: Prepare packaged docs
         shell: pwsh
@@ -164,13 +164,13 @@ jobs:
           (Get-Content $pthFile.FullName) -replace '#import site', 'import site' | Set-Content $pthFile.FullName
           Invoke-WebRequest -Uri "https://bootstrap.pypa.io/get-pip.py" -OutFile get-pip.py
           python_env/python.exe get-pip.py --no-warn-script-location
-          python_env/python.exe -m pip install -r middleware/requirements.txt --target python_env/Lib/site-packages --no-warn-script-location
-          python_env/python.exe -m pip install -r middleware/server/requirements.txt --target python_env/Lib/site-packages --no-warn-script-location
+          python_env/python.exe -m pip install -c middleware/constraints-release.txt -r middleware/requirements.txt --target python_env/Lib/site-packages --no-warn-script-location
+          python_env/python.exe -m pip install -c middleware/constraints-release.txt -r middleware/server/requirements.txt --target python_env/Lib/site-packages --no-warn-script-location
           python_env/python.exe -c "import fastapi, uvicorn, httpx, multipart, pydantic; print('embedded python deps ok')"
 
       - name: Install Node dependencies
         working-directory: GUI
-        run: npm install
+        run: npm ci
 
       - name: Prepare packaged docs
         shell: pwsh
@@ -279,8 +279,8 @@ jobs:
         run: |
           python3 -m venv .venv
           source .venv/bin/activate
-          pip install -r middleware/requirements.txt
-          pip install -r middleware/server/requirements.txt
+          pip install -c middleware/constraints-release.txt -r middleware/requirements.txt
+          pip install -c middleware/constraints-release.txt -r middleware/server/requirements.txt
           python -c "import fastapi, uvicorn, httpx, multipart, pydantic; print('python deps ok')"
 
       - name: Build Python Engine (PyInstaller)
@@ -314,7 +314,7 @@ jobs:
 
       - name: Install Node dependencies
         working-directory: GUI
-        run: npm install
+        run: npm ci
 
       - name: Prepare packaged docs
         run: |
@@ -423,8 +423,8 @@ jobs:
         run: |
           python3 -m venv .venv
           source .venv/bin/activate
-          pip install -r middleware/requirements.txt
-          pip install -r middleware/server/requirements.txt
+          pip install -c middleware/constraints-release.txt -r middleware/requirements.txt
+          pip install -c middleware/constraints-release.txt -r middleware/server/requirements.txt
           python -c "import fastapi, uvicorn, httpx, multipart, pydantic; print('python deps ok')"
 
       - name: Build Python Engine (PyInstaller)
@@ -458,7 +458,7 @@ jobs:
 
       - name: Install Node dependencies
         working-directory: GUI
-        run: npm install
+        run: npm ci
 
       - name: Prepare packaged docs
         run: |

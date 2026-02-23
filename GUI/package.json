@@ -1,6 +1,6 @@
 {
   "name": "murasaki-translator",
-  "version": "2.0.2",
+  "version": "2.1.0",
   "main": "./out/main/index.js",
   "author": "soundstarrain",
   "description": "Murasaki Local AI Translator",
@@ -10,7 +10,9 @@
   },
   "scripts": {
     "format": "prettier --write .",
-    "lint": "eslint . --ext .js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix",
+    "lint": "eslint src --ext .js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix",
+    "lint:check": "eslint src --ext .js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "electron-vite dev",
