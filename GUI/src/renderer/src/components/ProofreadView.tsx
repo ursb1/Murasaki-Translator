@@ -436,6 +436,254 @@ const pickConsistencyVariant = ({
   return chosen.text;
 };
 
+const trimLeadingEmptyLines = (text: string) => {
+  const lines = text.split("\n");
+  let startIdx = 0;
+  while (startIdx < lines.length && lines[startIdx].trim() === "") {
+    startIdx += 1;
+  }
+  return lines.slice(startIdx).join("\n");
+};
+
+const SEARCH_ESCAPE_RE = /[.*+?^${}()|[\]\\]/g;
+
+type SearchMatch = {
+  blockIndex: number;
+  type: "src" | "dst";
+  lineIndex: number;
+};
+
+const buildSearchRegex = (
+  keyword: string,
+  isRegex: boolean,
+  flags: string,
+): { regex: RegExp | null; error: string | null } => {
+  if (!keyword) return { regex: null, error: null };
+  const pattern = isRegex ? keyword : keyword.replace(SEARCH_ESCAPE_RE, "\\$&");
+  try {
+    return { regex: new RegExp(pattern, flags), error: null };
+  } catch (error) {
+    return {
+      regex: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+};
+
+const lineMatchesSearch = (regex: RegExp, line: string): boolean => {
+  regex.lastIndex = 0;
+  return regex.test(line);
+};
+
+const blockMatchesSearchRegex = (block: CacheBlock, regex: RegExp): boolean => {
+  const srcLines = stripSystemMarkersForDisplay(
+    trimLeadingEmptyLines(block.src),
+  ).split(/\r?\n/);
+  const dstLines = trimLeadingEmptyLines(block.dst).split(/\r?\n/);
+  return (
+    srcLines.some((line) => lineMatchesSearch(regex, line)) ||
+    dstLines.some((line) => lineMatchesSearch(regex, line))
+  );
+};
+
+const blockMatchesSearchKeyword = (
+  block: CacheBlock,
+  keyword: string,
+  isRegex: boolean,
+): { matched: boolean; error: string | null } => {
+  if (!keyword) return { matched: true, error: null };
+  const compiled = buildSearchRegex(keyword, isRegex, "i");
+  if (!compiled.regex) {
+    return { matched: true, error: compiled.error };
+  }
+  const matched = blockMatchesSearchRegex(block, compiled.regex);
+  return { matched, error: null };
+};
+
+const collectSearchMatches = (
+  blocks: CacheBlock[],
+  keyword: string,
+  isRegex: boolean,
+): { matches: SearchMatch[]; error: string | null } => {
+  if (!keyword) return { matches: [], error: null };
+  const compiled = buildSearchRegex(keyword, isRegex, isRegex ? "gi" : "i");
+  if (!compiled.regex) {
+    return { matches: [], error: compiled.error };
+  }
+  const regex = compiled.regex;
+  const matches: SearchMatch[] = [];
+  for (const block of blocks) {
+    const srcLines = stripSystemMarkersForDisplay(
+      trimLeadingEmptyLines(block.src),
+    ).split(/\r?\n/);
+    srcLines.forEach((line, lineIndex) => {
+      if (lineMatchesSearch(regex, line)) {
+        matches.push({ blockIndex: block.index, type: "src", lineIndex });
+      }
+    });
+    const dstLines = trimLeadingEmptyLines(block.dst).split(/\r?\n/);
+    dstLines.forEach((line, lineIndex) => {
+      if (lineMatchesSearch(regex, line)) {
+        matches.push({ blockIndex: block.index, type: "dst", lineIndex });
+      }
+    });
+  }
+  return { matches, error: null };
+};
+
+const yieldToUiThread = async (): Promise<void> => {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+};
+
+const runConsistencyScan = async ({
+  selectedFiles,
+  glossaryMap,
+  minOccurrences,
+  unknownLabel,
+  loadCache,
+  onProgress,
+}: {
+  selectedFiles: HistoryCacheFile[];
+  glossaryMap: Record<string, string>;
+  minOccurrences: number;
+  unknownLabel: string;
+  loadCache: (
+    path: string,
+  ) => Promise<{ blocks?: CacheBlock[] } | null | undefined>;
+  onProgress?: (progress: number) => void;
+}): Promise<{
+  issues: ConsistencyIssue[];
+  stats: { files: number; terms: number; issues: number };
+}> => {
+  const terms = Object.keys(glossaryMap).filter((term) => term.trim().length > 1);
+  const termIndex = buildGlossaryIndex(glossaryMap);
+  const termStats = new Map<
+    string,
+    {
+      expected: string;
+      total: number;
+      matched: number;
+      variants: Map<string, ConsistencyVariant>;
+    }
+  >();
+
+  let processed = 0;
+  for (const file of selectedFiles) {
+    const data = await loadCache(file.path);
+    processed += 1;
+    onProgress?.(processed / Math.max(1, selectedFiles.length));
+    if (!data?.blocks?.length) {
+      await yieldToUiThread();
+      continue;
+    }
+
+    let blockCounter = 0;
+    for (const block of data.blocks as CacheBlock[]) {
+      blockCounter += 1;
+      const srcLines = String(block.src || "").split(/\r?\n/);
+      const dstLines = String(block.dst || "").split(/\r?\n/);
+      const dstBlockText = cleanConsistencyLine(block.dst || "");
+      const useLineAlign =
+        srcLines.length === dstLines.length &&
+        !(block.warnings || []).includes("line_mismatch");
+
+      for (let i = 0; i < srcLines.length; i += 1) {
+        const srcLine = cleanConsistencyLine(srcLines[i] || "");
+        if (!srcLine) continue;
+        const dstLine = cleanConsistencyLine(dstLines[i] || "");
+        const targetText = useLineAlign ? dstLine : dstBlockText || dstLine;
+
+        const matchedTerms = findTermsInLine(srcLine, termIndex);
+        if (matchedTerms.length === 0) continue;
+
+        for (const term of matchedTerms) {
+          const expected = glossaryMap[term] || "";
+          const variantText = pickConsistencyVariant({
+            srcLine,
+            term,
+            targetText,
+            expected,
+            unknownLabel,
+            useLineAlign,
+          });
+          let stat = termStats.get(term);
+          if (!stat) {
+            stat = {
+              expected,
+              total: 0,
+              matched: 0,
+              variants: new Map(),
+            };
+            termStats.set(term, stat);
+          }
+          stat.total += 1;
+
+          const normalizedExpected = expected
+            ? normalizeVariantToken(expected)
+            : "";
+          const normalizedVariant = normalizeVariantToken(variantText);
+          if (normalizedExpected && normalizedVariant === normalizedExpected) {
+            stat.matched += 1;
+          }
+
+          if (!normalizedVariant || variantText === unknownLabel) continue;
+          const displayVariant =
+            normalizedExpected && normalizedVariant === normalizedExpected
+              ? expected
+              : variantText;
+          let variant = stat.variants.get(normalizedVariant);
+          if (!variant) {
+            variant = { text: displayVariant, count: 0, examples: [] };
+            stat.variants.set(normalizedVariant, variant);
+          } else if (displayVariant.length < variant.text.length) {
+            variant.text = displayVariant;
+          }
+          variant.count += 1;
+          if (variant.examples.length < 3) {
+            variant.examples.push({
+              file: file.name,
+              cachePath: file.path,
+              blockIndex: block.index,
+              srcLine,
+              dstLine: dstLine || targetText,
+            });
+          }
+        }
+      }
+
+      if (blockCounter % 40 === 0) {
+        await yieldToUiThread();
+      }
+    }
+  }
+
+  const issues: ConsistencyIssue[] = [];
+  termStats.forEach((stat, term) => {
+    if (stat.total < minOccurrences) return;
+    const variants = Array.from(stat.variants.values()).sort(
+      (a, b) => b.count - a.count,
+    );
+    if (variants.length <= 1) return;
+    issues.push({
+      term,
+      expected: stat.expected,
+      total: stat.total,
+      matched: stat.matched,
+      variants,
+    });
+  });
+  issues.sort((a, b) => b.total - a.total);
+
+  return {
+    issues,
+    stats: {
+      files: selectedFiles.length,
+      terms: terms.length,
+      issues: issues.length,
+    },
+  };
+};
+
 export default function ProofreadView({
   t,
   lang,
@@ -703,6 +951,13 @@ export default function ProofreadView({
     }
   }, [cacheData?.glossaryPath, retryGlossaryPath]);
 
+  const searchScanResult = useMemo(() => {
+    if (!searchKeyword || !cacheData?.blocks) {
+      return { matches: [], error: null as string | null };
+    }
+    return collectSearchMatches(cacheData.blocks, searchKeyword, isRegex);
+  }, [searchKeyword, cacheData?.blocks, isRegex]);
+
   // Search Effect
   useEffect(() => {
     if (!searchKeyword || !cacheData) {
@@ -711,59 +966,23 @@ export default function ProofreadView({
       setRegexError(null);
       return;
     }
-    const matches: {
-      blockIndex: number;
-      type: "src" | "dst";
-      lineIndex: number;
-    }[] = [];
 
-    try {
-      const flags = isRegex ? "gi" : "i";
-      // Escape special chars if not regex mode
-      const pattern = isRegex
-        ? searchKeyword
-        : searchKeyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const regex = new RegExp(pattern, flags);
-      setRegexError(null);
-
-      cacheData.blocks.forEach((block) => {
-        const srcLines = stripSystemMarkersForDisplay(
-          trimLeadingEmptyLines(block.src),
-        ).split(/\r?\n/);
-        srcLines.forEach((line, lineIndex) => {
-          if (regex.test(line)) {
-            matches.push({ blockIndex: block.index, type: "src", lineIndex });
-            regex.lastIndex = 0;
-          }
-        });
-
-        const dstLines = trimLeadingEmptyLines(block.dst).split(/\r?\n/);
-        dstLines.forEach((line, lineIndex) => {
-          if (regex.test(line)) {
-            matches.push({ blockIndex: block.index, type: "dst", lineIndex });
-            regex.lastIndex = 0;
-          }
-        });
-      });
-    } catch (e) {
-      if (isRegex) {
-        setRegexError(e instanceof Error ? e.message : String(e));
-      } else {
-        setRegexError(null);
-      }
+    if (searchScanResult.error) {
+      setRegexError(searchScanResult.error);
       setMatchList([]);
       setCurrentMatchIndex(-1);
       return;
     }
 
-    setMatchList(matches);
-    if (matches.length > 0) {
+    setRegexError(null);
+    setMatchList(searchScanResult.matches);
+    if (searchScanResult.matches.length > 0) {
       setCurrentMatchIndex(0);
-      scrollToMatch(matches[0]);
+      scrollToMatch(searchScanResult.matches[0]);
     } else {
       setCurrentMatchIndex(-1);
     }
-  }, [searchKeyword, cacheData, isRegex]);
+  }, [searchKeyword, cacheData, searchScanResult]);
 
   const scrollToBlock = (index: number) => {
     const el = document.getElementById(`block-${index}`);
@@ -1841,23 +2060,25 @@ export default function ProofreadView({
   }, [blockLogs, showLogModal]);
 
   // --- Filtering & Pagination ---
+  const filterSearchRegex = useMemo(
+    () => buildSearchRegex(searchKeyword, isRegex, "i"),
+    [searchKeyword, isRegex],
+  );
 
   const filteredBlocks = useMemo(() => {
     if (!cacheData?.blocks) return [];
     return cacheData.blocks.filter((block) => {
       if (searchKeyword) {
-        const kw = searchKeyword.toLowerCase();
-        if (
-          !block.src.toLowerCase().includes(kw) &&
-          !block.dst.toLowerCase().includes(kw)
-        ) {
+        const searchState = filterSearchRegex;
+        // 正则非法时仅提示错误，不做额外过滤，避免数据面板“瞬间清空”。
+        if (searchState.regex && !blockMatchesSearchRegex(block, searchState.regex)) {
           return false;
         }
       }
       if (filterWarnings && block.warnings.length === 0) return false;
       return true;
     });
-  }, [cacheData?.blocks, searchKeyword, filterWarnings]);
+  }, [cacheData?.blocks, searchKeyword, filterSearchRegex, filterWarnings]);
 
   const totalPages = Math.ceil(filteredBlocks.length / pageSize);
   const paginatedBlocks = useMemo(
@@ -2421,128 +2642,23 @@ export default function ProofreadView({
       const glossaryContent =
         (await window.api?.readFile(consistencyGlossaryPath)) || "";
       const glossaryMap = parseGlossaryContent(glossaryContent);
-      const terms = Object.keys(glossaryMap).filter(
-        (term) => term.trim().length > 1,
-      );
-      if (terms.length === 0) {
+      if (Object.keys(glossaryMap).filter((term) => term.trim().length > 1).length === 0) {
         throw new Error(pv.glossaryEmpty);
       }
-      const termIndex = buildGlossaryIndex(glossaryMap);
-
-      const termStats = new Map<
-        string,
-        {
-          expected: string;
-          total: number;
-          matched: number;
-          variants: Map<string, ConsistencyVariant>;
-        }
-      >();
-
-      let processed = 0;
-      for (const file of selectedFiles) {
-        const data = await window.api?.loadCache(file.path);
-        processed += 1;
-        setConsistencyProgress(processed / selectedFiles.length);
-        if (!data?.blocks) continue;
-        const blocks = data.blocks as CacheBlock[];
-        for (const block of blocks) {
-          const srcLines = String(block.src || "").split(/\r?\n/);
-          const dstLines = String(block.dst || "").split(/\r?\n/);
-          const dstBlockText = cleanConsistencyLine(block.dst || "");
-          const useLineAlign =
-            srcLines.length === dstLines.length &&
-            !(block.warnings || []).includes("line_mismatch");
-          for (let i = 0; i < srcLines.length; i += 1) {
-            const srcLine = cleanConsistencyLine(srcLines[i] || "");
-            if (!srcLine) continue;
-            const dstLine = cleanConsistencyLine(dstLines[i] || "");
-            const targetText = useLineAlign ? dstLine : dstBlockText || dstLine;
-
-            const matchedTerms = findTermsInLine(srcLine, termIndex);
-            if (matchedTerms.length === 0) continue;
-
-            for (const term of matchedTerms) {
-              const expected = glossaryMap[term] || "";
-              const variantText = pickConsistencyVariant({
-                srcLine,
-                term,
-                targetText,
-                expected,
-                unknownLabel: pv.consistencyUnknown,
-                useLineAlign,
-              });
-              let stat = termStats.get(term);
-              if (!stat) {
-                stat = {
-                  expected,
-                  total: 0,
-                  matched: 0,
-                  variants: new Map(),
-                };
-                termStats.set(term, stat);
-              }
-              stat.total += 1;
-              const normalizedExpected = expected
-                ? normalizeVariantToken(expected)
-                : "";
-              const normalizedVariant = normalizeVariantToken(variantText);
-              if (
-                normalizedExpected &&
-                normalizedVariant === normalizedExpected
-              ) {
-                stat.matched += 1;
-              }
-              if (!normalizedVariant || variantText === pv.consistencyUnknown)
-                continue;
-              const displayVariant =
-                normalizedExpected && normalizedVariant === normalizedExpected
-                  ? expected
-                  : variantText;
-              let variant = stat.variants.get(normalizedVariant);
-              if (!variant) {
-                variant = { text: displayVariant, count: 0, examples: [] };
-                stat.variants.set(normalizedVariant, variant);
-              } else if (displayVariant.length < variant.text.length) {
-                variant.text = displayVariant;
-              }
-              variant.count += 1;
-              if (variant.examples.length < 3) {
-                variant.examples.push({
-                  file: file.name,
-                  cachePath: file.path,
-                  blockIndex: block.index,
-                  srcLine,
-                  dstLine: dstLine || targetText,
-                });
-              }
-            }
-          }
-        }
-      }
-
-      const issues: ConsistencyIssue[] = [];
-      termStats.forEach((stat, term) => {
-        if (stat.total < consistencyMinOccurrences) return;
-        const variants = Array.from(stat.variants.values()).sort(
-          (a, b) => b.count - a.count,
-        );
-        if (variants.length <= 1) return;
-        issues.push({
-          term,
-          expected: stat.expected,
-          total: stat.total,
-          matched: stat.matched,
-          variants,
-        });
+      const result = await runConsistencyScan({
+        selectedFiles,
+        glossaryMap,
+        minOccurrences: consistencyMinOccurrences,
+        unknownLabel: pv.consistencyUnknown,
+        loadCache: async (path: string) =>
+          ((await window.api?.loadCache(path)) as
+            | { blocks?: CacheBlock[] }
+            | null
+            | undefined),
+        onProgress: (progress: number) => setConsistencyProgress(progress),
       });
-      issues.sort((a, b) => b.total - a.total);
-      setConsistencyResults(issues);
-      setConsistencyStats({
-        files: selectedFiles.length,
-        terms: terms.length,
-        issues: issues.length,
-      });
+      setConsistencyResults(result.issues);
+      setConsistencyStats(result.stats);
     } catch (e) {
       showAlert({
         title: pv.consistencyTitle,
@@ -2585,16 +2701,6 @@ export default function ProofreadView({
 
   // Container ref for scrolling
   const containerRef = useRef<HTMLDivElement>(null);
-
-  // Helper: trim leading empty lines from block text
-  function trimLeadingEmptyLines(text: string) {
-    const lines = text.split("\n");
-    let startIdx = 0;
-    while (startIdx < lines.length && lines[startIdx].trim() === "") {
-      startIdx++;
-    }
-    return lines.slice(startIdx).join("\n");
-  }
 
   // Get ALL cache files from translation history
   const getAllHistoryFiles = (): HistoryCacheFile[] => {
@@ -2856,6 +2962,12 @@ export default function ProofreadView({
     if (!text) return null;
 
     const lines = text.split(/\r?\n/);
+    const highlightRegex = (() => {
+      if (!keyword) return null;
+      const compiled = buildSearchRegex(keyword, isRegex, isRegex ? "gi" : "i");
+      if (!compiled.regex) return null;
+      return new RegExp(`(${compiled.regex.source})`, compiled.regex.flags);
+    })();
     // In line mode, show all lines including empty ones for strict alignment
     const effectiveDoubleSpace = showLineNumbers ? false : isDoubleSpace;
 
@@ -2870,34 +2982,25 @@ export default function ProofreadView({
 
           // Search highlight logic
           const renderContent = () => {
-            if (!keyword || !line)
+            if (!highlightRegex || !line)
               return line || (showLineNumbers ? "\u00A0" : <br />);
-            try {
-              const flags = isRegex ? "gi" : "i";
-              const pattern = isRegex
-                ? keyword
-                : keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-              const regex = new RegExp(`(${pattern})`, flags);
-              const parts = line.split(regex);
-              return (
-                <>
-                  {parts.map((part, i) =>
-                    i % 2 === 1 ? (
-                      <span
-                        key={i}
-                        className="bg-yellow-300 text-black rounded px-0.5"
-                      >
-                        {part}
-                      </span>
-                    ) : (
-                      part
-                    ),
-                  )}
-                </>
-              );
-            } catch {
-              return line;
-            }
+            const parts = line.split(highlightRegex);
+            return (
+              <>
+                {parts.map((part, i) =>
+                  i % 2 === 1 ? (
+                    <span
+                      key={i}
+                      className="bg-yellow-300 text-black rounded px-0.5"
+                    >
+                      {part}
+                    </span>
+                  ) : (
+                    part
+                  ),
+                )}
+              </>
+            );
           };
 
           // In line mode, show all lines for strict alignment
@@ -4281,3 +4384,11 @@ export default function ProofreadView({
     </div>
   );
 }
+
+export const __testOnly = {
+  buildSearchRegex,
+  collectSearchMatches,
+  blockMatchesSearchKeyword,
+  runConsistencyScan,
+  cleanConsistencyLine,
+};
