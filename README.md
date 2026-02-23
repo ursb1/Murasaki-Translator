@@ -9,7 +9,7 @@
 [![Release](https://img.shields.io/github/v/release/soundstarrain/Murasaki-Translator?style=flat-square&color=8a2be2&label=Download)](https://github.com/soundstarrain/Murasaki-Translator/releases)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square)](./LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20|%20macOS%20|%20Linux-0078D6?style=flat-square)](https://github.com/soundstarrain/Murasaki-Translator/releases)
-[![Model](https://img.shields.io/badge/Model-Murasaki_LLM-FFD21E?style=flat-square&logo=huggingface&logoColor=black&labelColor=FFD21E)](https://huggingface.co/Murasaki-Project)
+[![Model](https://img.shields.io/badge/%F0%9F%A4%97%20Model-Murasaki_LLM-FFD21E?style=flat-square)](https://huggingface.co/Murasaki-Project)
 
 <br>
 
