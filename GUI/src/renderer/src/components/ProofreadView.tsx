@@ -158,6 +158,10 @@ import {
   normalizeProofreadEngineMode,
   resolveProofreadRetranslateOptions,
 } from "../lib/proofreadViewConfig";
+import {
+  normalizeProofreadSaveCacheResult,
+  resolveProofreadOutputPath,
+} from "../lib/proofreadSavePath";
 
 // ...
 
@@ -1016,62 +1020,63 @@ export default function ProofreadView({
         setEditingBlockId(null);
       }
       // 1. Save JSON Cache
-      const cacheOk = await window.api?.saveCache(cachePath, dataToSave);
-      if (!cacheOk) throw new Error("Failed to save cache JSON");
+      const cacheSaveResult = await window.api?.saveCache(cachePath, dataToSave);
+      const normalizedSaveResult =
+        normalizeProofreadSaveCacheResult(cacheSaveResult);
+      if (!normalizedSaveResult.ok) {
+        throw new Error(
+          normalizedSaveResult.error || "Failed to save cache JSON",
+        );
+      }
+      const effectiveCachePath =
+        normalizedSaveResult.path && normalizedSaveResult.path.trim()
+          ? normalizedSaveResult.path.trim()
+          : cachePath;
+      if (effectiveCachePath !== cachePath) {
+        setCachePath(effectiveCachePath);
+      }
 
       // 2. Sync to Translated File (EPUB/TXT/SRT/ASS)
       const isWindows =
         typeof navigator !== "undefined" &&
         typeof navigator.platform === "string" &&
         navigator.platform.toLowerCase().includes("win");
-      const looksLikeWindowsPath = (value: string) =>
-        /^[a-zA-Z]:[\\/]/.test(value) || /^\\\\/.test(value);
-      const derivedOutputPath = cachePath.replace(/\.cache\.json$/i, "");
-      let resolvedOutputPath =
-        derivedOutputPath !== cachePath ? derivedOutputPath : "";
-      if (!resolvedOutputPath) {
-        resolvedOutputPath =
-          cacheData.outputPath && cacheData.outputPath.trim()
-            ? cacheData.outputPath.trim()
-            : "";
-      }
-      if (
-        isWindows &&
-        resolvedOutputPath &&
-        !looksLikeWindowsPath(resolvedOutputPath)
-      ) {
-        resolvedOutputPath = "";
-      }
-      if (resolvedOutputPath) {
-        const ext = resolvedOutputPath.split(".").pop()?.toLowerCase();
+      const resolvedOutputPath = resolveProofreadOutputPath({
+        cachePath: effectiveCachePath,
+        cacheOutputPath: cacheData.outputPath,
+        isWindows,
+      });
+      const rebuildTargetPath =
+        resolvedOutputPath ||
+        (typeof cacheData.outputPath === "string"
+          ? cacheData.outputPath.trim()
+          : "");
+      const ext = rebuildTargetPath.split(".").pop()?.toLowerCase() || "";
 
-        // Use Python rebuild for formats that should strictly mirror cache
-        if (["epub", "srt", "ass", "ssa", "txt"].includes(ext || "")) {
-          const rebuildResult = await window.api?.rebuildDoc({
-            cachePath,
-            outputPath: resolvedOutputPath,
-          });
-          if (!rebuildResult?.success) {
-            throw new Error(
-              pv.rebuildFail.replace(
-                "{error}",
-                rebuildResult?.error || pv.rebuildNoResult,
-              ),
-            );
-          }
-        } else {
-          // Direct write for other plain-text outputs
-          const content =
-            dataToSave.blocks
-              .sort((a, b) => a.index - b.index)
-              .map((b) => b.dst.trim())
-              .join("\n\n") + "\n";
-          const ok = await window.api?.writeFile(resolvedOutputPath, content);
-          if (!ok) {
-            throw new Error(
-              pv.writeTextFail.replace("{path}", resolvedOutputPath),
-            );
-          }
+      // Use Python rebuild for formats that should strictly mirror cache.
+      if (["epub", "srt", "ass", "ssa", "txt"].includes(ext)) {
+        const rebuildResult = await window.api?.rebuildDoc({
+          cachePath: effectiveCachePath,
+          outputPath: resolvedOutputPath || undefined,
+        });
+        if (!rebuildResult?.success) {
+          throw new Error(
+            pv.rebuildFail.replace(
+              "{error}",
+              rebuildResult?.error || pv.rebuildNoResult,
+            ),
+          );
+        }
+      } else if (resolvedOutputPath) {
+        // Direct write for other plain-text outputs.
+        const content =
+          dataToSave.blocks
+            .sort((a, b) => a.index - b.index)
+            .map((b) => b.dst.trim())
+            .join("\n\n") + "\n";
+        const ok = await window.api?.writeFile(resolvedOutputPath, content);
+        if (!ok) {
+          throw new Error(pv.writeTextFail.replace("{path}", resolvedOutputPath));
         }
       }
 

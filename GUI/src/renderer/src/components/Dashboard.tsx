@@ -81,6 +81,10 @@ import {
   applyRetryEventToV2HistoryStats,
   createEmptyV2HistoryStats,
 } from "../lib/v2HistoryStats";
+import {
+  createV2SpeedSmoothingState,
+  smoothV2SpeedMetrics,
+} from "../lib/v2SpeedMetrics";
 
 // Window.api type is defined in src/types/api.d.ts
 
@@ -581,8 +585,14 @@ export const Dashboard = forwardRef<any, DashboardProps>(
     const [isReordering, setIsReordering] = useState(false);
     const [configItem, setConfigItem] = useState<QueueItem | null>(null);
     const [logs, setLogs] = useState<string[]>([]);
+    const MAX_VISIBLE_LOG_LINES = 200;
     const MAX_HISTORY_LOG_LINES = 500;
     const MAX_HISTORY_LLAMA_LOG_LINES = 300;
+    const MAX_PREVIEW_BLOCKS = 240;
+    const MAX_PREVIEW_RENDER_BLOCKS = 120;
+    const MAX_PREVIEW_PERSIST_BLOCKS = 80;
+    const MAX_PREVIEW_PERSIST_CHARS = 180_000;
+    const MAX_HIGHLIGHT_LINE_CHARS = 400;
 
     const presetOptionLabel = (value: "novel" | "script" | "short") => {
       const labels = t.dashboard.promptPresetLabels;
@@ -721,6 +731,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       gpu: { time: number; value: number }[];
     }>({ chars: [], tokens: [], vram: [], gpu: [] });
     const chartRenderTimerRef = useRef<number | null>(null);
+    const v2SpeedSmootherRef = useRef(createV2SpeedSmoothingState());
+    const previewPersistAtRef = useRef(0);
     const MAX_CHART_POINTS = 3000;
     const CHART_RENDER_INTERVAL_MS = 150;
 
@@ -761,6 +773,10 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       if (typeof value !== "number" || !Number.isFinite(value)) return null;
       return value;
     };
+    const roundSpeed = (value: number, fractionDigits = 1): number =>
+      Number.isFinite(value) && value > 0
+        ? Number(value.toFixed(fractionDigits))
+        : 0;
     const lastJsonMonitorAtRef = useRef(0);
 
     useEffect(() => {
@@ -899,7 +915,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
             : code === null
               ? "❌ Process terminated unexpectedly (no exit code)"
               : `❌ Process exited with code ${code}`;
-      setLogs((prev) => [...prev, message]); // Keep English for logs for now or add keys later
+      setLogs((prev) => [...prev.slice(-MAX_VISIBLE_LOG_LINES), message]); // Keep English for logs for now or add keys later
 
       // Finalize history record
       if (currentRecordIdRef.current) {
@@ -1168,6 +1184,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           if (log.startsWith("JSON_PROGRESS:")) {
             try {
               const data = JSON.parse(log.substring("JSON_PROGRESS:".length));
+              const isV2Run = engineModeRef.current === "v2";
               const realtimeSpeedChars =
                 toFiniteNumber(data.realtime_speed_chars) ??
                 toFiniteNumber(data.speed_chars);
@@ -1180,9 +1197,47 @@ export const Dashboard = forwardRef<any, DashboardProps>(
               const realtimeSpeedEval =
                 toFiniteNumber(data.realtime_speed_eval) ??
                 toFiniteNumber(data.speed_eval);
-              const realtimeSpeedTokens =
-                toFiniteNumber(data.realtime_speed_tokens) ??
-                (realtimeSpeedGen ?? 0) + (realtimeSpeedEval ?? 0);
+              const avgSpeedChars = toFiniteNumber(data.avg_speed_chars);
+              const avgSpeedLines = toFiniteNumber(data.avg_speed_lines);
+              const avgSpeedGen = toFiniteNumber(data.avg_speed_gen);
+              const avgSpeedEval = toFiniteNumber(data.avg_speed_eval);
+
+              let effectiveSpeedChars = realtimeSpeedChars;
+              let effectiveSpeedLines = realtimeSpeedLines;
+              let effectiveSpeedGen = realtimeSpeedGen;
+              let effectiveSpeedEval = realtimeSpeedEval;
+
+              if (isV2Run) {
+                const smoothingResult = smoothV2SpeedMetrics(
+                  v2SpeedSmootherRef.current,
+                  {
+                    elapsedSec: toFiniteNumber(data.elapsed),
+                    realtime: {
+                      chars: realtimeSpeedChars,
+                      lines: realtimeSpeedLines,
+                      gen: realtimeSpeedGen,
+                      eval: realtimeSpeedEval,
+                    },
+                    average: {
+                      chars: avgSpeedChars,
+                      lines: avgSpeedLines,
+                      gen: avgSpeedGen,
+                      eval: avgSpeedEval,
+                    },
+                    totals: {
+                      chars: toFiniteNumber(data.total_chars),
+                      lines: toFiniteNumber(data.total_lines),
+                      gen: toFiniteNumber(data.total_output_tokens),
+                      eval: toFiniteNumber(data.total_input_tokens),
+                    },
+                  },
+                );
+                v2SpeedSmootherRef.current = smoothingResult.state;
+                effectiveSpeedChars = smoothingResult.speeds.chars;
+                effectiveSpeedLines = smoothingResult.speeds.lines;
+                effectiveSpeedGen = smoothingResult.speeds.gen;
+                effectiveSpeedEval = smoothingResult.speeds.eval;
+              }
 
               // 直接使用后端数据，不保留旧值(避免上一次运行的残留)
               setProgress((prev) => ({
@@ -1204,20 +1259,20 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                     ? Math.max(0, data.remaining)
                     : prev.remaining,
                 speedLines:
-                  typeof realtimeSpeedLines === "number"
-                    ? realtimeSpeedLines
+                  typeof effectiveSpeedLines === "number"
+                    ? roundSpeed(effectiveSpeedLines, 2)
                     : prev.speedLines,
                 speedChars:
-                  typeof realtimeSpeedChars === "number"
-                    ? realtimeSpeedChars
+                  typeof effectiveSpeedChars === "number"
+                    ? roundSpeed(effectiveSpeedChars, 1)
                     : prev.speedChars,
                 speedEval:
-                  typeof realtimeSpeedEval === "number"
-                    ? realtimeSpeedEval
+                  typeof effectiveSpeedEval === "number"
+                    ? roundSpeed(effectiveSpeedEval, 1)
                     : prev.speedEval,
                 speedGen:
-                  typeof realtimeSpeedGen === "number"
-                    ? realtimeSpeedGen
+                  typeof effectiveSpeedGen === "number"
+                    ? roundSpeed(effectiveSpeedGen, 1)
                     : prev.speedGen,
                 // If block changed, reset retries
                 retries: data.current !== prev.current ? 0 : prev.retries,
@@ -1287,19 +1342,22 @@ export const Dashboard = forwardRef<any, DashboardProps>(
               const shouldUseProgressAsChartDriver =
                 engineModeRef.current === "v2" ||
                 Date.now() - lastJsonMonitorAtRef.current > 1500;
+              const effectiveSpeedTokens =
+                (effectiveSpeedGen ?? 0) + (effectiveSpeedEval ?? 0);
               if (
                 shouldUseProgressAsChartDriver &&
-                realtimeSpeedChars !== null &&
-                realtimeSpeedChars >= 0
+                effectiveSpeedChars !== null &&
+                Number.isFinite(effectiveSpeedChars) &&
+                effectiveSpeedChars >= 0
               ) {
-                pushChartPoint("chars", realtimeSpeedChars);
+                pushChartPoint("chars", effectiveSpeedChars);
               }
               if (
                 shouldUseProgressAsChartDriver &&
-                Number.isFinite(realtimeSpeedTokens) &&
-                realtimeSpeedTokens >= 0
+                Number.isFinite(effectiveSpeedTokens) &&
+                effectiveSpeedTokens >= 0
               ) {
-                pushChartPoint("tokens", realtimeSpeedTokens);
+                pushChartPoint("tokens", effectiveSpeedTokens);
               }
               scheduleChartRefresh();
             } catch (e) {
@@ -1378,23 +1436,65 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                   "JSON_PREVIEW_BLOCK:".length,
               );
               const data = JSON.parse(jsonStr);
-              // Update specific block
+              const blockIndex = Number(data.block);
+              if (!Number.isFinite(blockIndex)) return;
+              const normalizedBlockIndex = Math.max(0, Math.trunc(blockIndex));
+              const nextBlock = {
+                src: String(data.src || ""),
+                output: String(data.output || ""),
+              };
+
+              // Update specific block and keep preview window bounded
               setPreviewBlocks((prev) => {
                 const next = {
                   ...prev,
-                  [data.block]: { src: data.src, output: data.output },
+                  [normalizedBlockIndex]: nextBlock,
                 };
-                // Persist light-weight version? Or maybe persistence is less critical for realtime stream
-                // but if user reloads?
-                // Let's persist full blocks map?
-                try {
-                  localStorage.setItem(
-                    "last_preview_blocks",
-                    JSON.stringify(next),
-                  );
-                } catch (e) {
-                  // Best-effort persistence; ignore storage quota/runtime errors.
+
+                const sortedKeys = Object.keys(next)
+                  .map((key) => Number(key))
+                  .filter((value) => Number.isFinite(value))
+                  .sort((a, b) => a - b);
+                const overflow = sortedKeys.length - MAX_PREVIEW_BLOCKS;
+                if (overflow > 0) {
+                  const dropKeys = sortedKeys.slice(0, overflow);
+                  for (const key of dropKeys) {
+                    delete next[key];
+                  }
                 }
+
+                const now = Date.now();
+                if (now - previewPersistAtRef.current >= 800) {
+                  previewPersistAtRef.current = now;
+                  try {
+                    const persistedEntries = Object.entries(next)
+                      .sort((a, b) => Number(a[0]) - Number(b[0]))
+                      .slice(-MAX_PREVIEW_PERSIST_BLOCKS);
+                    const persistedPayload: Record<
+                      number,
+                      { src: string; output: string }
+                    > = {};
+                    let totalChars = 0;
+                    for (const [key, value] of persistedEntries) {
+                      const src = String(value?.src || "");
+                      const output = String(value?.output || "");
+                      totalChars += src.length + output.length;
+                      if (totalChars > MAX_PREVIEW_PERSIST_CHARS) break;
+                      persistedPayload[Number(key)] = { src, output };
+                    }
+                    if (Object.keys(persistedPayload).length > 0) {
+                      localStorage.setItem(
+                        "last_preview_blocks",
+                        JSON.stringify(persistedPayload),
+                      );
+                    } else {
+                      localStorage.removeItem("last_preview_blocks");
+                    }
+                  } catch {
+                    // Best-effort persistence; ignore storage/runtime errors.
+                  }
+                }
+
                 return next;
               });
             } catch (e) {
@@ -1508,7 +1608,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
             return;
           } else {
             // Only add non-empty logs that aren't JSON events
-            setLogs((prev) => [...prev.slice(-200), log]);
+            setLogs((prev) => [...prev.slice(-MAX_VISIBLE_LOG_LINES), log]);
 
             // Buffer logs for history record
             logsBufferRef.current.push(log);
@@ -1534,10 +1634,26 @@ export const Dashboard = forwardRef<any, DashboardProps>(
     useEffect(() => {
       const unsubscribeV2Log = window.api?.onPipelineV2Log?.(
         (data: { runId?: string; message?: string; level?: string }) => {
+          const logRunId =
+            typeof data.runId === "string" ? data.runId.trim() : "";
+          if (
+            logRunId &&
+            activeRunIdRef.current &&
+            logRunId !== activeRunIdRef.current
+          ) {
+            return;
+          }
           const msg = (data.message || "").trim();
           if (!msg) return;
-          const prefix = data.level === "error" ? "[V2 stderr] " : "[V2] ";
-          setLogs((prev) => [...prev.slice(-200), `${prefix}${msg}`]);
+          const level = String(data.level || "").toLowerCase();
+          if (level !== "error" && level !== "warn" && level !== "critical") {
+            return;
+          }
+          const prefix = level === "error" ? "[V2 stderr] " : "[V2 warn] ";
+          setLogs((prev) => [
+            ...prev.slice(-MAX_VISIBLE_LOG_LINES),
+            `${prefix}${msg}`,
+          ]);
           logsBufferRef.current.push(`${prefix}${msg}`);
           if (logsBufferRef.current.length > MAX_HISTORY_LOG_LINES) {
             logsBufferRef.current = logsBufferRef.current.slice(
@@ -1979,6 +2095,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       }
       setChartData([]);
       chartHistoriesRef.current = { chars: [], tokens: [], vram: [], gpu: [] };
+      v2SpeedSmootherRef.current = createV2SpeedSmoothingState();
       setProgress({
         current: 0,
         total: 0,
@@ -1991,6 +2108,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         speedGen: 0,
         retries: 0,
       });
+      setLogs([]);
       setApiMonitorData((prev) => ({
         ...prev,
         rpm: 0,
@@ -2323,6 +2441,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       inputPath: string,
       forceResume?: boolean,
       glossaryOverride?: string,
+      resumeArtifactPath?: string,
+      resumeOutputPathHint?: string,
     ) => {
       const item = queueRef.current.find((q) => q.path === inputPath);
       const itemConfig = item?.config;
@@ -2355,6 +2475,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       }
       setChartData([]);
       chartHistoriesRef.current = { chars: [], tokens: [], vram: [], gpu: [] };
+      v2SpeedSmootherRef.current = createV2SpeedSmoothingState();
       setProgress({
         current: 0,
         total: 0,
@@ -2395,6 +2516,19 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         customConfig.cacheDir !== undefined
           ? customConfig.cacheDir
           : localStorage.getItem("config_cache_dir") || "";
+      const resolvedResumeOutputPath = (() => {
+        const hintedPath = String(resumeOutputPathHint || "").trim();
+        if (hintedPath) return hintedPath;
+        const artifactPath = String(resumeArtifactPath || "").trim();
+        if (!artifactPath) return "";
+        if (artifactPath.endsWith(".temp.jsonl")) {
+          return artifactPath.slice(0, -".temp.jsonl".length);
+        }
+        if (artifactPath.endsWith(".cache.json")) {
+          return artifactPath.slice(0, -".cache.json".length);
+        }
+        return artifactPath;
+      })();
       progressDataRef.current = {
         total: 0,
         current: 0,
@@ -2402,7 +2536,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         chars: 0,
         sourceLines: 0,
         sourceChars: 0,
-        outputPath: "",
+        outputPath: resolvedResumeOutputPath,
         cacheDir: String(resolvedCacheDir || ""),
         cachePath: "",
         speeds: [],
@@ -2469,6 +2603,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         config: {
           engineMode: "v2",
           v2PipelineId: effectivePipelineId,
+          outputPath: resolvedResumeOutputPath || undefined,
           outputDir: resolvedOutputDir || undefined,
           cacheDir: resolvedCacheDir || undefined,
           resume: Boolean(resolvedResume),
@@ -2495,6 +2630,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           filePath: inputPath,
           pipelineId: effectivePipelineId,
           profilesDir,
+          outputPath: resolvedResumeOutputPath || undefined,
           outputDir: outputDir || undefined,
           glossaryPath: resolvedGlossaryPath || undefined,
           resume: Boolean(resolvedResume),
@@ -2586,9 +2722,14 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         customConfig?.outputDir !== undefined
           ? customConfig.outputDir
           : localStorage.getItem("config_output_dir") || "";
+      const cacheDir =
+        customConfig?.cacheDir !== undefined
+          ? customConfig.cacheDir
+          : localStorage.getItem("config_cache_dir") || "";
       const config = {
         engineMode: "v2",
         outputDir: outputDir || undefined,
+        cacheDir: cacheDir || undefined,
       };
 
       const checkResult = await window.api?.checkOutputFileExists(
@@ -2604,12 +2745,24 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           onResume: () => {
             setConfirmModal(null);
             setCurrentQueueIndex(index);
-            startV2Translation(inputPath, true);
+            startV2Translation(
+              inputPath,
+              true,
+              undefined,
+              checkResult.path,
+              checkResult.resumeOutputPath,
+            );
           },
           onOverwrite: () => {
             setConfirmModal(null);
             setCurrentQueueIndex(index);
-            startV2Translation(inputPath, false);
+            startV2Translation(
+              inputPath,
+              false,
+              undefined,
+              checkResult.path,
+              checkResult.resumeOutputPath,
+            );
           },
           onSkip:
             index < queue.length - 1
@@ -2772,10 +2925,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       } else {
         window.api?.stopTranslation();
       }
-      // 立即更新 UI 状态(后端也会发送 process-exit 事件)
-      setIsRunning(false);
-      setCurrentQueueIndex(-1);
-      currentRunEngineModeRef.current = null;
+      // 交由 process-exit 统一收敛状态，避免“新任务启动后被旧退出事件误伤”的竞态。
     };
 
     const requestStop = () => {
@@ -2872,6 +3022,12 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       );
 
       if (!compareText) return text;
+      if (
+        text.length > MAX_HIGHLIGHT_LINE_CHARS ||
+        compareText.length > MAX_HIGHLIGHT_LINE_CHARS
+      ) {
+        return text;
+      }
 
       const cjkRegex = /[\u4e00-\u9fff\u3400-\u4dbf]/g;
 
@@ -2952,9 +3108,13 @@ export const Dashboard = forwardRef<any, DashboardProps>(
 
     // 块级对齐预览渲染 (Block-Aligned)
     const renderBlockAlignedPreview = () => {
-      const blocks = Object.entries(previewBlocks).sort(
+      const sortedBlocks = Object.entries(previewBlocks).sort(
         (a, b) => Number(a[0]) - Number(b[0]),
       );
+      const blocks =
+        sortedBlocks.length > MAX_PREVIEW_RENDER_BLOCKS
+          ? sortedBlocks.slice(-MAX_PREVIEW_RENDER_BLOCKS)
+          : sortedBlocks;
 
       // 恢复总统计信息
       let totalSrcLines = 0;

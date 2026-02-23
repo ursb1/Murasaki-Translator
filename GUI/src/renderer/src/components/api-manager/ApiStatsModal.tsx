@@ -33,6 +33,8 @@ import {
   CardTitle,
   Input,
 } from "../ui/core";
+import { AlertModal } from "../ui/AlertModal";
+import { useAlertModal } from "../../hooks/useAlertModal";
 import { translations, type Language } from "../../lib/i18n";
 import { cn } from "../../lib/utils";
 import { emitToast } from "../../lib/toast";
@@ -53,8 +55,20 @@ type ApiStatsModalProps = {
 };
 
 type RangeKey = "24h" | "7d" | "30d" | "all";
-type TrendMetric = "requests" | "latency" | "input_tokens" | "output_tokens";
-type BreakdownDimension = "status_code" | "source" | "error_type" | "model" | "hour";
+type TrendMetric =
+  | "requests"
+  | "latency"
+  | "input_tokens"
+  | "output_tokens"
+  | "error_rate"
+  | "success_rate";
+type BreakdownDimension =
+  | "status_code"
+  | "status_class"
+  | "source"
+  | "error_type"
+  | "model"
+  | "hour";
 type RecordPhase = "all" | "request_end" | "request_error" | "inflight";
 
 type StatsTexts = {
@@ -89,10 +103,13 @@ type StatsTexts = {
     latency: string;
     inputTokens: string;
     outputTokens: string;
+    errorRate: string;
+    successRate: string;
   };
   dimensions: {
     label: string;
     statusCode: string;
+    statusClass: string;
     source: string;
     errorType: string;
     model: string;
@@ -104,16 +121,39 @@ type StatsTexts = {
     failedRequests: string;
     inflightRequests: string;
     successRate: string;
+    failureRate: string;
     avgLatency: string;
     p95Latency: string;
+    fastestLatency: string;
+    slowestLatency: string;
     inputTokens: string;
     outputTokens: string;
+    totalTokens: string;
+    outputInputRatio: string;
     retries: string;
+    avgRetries: string;
     rpmAvg: string;
     rpmPeak: string;
+    status2xx: string;
+    status4xx: string;
+    status5xx: string;
+    firstRequest: string;
     latestRequest: string;
+    observationWindow: string;
   };
-  hourTitle: string;
+  charts: {
+    hourTitle: string;
+    statusClassTitle: string;
+  };
+  details: {
+    title: string;
+    requestPayload: string;
+    responsePayload: string;
+    meta: string;
+    requestHeaders: string;
+    responseHeaders: string;
+    empty: string;
+  };
   filters: {
     queryPlaceholder: string;
     statusAll: string;
@@ -133,6 +173,7 @@ type StatsTexts = {
     tokens: string;
     endpoint: string;
     error: string;
+    detail: string;
   };
   pager: {
     prev: string;
@@ -166,6 +207,40 @@ const formatDateTime = (value: string | undefined, locale: string) => {
 const formatNumber = (value: number | undefined) => {
   if (value === undefined || value === null || Number.isNaN(value)) return "-";
   return Intl.NumberFormat("en-US").format(value);
+};
+
+const formatPercent = (value: number | undefined, digits = 2) => {
+  if (value === undefined || value === null || Number.isNaN(value)) return "-";
+  return `${value.toFixed(digits)}%`;
+};
+
+const formatMs = (value: number | undefined) => {
+  if (value === undefined || value === null || Number.isNaN(value)) return "-";
+  return `${formatNumber(Math.round(value))} ms`;
+};
+
+const formatWindow = (minutes: number | undefined) => {
+  if (minutes === undefined || minutes === null || Number.isNaN(minutes)) return "-";
+  if (minutes < 1) return "<1m";
+  if (minutes < 60) return `${Math.round(minutes)}m`;
+  const hours = minutes / 60;
+  if (hours < 24) return `${hours.toFixed(1)}h`;
+  return `${(hours / 24).toFixed(1)}d`;
+};
+
+const formatRatio = (value: number | undefined, digits = 2, suffix = "x") => {
+  if (value === undefined || value === null || Number.isNaN(value)) return "-";
+  return `${value.toFixed(digits)}${suffix}`;
+};
+
+const stringifyJson = (value: unknown, emptyText: string) => {
+  if (value === undefined || value === null) return emptyText;
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 };
 
 const resolveRange = (rangeKey: RangeKey) => {
@@ -225,6 +300,7 @@ export function ApiStatsModal({
   apiName,
 }: ApiStatsModalProps) {
   const locale = toLocale(lang);
+  const { alertProps, showConfirm } = useAlertModal();
   const branch = translations[lang]?.apiManager?.apiStats as Partial<StatsTexts> | undefined;
   const texts: StatsTexts = {
     ...FALLBACK_TEXTS,
@@ -245,6 +321,14 @@ export function ApiStatsModal({
       ...FALLBACK_TEXTS.cards,
       ...(branch?.cards || {}),
     },
+    charts: {
+      ...FALLBACK_TEXTS.charts,
+      ...(branch?.charts || {}),
+    },
+    details: {
+      ...FALLBACK_TEXTS.details,
+      ...(branch?.details || {}),
+    },
     filters: {
       ...FALLBACK_TEXTS.filters,
       ...(branch?.filters || {}),
@@ -258,6 +342,17 @@ export function ApiStatsModal({
       ...(branch?.pager || {}),
     },
   } as StatsTexts;
+  const langTexts = translations[lang] ?? translations.zh;
+  const expandLabel = langTexts.common?.expand || "Expand";
+  const collapseLabel = langTexts.common?.collapse || "Collapse";
+  const copyRecordLabel =
+    (langTexts as any)?.serviceView?.copy || langTexts.errorBoundary?.copy || "Copy";
+  const copySuccessText =
+    (langTexts as any)?.serviceView?.copied ||
+    langTexts.errorBoundary?.copyToast ||
+    "Copied";
+  const copyFailText =
+    (langTexts as any)?.serviceView?.copyFailTitle || texts.clearFail;
 
   const [rangeKey, setRangeKey] = useState<RangeKey>("7d");
   const [metric, setMetric] = useState<TrendMetric>("requests");
@@ -277,6 +372,7 @@ export function ApiStatsModal({
   const [loadingRecords, setLoadingRecords] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
   const [errorMessage, setErrorMessage] = useState("");
+  const [expandedRequestId, setExpandedRequestId] = useState<string | null>(null);
 
   const rangePayload = useMemo(() => resolveRange(rangeKey), [rangeKey]);
   const interval = useMemo(() => resolveTrendInterval(rangeKey), [rangeKey]);
@@ -402,6 +498,11 @@ export function ApiStatsModal({
     setPage(1);
   }, [open, rangeKey, query, sourceFilter, statusFilter, phase]);
 
+  useEffect(() => {
+    if (!open) return;
+    setExpandedRequestId(null);
+  }, [open, page, query, sourceFilter, statusFilter, phase, refreshToken, apiProfileId]);
+
   const statusOptions = useMemo(() => {
     const source = overview?.statusCodeCounts || {};
     return Object.keys(source)
@@ -428,6 +529,18 @@ export function ApiStatsModal({
     })) || [];
 
   const breakdownData = (breakdown?.items || []).slice(0, 10);
+  const statusClassData = [
+    { key: "2xx", count: overview?.status2xx || 0, color: "#22c55e" },
+    { key: "4xx", count: overview?.status4xx || 0, color: "#f97316" },
+    { key: "5xx", count: overview?.status5xx || 0, color: "#ef4444" },
+  ];
+  const formatTrendValue = (value: number) => {
+    if (metric === "latency") return `${formatNumber(Math.round(value))} ms`;
+    if (metric === "error_rate" || metric === "success_rate") {
+      return `${value.toFixed(2)}%`;
+    }
+    return formatNumber(value);
+  };
 
   const handleRefresh = () => {
     setRefreshToken((prev) => prev + 1);
@@ -435,73 +548,111 @@ export function ApiStatsModal({
 
   const handleClear = async () => {
     if (!apiProfileId) return;
-    const confirmed = window.confirm(texts.clearConfirm);
-    if (!confirmed) return;
+    showConfirm({
+      title: texts.clear,
+      description: texts.clearConfirm,
+      variant: "destructive",
+      onConfirm: async () => {
+        try {
+          const result = await window.api.apiStatsClear({ apiProfileId });
+          if (!result?.ok || !result.data) {
+            throw new Error(result?.error || texts.clearFail);
+          }
+          emitToast({
+            title: texts.clear,
+            description: texts.clearSuccess.replace(
+              "{count}",
+              String(result.data.deleted || 0),
+            ),
+            variant: "success",
+          });
+          setPage(1);
+          setRefreshToken((prev) => prev + 1);
+        } catch (error) {
+          emitToast({
+            title: texts.clear,
+            description: String((error as Error)?.message || texts.clearFail),
+            variant: "error",
+          });
+        }
+      },
+    });
+  };
+
+  const handleCopyRecord = async (record: ApiStatsRecord) => {
+    const payload = stringifyJson(record, "{}");
+    let copied = false;
+    let lastError = "";
     try {
-      const result = await window.api.apiStatsClear({ apiProfileId });
-      if (!result?.ok || !result.data) {
-        throw new Error(result?.error || texts.clearFail);
+      if (typeof window.api?.clipboardWrite === "function") {
+        const result = await window.api.clipboardWrite(payload);
+        if (result?.ok) {
+          copied = true;
+        } else {
+          lastError = String(result?.error || "");
+        }
       }
+    } catch (error) {
+      lastError = String((error as Error)?.message || "");
+    }
+
+    if (!copied && navigator?.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(payload);
+        copied = true;
+      } catch (error) {
+        if (!lastError) {
+          lastError = String((error as Error)?.message || "");
+        }
+      }
+    }
+
+    if (copied) {
       emitToast({
-        title: texts.clear,
-        description: texts.clearSuccess.replace(
-          "{count}",
-          String(result.data.deleted || 0),
-        ),
+        title: copyRecordLabel,
+        description: copySuccessText,
         variant: "success",
       });
-      setPage(1);
-      setRefreshToken((prev) => prev + 1);
-    } catch (error) {
-      emitToast({
-        title: texts.clear,
-        description: String((error as Error)?.message || texts.clearFail),
-        variant: "error",
-      });
+      return;
     }
+
+    window.prompt(copyRecordLabel, payload);
+    emitToast({
+      title: copyRecordLabel,
+      description: lastError ? `${copyFailText}: ${lastError}` : copyFailText,
+      variant: "error",
+    });
   };
 
   const cardItems = [
     { key: "total", label: texts.cards.totalRequests, value: formatNumber(overview?.totalRequests) },
+    { key: "inflight", label: texts.cards.inflightRequests, value: formatNumber(overview?.inflightRequests) },
     { key: "success", label: texts.cards.successRequests, value: formatNumber(overview?.successRequests) },
     { key: "failed", label: texts.cards.failedRequests, value: formatNumber(overview?.failedRequests) },
-    { key: "inflight", label: texts.cards.inflightRequests, value: formatNumber(overview?.inflightRequests) },
+    { key: "successRate", label: texts.cards.successRate, value: formatPercent(overview?.successRate) },
+    { key: "failureRate", label: texts.cards.failureRate, value: formatPercent(overview?.failureRate) },
+    { key: "avgLatency", label: texts.cards.avgLatency, value: formatMs(overview?.avgLatencyMs) },
+    { key: "p95Latency", label: texts.cards.p95Latency, value: formatMs(overview?.p95LatencyMs) },
+    { key: "fastestLatency", label: texts.cards.fastestLatency, value: formatMs(overview?.fastestLatencyMs) },
+    { key: "slowestLatency", label: texts.cards.slowestLatency, value: formatMs(overview?.slowestLatencyMs) },
+    { key: "rpmAvg", label: texts.cards.rpmAvg, value: formatNumber(overview?.requestsPerMinuteAvg) },
+    { key: "rpmPeak", label: texts.cards.rpmPeak, value: formatNumber(overview?.peakRequestsPerMinute) },
+    { key: "retries", label: texts.cards.retries, value: formatNumber(overview?.totalRetries) },
+    { key: "avgRetries", label: texts.cards.avgRetries, value: formatNumber(overview?.avgRetriesPerRequest) },
+    { key: "tokensIn", label: texts.cards.inputTokens, value: formatNumber(overview?.totalInputTokens) },
+    { key: "tokensOut", label: texts.cards.outputTokens, value: formatNumber(overview?.totalOutputTokens) },
+    { key: "tokensTotal", label: texts.cards.totalTokens, value: formatNumber(overview?.totalTokens) },
     {
-      key: "rate",
-      label: texts.cards.successRate,
-      value: overview ? `${overview.successRate.toFixed(2)}%` : "-",
+      key: "outputInputRatio",
+      label: texts.cards.outputInputRatio,
+      value: formatRatio(overview?.outputInputRatio, 2, "x"),
     },
-    {
-      key: "latency",
-      label: texts.cards.avgLatency,
-      value: overview ? `${formatNumber(overview.avgLatencyMs)} ms` : "-",
-    },
-    {
-      key: "p95",
-      label: texts.cards.p95Latency,
-      value: overview ? `${formatNumber(overview.p95LatencyMs)} ms` : "-",
-    },
-    {
-      key: "tokensIn",
-      label: texts.cards.inputTokens,
-      value: formatNumber(overview?.totalInputTokens),
-    },
-    {
-      key: "tokensOut",
-      label: texts.cards.outputTokens,
-      value: formatNumber(overview?.totalOutputTokens),
-    },
-    { key: "retry", label: texts.cards.retries, value: formatNumber(overview?.totalRetries) },
-    {
-      key: "rpmAvg",
-      label: texts.cards.rpmAvg,
-      value: overview ? formatNumber(Math.round(overview.requestsPerMinuteAvg * 100) / 100) : "-",
-    },
-    {
-      key: "rpmPeak",
-      label: texts.cards.rpmPeak,
-      value: formatNumber(overview?.peakRequestsPerMinute),
-    },
+    { key: "status2xx", label: texts.cards.status2xx, value: formatNumber(overview?.status2xx) },
+    { key: "status4xx", label: texts.cards.status4xx, value: formatNumber(overview?.status4xx) },
+    { key: "status5xx", label: texts.cards.status5xx, value: formatNumber(overview?.status5xx) },
+    { key: "firstRequest", label: texts.cards.firstRequest, value: formatDateTime(overview?.firstRequestAt, locale) },
+    { key: "latestRequest", label: texts.cards.latestRequest, value: formatDateTime(overview?.latestRequestAt, locale) },
+    { key: "observationWindow", label: texts.cards.observationWindow, value: formatWindow(overview?.observationWindowMinutes) },
   ];
 
   const noData = (overview?.totalRequests || 0) <= 0;
@@ -576,6 +727,8 @@ export function ApiStatsModal({
                     <option value="latency">{texts.metrics.latency}</option>
                     <option value="input_tokens">{texts.metrics.inputTokens}</option>
                     <option value="output_tokens">{texts.metrics.outputTokens}</option>
+                    <option value="error_rate">{texts.metrics.errorRate}</option>
+                    <option value="success_rate">{texts.metrics.successRate}</option>
                   </select>
                 </div>
                 <div>
@@ -586,6 +739,7 @@ export function ApiStatsModal({
                     onChange={(e) => setDimension(e.target.value as BreakdownDimension)}
                   >
                     <option value="status_code">{texts.dimensions.statusCode}</option>
+                    <option value="status_class">{texts.dimensions.statusClass}</option>
                     <option value="source">{texts.dimensions.source}</option>
                     <option value="error_type">{texts.dimensions.errorType}</option>
                     <option value="model">{texts.dimensions.model}</option>
@@ -647,10 +801,6 @@ export function ApiStatsModal({
                     <div className="text-base font-semibold mt-1">{item.value}</div>
                   </div>
                 ))}
-                <div className="rounded-xl border border-border/60 bg-gradient-to-br from-background via-muted/10 to-muted/20 px-3 py-2.5 col-span-2 xl:col-span-2">
-                  <div className="text-[11px] text-muted-foreground">{texts.cards.latestRequest}</div>
-                  <div className="text-sm font-medium mt-1">{formatDateTime(overview?.latestRequestAt, locale)}</div>
-                </div>
               </div>
 
               <div className="grid grid-cols-1 xl:grid-cols-[1.4fr_1fr] gap-3">
@@ -666,8 +816,17 @@ export function ApiStatsModal({
                           <LineChart data={trendData}>
                             <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.25)" />
                             <XAxis dataKey="label" minTickGap={24} tick={{ fontSize: 11 }} />
-                            <YAxis tick={{ fontSize: 11 }} />
-                            <Tooltip />
+                            <YAxis
+                              tick={{ fontSize: 11 }}
+                              domain={
+                                metric === "error_rate" || metric === "success_rate"
+                                  ? [0, 100]
+                                  : ["auto", "auto"]
+                              }
+                            />
+                            <Tooltip
+                              formatter={(value: number) => formatTrendValue(Number(value))}
+                            />
                             <Line
                               type="monotone"
                               dataKey="value"
@@ -675,6 +834,16 @@ export function ApiStatsModal({
                               strokeWidth={2}
                               dot={false}
                             />
+                            {metric === "requests" ? (
+                              <Line
+                                type="monotone"
+                                dataKey="errors"
+                                stroke="#ef4444"
+                                strokeWidth={1.5}
+                                dot={false}
+                                name={texts.cards.failedRequests}
+                              />
+                            ) : null}
                           </LineChart>
                         </ResponsiveContainer>
                       ) : (
@@ -688,7 +857,7 @@ export function ApiStatsModal({
                   <div className="rounded-xl border border-border/60 bg-background/70 p-3">
                     <div className="flex items-center gap-2 text-sm font-medium mb-2">
                       <Clock3 className="h-4 w-4" />
-                      {texts.hourTitle}
+                      {texts.charts.hourTitle}
                     </div>
                     <div className="h-[220px] md:h-[240px]">
                       {overview?.byHour?.length ? (
@@ -697,7 +866,7 @@ export function ApiStatsModal({
                             <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.25)" />
                             <XAxis dataKey="hour" tick={{ fontSize: 11 }} />
                             <YAxis tick={{ fontSize: 11 }} />
-                            <Tooltip />
+                            <Tooltip formatter={(value: number) => formatNumber(Number(value))} />
                             <Bar dataKey="count" fill="#3b82f6" radius={[4, 4, 0, 0]} />
                           </BarChart>
                         </ResponsiveContainer>
@@ -747,6 +916,33 @@ export function ApiStatsModal({
                     </div>
                   </div>
 
+                  <div className="rounded-xl border border-border/60 bg-background/70 p-3">
+                    <div className="flex items-center gap-2 text-sm font-medium mb-2">
+                      <BarChart3 className="h-4 w-4" />
+                      {texts.charts.statusClassTitle}
+                    </div>
+                    <div className="h-[220px] md:h-[240px]">
+                      {statusClassData.some((item) => item.count > 0) ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={statusClassData}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.25)" />
+                            <XAxis dataKey="key" tick={{ fontSize: 11 }} />
+                            <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                            <Tooltip formatter={(value: number) => formatNumber(Number(value))} />
+                            <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                              {statusClassData.map((item) => (
+                                <Cell key={item.key} fill={item.color} />
+                              ))}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
+                          {loadingTop ? texts.loading : texts.noData}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -763,7 +959,7 @@ export function ApiStatsModal({
                 </div>
 
                 <div className="overflow-auto rounded-md border border-border/50 min-h-[280px] max-h-[52vh]">
-                  <table className="min-w-[980px] w-full text-xs">
+                  <table className="min-w-[1160px] w-full text-xs">
                     <thead className="sticky top-0 bg-background/95">
                       <tr className="border-b border-border/60">
                         <th className="px-2 py-2 text-left font-medium">{texts.table.time}</th>
@@ -775,28 +971,123 @@ export function ApiStatsModal({
                         <th className="px-2 py-2 text-left font-medium">{texts.table.tokens}</th>
                         <th className="px-2 py-2 text-left font-medium">{texts.table.endpoint}</th>
                         <th className="px-2 py-2 text-left font-medium">{texts.table.error}</th>
+                        <th className="px-2 py-2 text-left font-medium">{texts.table.detail}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {records?.items?.length ? (
-                        records.items.map((record: ApiStatsRecord) => (
-                          <tr key={record.requestId} className="border-b border-border/40 odd:bg-muted/10">
-                            <td className="px-2 py-1.5 whitespace-nowrap">{formatDateTime(record.startedAt, locale)}</td>
-                            <td className="px-2 py-1.5 font-mono">{record.requestId.slice(0, 12)}</td>
-                            <td className="px-2 py-1.5">{record.source}</td>
-                            <td className="px-2 py-1.5">{record.model || "-"}</td>
-                            <td className="px-2 py-1.5">
-                              {record.statusCode !== undefined ? record.statusCode : resolvePhaseLabel(record.phaseFinal, texts.filters)}
-                            </td>
-                            <td className="px-2 py-1.5">{record.durationMs ?? "-"}</td>
-                            <td className="px-2 py-1.5">{record.inputTokens}/{record.outputTokens}</td>
-                            <td className="px-2 py-1.5">{record.endpointLabel || record.endpointId || "-"}</td>
-                            <td className="px-2 py-1.5 text-destructive/90">{record.errorType || "-"}</td>
-                          </tr>
-                        ))
+                        records.items.map((record: ApiStatsRecord) => {
+                          const isExpanded = expandedRequestId === record.requestId;
+                          const detailSections = [
+                            {
+                              key: "request",
+                              label: texts.details.requestPayload,
+                              value: stringifyJson(record.requestPayload, texts.details.empty),
+                            },
+                            {
+                              key: "response",
+                              label: texts.details.responsePayload,
+                              value: stringifyJson(record.responsePayload, texts.details.empty),
+                            },
+                            {
+                              key: "meta",
+                              label: texts.details.meta,
+                              value: stringifyJson(record.meta, texts.details.empty),
+                            },
+                            {
+                              key: "request_headers",
+                              label: texts.details.requestHeaders,
+                              value: stringifyJson(record.requestHeaders, texts.details.empty),
+                            },
+                            {
+                              key: "response_headers",
+                              label: texts.details.responseHeaders,
+                              value: stringifyJson(record.responseHeaders, texts.details.empty),
+                            },
+                          ];
+                          return [
+                            <tr key={record.requestId} className="border-b border-border/40 odd:bg-muted/10">
+                              <td className="px-2 py-1.5 whitespace-nowrap">
+                                {formatDateTime(record.startedAt, locale)}
+                              </td>
+                              <td className="px-2 py-1.5 font-mono">{record.requestId.slice(0, 12)}</td>
+                              <td className="px-2 py-1.5">{record.source}</td>
+                              <td className="px-2 py-1.5">{record.model || "-"}</td>
+                              <td className="px-2 py-1.5">
+                                {record.statusCode !== undefined
+                                  ? record.statusCode
+                                  : resolvePhaseLabel(record.phaseFinal, texts.filters)}
+                              </td>
+                              <td className="px-2 py-1.5">{record.durationMs ?? "-"}</td>
+                              <td className="px-2 py-1.5">
+                                {record.inputTokens}/{record.outputTokens}
+                              </td>
+                              <td className="px-2 py-1.5">{record.endpointLabel || record.endpointId || "-"}</td>
+                              <td className="px-2 py-1.5 text-destructive/90">{record.errorType || "-"}</td>
+                              <td className="px-2 py-1.5">
+                                <div className="flex items-center gap-1">
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 px-2 text-[11px]"
+                                    onClick={() =>
+                                      setExpandedRequestId((prev) =>
+                                        prev === record.requestId ? null : record.requestId,
+                                      )
+                                    }
+                                  >
+                                    {isExpanded ? collapseLabel : expandLabel}
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-7 px-2 text-[11px]"
+                                    onClick={() => void handleCopyRecord(record)}
+                                  >
+                                    {copyRecordLabel}
+                                  </Button>
+                                </div>
+                              </td>
+                            </tr>,
+                            isExpanded ? (
+                              <tr
+                                key={`${record.requestId}_detail`}
+                                className="border-b border-border/40 bg-muted/5"
+                              >
+                                <td colSpan={10} className="px-2 py-2">
+                                  <div className="rounded-md border border-border/50 bg-muted/20 p-2.5">
+                                    <div className="mb-2 flex items-center justify-between gap-2">
+                                      <div className="text-[11px] font-medium text-muted-foreground">
+                                        {texts.details.title}
+                                      </div>
+                                      <div className="text-[11px] font-mono text-muted-foreground">
+                                        {record.requestId}
+                                      </div>
+                                    </div>
+                                    <div className="grid gap-2 xl:grid-cols-2">
+                                      {detailSections.map((section) => (
+                                        <div
+                                          key={section.key}
+                                          className="rounded-md border border-border/50 bg-background/70 p-2"
+                                        >
+                                          <div className="text-[10px] text-muted-foreground uppercase">
+                                            {section.label}
+                                          </div>
+                                          <pre className="mt-1 text-[11px] whitespace-pre-wrap break-all max-h-44 overflow-auto leading-relaxed">
+                                            {section.value}
+                                          </pre>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            ) : null,
+                          ];
+                        })
                       ) : (
                         <tr>
-                          <td colSpan={9} className="px-3 py-5 text-center text-muted-foreground">
+                          <td colSpan={10} className="px-3 py-5 text-center text-muted-foreground">
                             {loadingRecords ? texts.loading : texts.noData}
                           </td>
                         </tr>
@@ -850,5 +1141,10 @@ export function ApiStatsModal({
     </div>
   );
 
-  return createPortal(modalBody, document.body);
+  return (
+    <>
+      {createPortal(modalBody, document.body)}
+      <AlertModal {...alertProps} />
+    </>
+  );
 }

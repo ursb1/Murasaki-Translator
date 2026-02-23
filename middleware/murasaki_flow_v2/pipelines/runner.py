@@ -64,12 +64,53 @@ class PipelineRunner:
         self.run_id = str(run_id or "").strip()
 
     @staticmethod
+    def _normalize_chunk_type(value: Any) -> str:
+        raw = str(value or "").strip().lower()
+        if raw in {"legacy", "chunk"}:
+            return "block"
+        if raw in {"line", "block"}:
+            return raw
+        return raw
+
+    @staticmethod
+    def _parse_bool_flag(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        text = str(value or "").strip().lower()
+        if not text:
+            return False
+        return text in {"1", "true", "yes", "on"}
+
+    @staticmethod
     def _emit_api_stats_safe(payload: Dict[str, Any]) -> None:
         try:
             emit_api_stats_event(payload)
         except Exception:
             # Stats telemetry should never break the translation flow.
             pass
+
+    @staticmethod
+    def _build_effective_request_payload(request: Any) -> Dict[str, Any]:
+        """Build the final merged request payload close to provider send-time shape."""
+        payload: Dict[str, Any] = {}
+        model = getattr(request, "model", None)
+        messages = getattr(request, "messages", None)
+        if model is not None:
+            payload["model"] = model
+        if messages is not None:
+            payload["messages"] = messages
+        extra = getattr(request, "extra", None)
+        if isinstance(extra, dict):
+            payload.update(extra)
+        temperature = getattr(request, "temperature", None)
+        if temperature is not None:
+            payload["temperature"] = temperature
+        max_tokens = getattr(request, "max_tokens", None)
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        return payload
 
     def _resolve_rules(self, spec: Any) -> List[Dict[str, Any]]:
         if not spec:
@@ -147,6 +188,29 @@ class PipelineRunner:
             except json.JSONDecodeError:
                 return raw
         return ""
+
+    @staticmethod
+    def _extract_relevant_glossary(
+        glossary: Dict[str, str],
+        source_text: str,
+        *,
+        limit: int = 20,
+    ) -> Dict[str, str]:
+        if not glossary or not source_text:
+            return {}
+        matched: Dict[str, str] = {}
+        text = str(source_text or "")
+        for src_term, dst_term in glossary.items():
+            src = str(src_term or "").strip()
+            dst = str(dst_term or "").strip()
+            # 与 V1 保持一致：过滤单字词条，避免误命中。
+            if len(src) <= 1 or not dst:
+                continue
+            if src in text:
+                matched[src] = dst
+                if len(matched) >= max(1, limit):
+                    break
+        return matched
 
     def _extract_source_lines(self, items: List[Dict[str, Any]]) -> List[str]:
         lines: List[str] = []
@@ -758,11 +822,14 @@ class PipelineRunner:
             else None
         )
         chunk_policy = self.chunk_policies.get_chunk_policy(chunk_policy_ref)
-        chunk_type = str(
+        chunk_type = self._normalize_chunk_type(
             chunk_policy.profile.get("chunk_type")
             or chunk_policy.profile.get("type")
             or ""
         )
+        if chunk_type not in {"line", "block"}:
+            # Keep behavior predictable for unknown/legacy values.
+            chunk_type = "block"
         output_path = self._resolve_output_path(
             input_path,
             output_path,
@@ -813,6 +880,7 @@ class PipelineRunner:
         if glossary_spec is None:
             glossary_spec = pipeline.get("glossary")
         glossary_text = self._load_glossary(glossary_spec)
+        glossary_dict_for_prompt = v2_processing.load_glossary(glossary_spec)
         resolved_cache_dir = (
             cache_dir if cache_dir and os.path.isdir(cache_dir) else None
         )
@@ -919,7 +987,7 @@ class PipelineRunner:
             post_rules = self._resolve_rules(rules_post_spec)
             post_rules = self._sanitize_post_rules_for_input(post_rules, input_path)
             protect_patterns_base = self._resolve_protect_patterns_base(input_path)
-            glossary_dict = v2_processing.load_glossary(glossary_spec)
+            glossary_dict = glossary_dict_for_prompt
             if (
                 pre_rules
                 or post_rules
@@ -966,15 +1034,50 @@ class PipelineRunner:
             "chunk_type": chunk_type,
             "config_hash": fingerprint.get("config_hash"),
         }
+        expected_fingerprint_relaxed = {
+            "input": input_path,
+            "pipeline": pipeline_id,
+            "chunk_type": chunk_type,
+        }
         temp_resume_exists = os.path.exists(temp_progress_path)
+        resume_from_temp = False
         if resume:
-            resume_entries, resume_matched = self._load_resume_file(
-                temp_progress_path, expected=expected_fingerprint
-            )
-            if not resume_entries and not temp_resume_exists:
+            if temp_resume_exists:
+                resume_entries, resume_matched = self._load_resume_file(
+                    temp_progress_path, expected=expected_fingerprint
+                )
+                if resume_entries:
+                    resume_from_temp = True
+                else:
+                    relaxed_entries, _ = self._load_resume_file(
+                        temp_progress_path, expected=expected_fingerprint_relaxed
+                    )
+                    if relaxed_entries:
+                        resume_entries = relaxed_entries
+                        resume_matched = False
+                        resume_from_temp = True
+                        emit_warning(
+                            0,
+                            "resume_fingerprint_mismatch_soft_resume",
+                            "quality",
+                        )
+                    else:
+                        emit_warning(
+                            0,
+                            "resume_fingerprint_mismatch_skip_temp",
+                            "quality",
+                        )
+
+            if not resume_entries:
                 resume_entries = self._load_resume_cache(output_path, cache_dir)
                 resume_matched = False
-            if not resume_entries and not temp_resume_exists:
+                if resume_entries:
+                    emit_warning(
+                        0,
+                        "resume_from_cache_fallback",
+                        "quality",
+                    )
+            if not resume_entries:
                 resume_entries = self._load_resume_output(
                     output_path,
                     blocks,
@@ -985,12 +1088,12 @@ class PipelineRunner:
                     ),
                 )
                 resume_matched = False
-            if temp_resume_exists and not resume_matched:
-                emit_warning(
-                    0,
-                    "resume_fingerprint_mismatch_skip_cache",
-                    "quality",
-                )
+                if resume_entries:
+                    emit_warning(
+                        0,
+                        "resume_from_output_fallback",
+                        "quality",
+                    )
 
         prompt_source_lines = source_lines
         if (
@@ -1006,7 +1109,11 @@ class PipelineRunner:
         temp_progress_file = None
         temp_lock = threading.Lock()
         try:
-            temp_mode = "a" if resume and resume_entries and resume_matched else "w"
+            temp_mode = (
+                "a"
+                if resume and resume_entries and resume_from_temp and resume_matched
+                else "w"
+            )
             temp_progress_file = open(
                 temp_progress_path, temp_mode, encoding="utf-8", buffering=1
             )
@@ -1014,6 +1121,21 @@ class PipelineRunner:
                 temp_progress_file.write(
                     json.dumps(fingerprint, ensure_ascii=False) + "\n"
                 )
+                if resume and resume_entries:
+                    for resume_idx in sorted(resume_entries.keys()):
+                        entry = resume_entries.get(resume_idx) or {}
+                        temp_progress_file.write(
+                            json.dumps(
+                                {
+                                    "type": "block",
+                                    "index": int(resume_idx),
+                                    "src": str(entry.get("src") or ""),
+                                    "dst": str(entry.get("dst") or ""),
+                                },
+                                ensure_ascii=False,
+                            )
+                            + "\n"
+                        )
                 temp_progress_file.flush()
         except Exception:
             temp_progress_file = None
@@ -1146,8 +1268,17 @@ class PipelineRunner:
             blk_start, blk_end = self._block_line_range(block)
             if blk_start == 0 and blk_end == 0:
                 blk_start, blk_end = fallback_index, fallback_index + 1
+            block_line_ids = sorted(
+                {
+                    meta
+                    for meta in (block.metadata or [])
+                    if isinstance(meta, int)
+                }
+            )
             context_before = ""
             context_after = ""
+            context_anchor: Optional[int] = None
+            context_block_end: Optional[int] = None
             target_line_ids: List[int] = []
             active_source_lines = prompt_source_lines if prompt_source_lines else source_lines
             if active_source_lines:
@@ -1158,6 +1289,7 @@ class PipelineRunner:
                 )
                 safe_block_end = blk_end if blk_end > context_anchor else context_anchor + 1
                 safe_block_end = min(len(active_source_lines), safe_block_end)
+                context_block_end = safe_block_end
                 context = self._build_context(
                     active_source_lines,
                     context_anchor,
@@ -1214,12 +1346,29 @@ class PipelineRunner:
                 )
                 source_text = self._build_jsonl_range(protected_lines, start, end)
 
+            effective_glossary_text = glossary_text
+            glossary_total_count = len(glossary_dict_for_prompt)
+            matched_glossary_terms: List[str] = []
+            if glossary_dict_for_prompt:
+                source_for_glossary = str(getattr(block, "prompt_text", "") or source_text or "")
+                matched_glossary = self._extract_relevant_glossary(
+                    glossary_dict_for_prompt,
+                    source_for_glossary,
+                    limit=20,
+                )
+                matched_glossary_terms = list(matched_glossary.keys())
+                effective_glossary_text = (
+                    self._format_glossary_text(matched_glossary)
+                    if matched_glossary
+                    else ""
+                )
+
             messages = build_messages(
                 prompt_profile,
                 source_text=source_text,
                 context_before=context_before,
                 context_after=context_after,
-                glossary_text=glossary_text,
+                glossary_text=effective_glossary_text,
                 line_index=line_index,
             )
 
@@ -1287,15 +1436,62 @@ class PipelineRunner:
                 current_endpoint_label: Optional[str] = None
                 current_model: Optional[str] = None
                 current_request_payload: Dict[str, Any] = {}
+                current_request_payload_effective: Dict[str, Any] = {}
                 current_request_headers: Dict[str, str] | None = None
                 current_request_url: Optional[str] = None
                 attempt_no = attempt + 1
+                chunk_options_raw = (
+                    chunk_policy.profile.get("options")
+                    if isinstance(getattr(chunk_policy, "profile", None), dict)
+                    else {}
+                )
+                chunk_options = (
+                    dict(chunk_options_raw)
+                    if isinstance(chunk_options_raw, dict)
+                    else {}
+                )
+                chunk_target_chars: Optional[int] = None
+                chunk_max_chars: Optional[int] = None
+                try:
+                    if chunk_options.get("target_chars") is not None:
+                        chunk_target_chars = int(chunk_options.get("target_chars"))
+                    if chunk_options.get("max_chars") is not None:
+                        chunk_max_chars = int(chunk_options.get("max_chars"))
+                except (TypeError, ValueError):
+                    pass
+                effective_target_line_ids = (
+                    target_line_ids if target_line_ids else block_line_ids
+                )
+                line_policy_enabled = bool(line_policy and apply_line_policy)
+                line_policy_eligible = bool(
+                    line_policy_enabled
+                    and line_index is not None
+                    and line_index < len(source_lines)
+                )
                 common_event_meta = {
                     "blockIndex": idx,
                     "lineIndex": line_index,
+                    "blockLineStart": blk_start,
+                    "blockLineEnd": blk_end,
+                    "blockLineIds": block_line_ids,
+                    "targetLineIds": effective_target_line_ids,
                     "chunkType": chunk_type,
                     "sourceFormat": source_format or "plain",
+                    "useJsonl": use_jsonl,
                     "parserType": parser_type or "",
+                    "parserRef": parser_ref or "",
+                    "linePolicyRef": line_policy_ref or "",
+                    "linePolicyEnabled": line_policy_enabled,
+                    "linePolicyEligible": line_policy_eligible,
+                    "contextAnchor": context_anchor,
+                    "contextBlockEnd": context_block_end,
+                    "contextBeforeChars": len(context_before),
+                    "contextAfterChars": len(context_after),
+                    "glossaryTotalCount": glossary_total_count,
+                    "glossaryMatchedCount": len(matched_glossary_terms),
+                    "glossaryMatchedTerms": matched_glossary_terms,
+                    "chunkTargetChars": chunk_target_chars,
+                    "chunkMaxChars": chunk_max_chars,
                     "providerRef": provider_ref,
                     "providerType": str(
                         provider.profile.get("type")
@@ -1347,6 +1543,11 @@ class PipelineRunner:
                         "max_tokens": getattr(request, "max_tokens", None),
                         "extra": getattr(request, "extra", None),
                     }
+                    current_request_payload_effective = (
+                        self._build_effective_request_payload(request)
+                    )
+                    if not current_request_payload_effective:
+                        current_request_payload_effective = dict(current_request_payload)
                     request_headers_raw = getattr(request, "headers", None)
                     current_request_headers = (
                         {str(k): str(v) for k, v in request_headers_raw.items()}
@@ -1451,7 +1652,78 @@ class PipelineRunner:
                         or str(raw_request.get("url") or "").strip()
                         or current_request_url
                     )
+                    request_payload_for_event = current_request_payload
+                    raw_request_payload = raw_request.get("payload")
+                    if isinstance(raw_request_payload, dict):
+                        request_payload_for_event = raw_request_payload
                     response_payload = raw_data if raw_data is not None else response.raw
+                    raw_choices = (
+                        raw_data.get("choices")
+                        if isinstance(raw_data, dict)
+                        else []
+                    )
+                    first_choice = (
+                        raw_choices[0]
+                        if isinstance(raw_choices, list)
+                        and raw_choices
+                        and isinstance(raw_choices[0], dict)
+                        else {}
+                    )
+                    provider_raw_meta = {
+                        "requestUrl": raw_request.get("url"),
+                        "responseStatus": raw_response.get("status_code"),
+                        "responseHeaders": (
+                            raw_response.get("headers")
+                            if isinstance(raw_response.get("headers"), dict)
+                            else None
+                        ),
+                    }
+                    provider_raw_meta = {
+                        key: value
+                        for key, value in provider_raw_meta.items()
+                        if value not in (None, "", {}, [])
+                    }
+                    response_meta = {
+                        "responseId": (
+                            str(raw_data.get("id")).strip()
+                            if isinstance(raw_data, dict) and raw_data.get("id") is not None
+                            else None
+                        ),
+                        "responseModel": (
+                            str(raw_data.get("model")).strip()
+                            if isinstance(raw_data, dict) and raw_data.get("model") is not None
+                            else current_model
+                        ),
+                        "responseCreated": (
+                            raw_data.get("created")
+                            if isinstance(raw_data, dict)
+                            else None
+                        ),
+                        "finishReason": (
+                            str(first_choice.get("finish_reason")).strip()
+                            if first_choice.get("finish_reason") is not None
+                            else None
+                        ),
+                        "choiceCount": len(raw_choices) if isinstance(raw_choices, list) else None,
+                        "systemFingerprint": (
+                            str(raw_data.get("system_fingerprint")).strip()
+                            if isinstance(raw_data, dict)
+                            and raw_data.get("system_fingerprint") is not None
+                            else None
+                        ),
+                        "usage": _usage if isinstance(_usage, dict) else None,
+                        "responseParseMode": (
+                            "jsonl"
+                            if use_jsonl and bool(target_line_ids)
+                            else parser_type or "parser"
+                        ),
+                        "providerRawMeta": provider_raw_meta or None,
+                    }
+                    response_meta = {
+                        key: value
+                        for key, value in response_meta.items()
+                        if value not in (None, "", {}, [])
+                    }
 
                     self._emit_api_stats_safe(
                         {
@@ -1471,7 +1743,7 @@ class PipelineRunner:
                             "durationMs": _ping_ms,
                             "inputTokens": _input_tokens,
                             "outputTokens": _output_tokens,
-                            "requestPayload": current_request_payload,
+                            "requestPayload": request_payload_for_event,
                             "responsePayload": response_payload,
                             "requestHeaders": request_headers_for_event,
                             "responseHeaders": response_headers_for_event,
@@ -1480,6 +1752,7 @@ class PipelineRunner:
                                 **current_request_meta,
                                 "attempt": attempt_no,
                                 "providerId": getattr(request, "provider_id", None),
+                                **response_meta,
                             },
                         }
                     )
@@ -1550,6 +1823,24 @@ class PipelineRunner:
                             if _m:
                                 _status_code = int(_m.group(1))
 
+                        error_response_payload: Dict[str, Any] = {}
+                        if exc.response_text is not None:
+                            error_response_payload["responseText"] = exc.response_text
+                        if _status_code is not None:
+                            error_response_payload["statusCode"] = _status_code
+                        if isinstance(exc.response_headers, dict) and exc.response_headers:
+                            error_response_payload["responseHeaders"] = exc.response_headers
+                        request_headers_for_error = (
+                            exc.request_headers
+                            if isinstance(exc.request_headers, dict)
+                            else current_request_headers
+                        )
+                        response_headers_for_error = (
+                            exc.response_headers
+                            if isinstance(exc.response_headers, dict)
+                            else None
+                        )
+
                         self._emit_api_stats_safe(
                             {
                                 "phase": "request_error",
@@ -1568,12 +1859,19 @@ class PipelineRunner:
                                 "durationMs": _duration_ms,
                                 "errorType": _provider_error_type,
                                 "errorMessage": str(exc),
-                                "requestPayload": current_request_payload,
-                                "requestHeaders": current_request_headers,
+                                "requestPayload": current_request_payload_effective,
+                                "responsePayload": error_response_payload or None,
+                                "requestHeaders": request_headers_for_error,
+                                "responseHeaders": response_headers_for_error,
                                 "meta": {
                                     **common_event_meta,
                                     **current_request_meta,
                                     "attempt": attempt_no,
+                                    "providerErrorRequestId": exc.request_id,
+                                    "providerErrorUrl": exc.url,
+                                    "providerErrorStatusCode": exc.status_code,
+                                    "providerErrorDurationMs": exc.duration_ms,
+                                    "providerErrorResponseHeaders": response_headers_for_error,
                                 },
                             }
                         )
@@ -1644,7 +1942,20 @@ class PipelineRunner:
         except (TypeError, ValueError):
             concurrency = 1
 
-        if concurrency == 0:
+        strict_concurrency = (
+            self._parse_bool_flag(settings.get("strict_concurrency"))
+            or self._parse_bool_flag(settings.get("serial_requests"))
+            or self._parse_bool_flag(provider.profile.get("strict_concurrency"))
+            or self._parse_bool_flag(provider.profile.get("serial_requests"))
+        )
+
+        if strict_concurrency:
+            # Strict mode means fixed in-flight concurrency (no adaptive scaling).
+            if concurrency <= 0:
+                concurrency = 1
+            concurrency = max(1, min(concurrency, MAX_CONCURRENCY))
+            adaptive = None
+        elif concurrency == 0:
             adaptive = AdaptiveConcurrency(max_limit=max(1, min(len(blocks), 128)))
         else:
             concurrency = max(1, min(concurrency, MAX_CONCURRENCY))
@@ -1794,7 +2105,7 @@ class PipelineRunner:
             interrupted_separator = (
                 "\n\n"
                 if (
-                    chunk_type == "chunk"
+                    chunk_type == "block"
                     or self._should_use_double_newline_separator(post_rules)
                 )
                 else "\n"
@@ -1866,7 +2177,7 @@ class PipelineRunner:
             separator = (
                 "\n\n"
                 if (
-                    chunk_type == "chunk"
+                    chunk_type == "block"
                     or self._should_use_double_newline_separator(post_rules)
                 )
                 else "\n"

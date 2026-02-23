@@ -70,6 +70,8 @@ GUI/release/
 GUI/dist-native/
 .DS_Store
 dev_start.bat
+repo_download_stats.bat
+tools/repo_download_stats.ps1
 changelog.private
 *.diff
 
@@ -93,3 +95,4 @@ middleware/outputs
 
 .claude
 local
+download-stats-output/

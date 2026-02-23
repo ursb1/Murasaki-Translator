@@ -1,5 +1,26 @@
 # Murasaki Translator - Changelog
 
+## [2.0.1] - 2026-02-23
+
+### 稳定性与恢复链路
+
+*   V2 输出检测与续传识别增强：`check-output-file-exists` 新增 `resumeOutputPath`，支持识别 `.temp.jsonl` / `.cache.json` / 输出目录与缓存目录下的候选工件，减少误判“无法续传”。
+*   校对保存容错增强：`save-cache` 新增回退写入路径（优先原路径，失败时尝试 `outputPath.cache.json`），并将回退结果透传到前端，避免因路径异常导致“保存失败但不可恢复”。
+*   校对回写链路重构：新增 `proofreadSavePath` 工具，统一 Windows 路径判定、缓存保存结果归一化与输出路径解析，降低跨路径场景下的回写失败率。
+*   Pipeline V2 临时文件治理升级：Runner 将 stop-flag 与临时规则文件迁移到进程级临时目录，新增陈旧会话目录清理与遗留临时文件清理，减少长跑任务后残留文件。
+
+### API 统计与可观测性
+
+*   API 统计面板扩展：新增错误率/成功率趋势、状态分类（2xx/4xx/5xx）分布、首/末请求时间、观测窗口、Token 出入比、平均重试等指标。
+*   统计明细可读性增强：请求列表支持展开详情（请求体/响应体/元数据/请求头/响应头）与逐条复制，清空操作改为统一确认弹窗。
+*   主进程与 Flow V2 统计事件补充：请求错误路径补齐 `requestHeaders/responseHeaders/responsePayload`，请求成功路径补齐 `meta` 与响应侧元信息，便于排障与审计。
+
+### 并发与性能体验
+
+*   OpenAI 兼容配置新增 `strict_concurrency`（兼容 `serial_requests`），支持固定并发上限模式（禁用自适应并发）。
+*   Dashboard 新增 V2 速度平滑模块（`v2SpeedMetrics`），缓解短时抖动与异常尖峰，图表显示更平稳。
+*   Dashboard 预览与日志内存边界收敛：新增可见日志上限、预览块上限、持久化节流与字符预算，降低长任务 UI 卡顿与 localStorage 膨胀风险。
+
 ## [2.0.0] - 2026-02-22
 
 ### Pipeline V2 引擎上线（核心）

@@ -11,6 +11,10 @@ import type {
 const CACHE_KEY = "remote_runtime_cache_v1";
 const POLL_INTERVAL_CONNECTED_MS = 3000;
 const POLL_INTERVAL_IDLE_MS = 9000;
+const REMOTE_RUNTIME_I18N_PREFIX = "i18n:remoteRuntime.";
+
+type RemoteRuntimeText = (typeof translations)[Language]["remoteRuntime"];
+
 const createDefaultRuntime = (notice: string): RemoteRuntimeStatus => ({
   connected: false,
   executionMode: "local",
@@ -53,6 +57,46 @@ const createDefaultDiagnostics = (notice: string): RemoteDiagnostics => ({
   network: createDefaultNetwork(notice),
 });
 
+const resolveRemoteRuntimeToken = (
+  rawValue: unknown,
+  remoteText: RemoteRuntimeText,
+): string => {
+  const value = typeof rawValue === "string" ? rawValue.trim() : "";
+  if (!value) return "";
+  if (!value.startsWith(REMOTE_RUNTIME_I18N_PREFIX)) return value;
+
+  const encoded = value.slice(REMOTE_RUNTIME_I18N_PREFIX.length);
+  const [rawKey, rawArg = ""] = encoded.split("|", 2);
+  const key = rawKey.trim() as keyof RemoteRuntimeText;
+  const template = remoteText[key];
+  if (typeof template !== "string" || !template.trim()) return value;
+  if (!rawArg) return template;
+
+  let argValue = rawArg;
+  try {
+    argValue = decodeURIComponent(rawArg);
+  } catch {
+    argValue = rawArg;
+  }
+  return template.includes("{message}")
+    ? template.replace("{message}", argValue)
+    : `${template} ${argValue}`.trim();
+};
+
+const resolveRemoteRuntimeHint = (
+  rawHint: unknown,
+  remoteText: RemoteRuntimeText,
+): string => {
+  const hint = typeof rawHint === "string" ? rawHint : "";
+  if (!hint.trim()) return "";
+  return hint
+    .split(/\r?\n/)
+    .map((item) => resolveRemoteRuntimeToken(item, remoteText))
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .join(" ");
+};
+
 interface RemoteErrorUi {
   title: string;
   description: string;
@@ -90,33 +134,39 @@ const sanitizeSession = (session: RemoteRuntimeStatus["session"]) => {
 
 const toRuntime = (
   payload: RemoteRuntimeStatus | undefined,
-  notice: string,
+  remoteText: RemoteRuntimeText,
 ): RemoteRuntimeStatus => ({
-  ...createDefaultRuntime(notice),
+  ...createDefaultRuntime(remoteText.noticeDefault),
   ...(payload || {}),
   session: sanitizeSession(payload?.session),
-  notice: payload?.notice || notice,
+  notice:
+    resolveRemoteRuntimeToken(payload?.notice, remoteText) ||
+    remoteText.noticeDefault,
 });
 
 const toNetwork = (
   payload: RemoteNetworkStatus | undefined,
-  notice: string,
+  remoteText: RemoteRuntimeText,
 ): RemoteNetworkStatus => ({
-  ...createDefaultNetwork(notice),
+  ...createDefaultNetwork(remoteText.noticeDefault),
   ...(payload || {}),
   session: sanitizeSession(payload?.session),
-  notice: payload?.notice || notice,
+  notice:
+    resolveRemoteRuntimeToken(payload?.notice, remoteText) ||
+    remoteText.noticeDefault,
 });
 
 const toDiagnostics = (
   payload: RemoteDiagnostics | undefined,
-  notice: string,
+  remoteText: RemoteRuntimeText,
 ): RemoteDiagnostics => ({
-  ...createDefaultDiagnostics(notice),
+  ...createDefaultDiagnostics(remoteText.noticeDefault),
   ...(payload || {}),
   session: sanitizeSession(payload?.session),
-  notice: payload?.notice || notice,
-  network: toNetwork(payload?.network, notice),
+  notice:
+    resolveRemoteRuntimeToken(payload?.notice, remoteText) ||
+    remoteText.noticeDefault,
+  network: toNetwork(payload?.network, remoteText),
 });
 
 const mapRemoteApiError = (
@@ -135,7 +185,7 @@ const mapRemoteApiError = (
 
   const code = response.code || "REMOTE_UNKNOWN";
   const description = response.message || fallback;
-  const hint = response.actionHint || undefined;
+  const hint = resolveRemoteRuntimeHint(response.actionHint, t) || undefined;
   switch (code) {
     case "REMOTE_UNAUTHORIZED":
       return { title: t.unauthorizedTitle, description, hint };
@@ -153,7 +203,7 @@ const mapRemoteApiError = (
 };
 
 const loadCachedSnapshot = (
-  notice: string,
+  remoteText: RemoteRuntimeText,
 ): {
   runtime: RemoteRuntimeStatus;
   network: RemoteNetworkStatus;
@@ -161,6 +211,7 @@ const loadCachedSnapshot = (
   events: RemoteNetworkEvent[];
   lastUpdatedAt: number | null;
 } => {
+  const notice = remoteText.noticeDefault;
   const fallback = {
     runtime: createDefaultRuntime(notice),
     network: createDefaultNetwork(notice),
@@ -180,9 +231,9 @@ const loadCachedSnapshot = (
       updatedAt?: number;
     };
     return {
-      runtime: toRuntime(parsed.runtime, notice),
-      network: toNetwork(parsed.network, notice),
-      diagnostics: toDiagnostics(parsed.diagnostics, notice),
+      runtime: toRuntime(parsed.runtime, remoteText),
+      network: toNetwork(parsed.network, remoteText),
+      diagnostics: toDiagnostics(parsed.diagnostics, remoteText),
       events: Array.isArray(parsed.events) ? parsed.events : [],
       lastUpdatedAt:
         typeof parsed.updatedAt === "number" ? parsed.updatedAt : null,
@@ -195,8 +246,8 @@ const loadCachedSnapshot = (
 export function useRemoteRuntime(lang: Language): UseRemoteRuntimeResult {
   const remoteText = translations[lang].remoteRuntime;
   const cached = useMemo(
-    () => loadCachedSnapshot(remoteText.noticeDefault),
-    [remoteText.noticeDefault],
+    () => loadCachedSnapshot(remoteText),
+    [remoteText],
   );
   const [runtime, setRuntime] = useState<RemoteRuntimeStatus>(cached.runtime);
   const [network, setNetwork] = useState<RemoteNetworkStatus>(cached.network);
@@ -259,15 +310,15 @@ export function useRemoteRuntime(lang: Language): UseRemoteRuntimeResult {
 
         const nextRuntime = toRuntime(
           statusResult?.data,
-          remoteText.noticeDefault,
+          remoteText,
         );
         const nextNetwork = toNetwork(
           networkResult?.data,
-          remoteText.noticeDefault,
+          remoteText,
         );
         const nextDiagnostics = toDiagnostics(
           diagnosticsResult?.data,
-          remoteText.noticeDefault,
+          remoteText,
         );
 
         let nextEvents = networkEventsRef.current;
@@ -282,7 +333,10 @@ export function useRemoteRuntime(lang: Language): UseRemoteRuntimeResult {
         }
 
         if (!statusResult?.ok) {
-          setLastError(statusResult?.message || remoteText.statusFetchFailed);
+          setLastError(
+            resolveRemoteRuntimeToken(statusResult?.message, remoteText) ||
+              remoteText.statusFetchFailed,
+          );
         } else {
           setLastError(null);
         }
@@ -301,13 +355,16 @@ export function useRemoteRuntime(lang: Language): UseRemoteRuntimeResult {
           updatedAt,
         );
       } catch (error) {
-        setLastError(toErrorMessage(error));
+        setLastError(
+          resolveRemoteRuntimeToken(toErrorMessage(error), remoteText) ||
+            toErrorMessage(error),
+        );
       } finally {
         setLoading(false);
         setRefreshing(false);
       }
     },
-    [persistCache, remoteText.noticeDefault, remoteText.statusFetchFailed],
+    [persistCache, remoteText],
   );
 
   const connect = useCallback(
@@ -374,3 +431,8 @@ export function useRemoteRuntime(lang: Language): UseRemoteRuntimeResult {
       mapRemoteApiError(remoteText, response, fallbackMessage),
   };
 }
+
+export const __testOnly = {
+  resolveRemoteRuntimeToken,
+  resolveRemoteRuntimeHint,
+};

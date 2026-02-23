@@ -23,9 +23,12 @@ export type ApiStatsTrendMetric =
   | "requests"
   | "latency"
   | "input_tokens"
-  | "output_tokens";
+  | "output_tokens"
+  | "error_rate"
+  | "success_rate";
 export type ApiStatsBreakdownDimension =
   | "status_code"
+  | "status_class"
   | "source"
   | "error_type"
   | "model"
@@ -131,6 +134,7 @@ type ApiStatsRequestRecord = {
   responsePayload?: unknown;
   requestHeaders?: Record<string, string>;
   responseHeaders?: Record<string, string>;
+  meta?: Record<string, unknown>;
 };
 
 type ApiStatsRange = {
@@ -148,8 +152,10 @@ const EVENT_VERSION = 1 as const;
 const EVENTS_FILE_SUFFIX = ".stats.events.jsonl";
 const ROLLUP_FILE_SUFFIX = ".stats.rollup.json";
 const SAFE_PROFILE_ID_RE = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/;
-const SENSITIVE_KEY_RE = /(authorization|api[_-]?key|token|secret|password)/i;
-const MAX_RAW_VALUE_CHARS = 200_000;
+const SENSITIVE_KEY_RE =
+  /(authorization|api[_-]?key|secret|password|(^|[_-])token($|[_-]))/i;
+// Cap stored raw payload preview size to avoid oversized stats files.
+const MAX_RAW_VALUE_CHARS = 100_000;
 
 const fileWriteLocks = new Map<string, Promise<void>>();
 const eventCache = new Map<string, EventCacheEntry>();
@@ -482,6 +488,7 @@ const aggregateRequests = (events: ApiStatsEventRecord[]): ApiStatsRequestRecord
       responsePayload: event.responsePayload,
       requestHeaders: event.requestHeaders,
       responseHeaders: event.responseHeaders,
+      meta: event.meta,
     };
 
     base.source = event.source || base.source;
@@ -498,6 +505,7 @@ const aggregateRequests = (events: ApiStatsEventRecord[]): ApiStatsRequestRecord
     base.responsePayload = event.responsePayload ?? base.responsePayload;
     base.requestHeaders = event.requestHeaders ?? base.requestHeaders;
     base.responseHeaders = event.responseHeaders ?? base.responseHeaders;
+    base.meta = event.meta ?? base.meta;
 
     if (event.phase === "request_start") {
       base.startedAt = event.ts || base.startedAt;
@@ -577,6 +585,7 @@ const computeOverview = (
     (sum, item) => sum + (item.outputTokens || 0),
     0,
   );
+  const totalTokens = totalInputTokens + totalOutputTokens;
   const durationValues = requests
     .map((item) => item.durationMs || 0)
     .filter((value) => Number.isFinite(value) && value > 0);
@@ -588,12 +597,31 @@ const computeOverview = (
     : 0;
   const p50LatencyMs = Math.round(computePercentile(durationValues, 50));
   const p95LatencyMs = Math.round(computePercentile(durationValues, 95));
+  const fastestLatencyMs = durationValues.length
+    ? Math.min(...durationValues)
+    : 0;
+  const slowestLatencyMs = durationValues.length
+    ? Math.max(...durationValues)
+    : 0;
   const totalDurationMs = durationValues.reduce((sum, value) => sum + value, 0);
 
   const startTimes = requests
     .map((item) => parseTsMs(item.startedAt))
     .filter((value) => value > 0)
     .sort((a, b) => a - b);
+  const firstRequestAt = startTimes.length
+    ? new Date(startTimes[0]).toISOString()
+    : undefined;
+  const latestRequestAt = startTimes.length
+    ? new Date(startTimes[startTimes.length - 1]).toISOString()
+    : undefined;
+  const observationWindowMs =
+    startTimes.length >= 2
+      ? Math.max(0, startTimes[startTimes.length - 1] - startTimes[0])
+      : 0;
+  const observationWindowMinutes = Number(
+    (observationWindowMs / 60_000).toFixed(2),
+  );
   let requestsPerMinuteAvg = 0;
   let peakRequestsPerMinute = 0;
   if (startTimes.length > 0) {
@@ -612,6 +640,34 @@ const computeOverview = (
     );
   }
 
+  const statusClassCounts = {
+    "2xx": 0,
+    "4xx": 0,
+    "5xx": 0,
+    other: 0,
+    unknown: 0,
+  };
+  for (const item of requests) {
+    const code = item.statusCode;
+    if (typeof code !== "number") {
+      statusClassCounts.unknown += 1;
+      continue;
+    }
+    if (code >= 200 && code < 300) {
+      statusClassCounts["2xx"] += 1;
+      continue;
+    }
+    if (code >= 400 && code < 500) {
+      statusClassCounts["4xx"] += 1;
+      continue;
+    }
+    if (code >= 500 && code < 600) {
+      statusClassCounts["5xx"] += 1;
+      continue;
+    }
+    statusClassCounts.other += 1;
+  }
+
   const statusCodeCounts = summarizeCounts(requests.map((item) => item.statusCode));
   const sourceCounts = summarizeCounts(requests.map((item) => item.source));
   const errorTypeCounts = summarizeCounts(
@@ -626,7 +682,20 @@ const computeOverview = (
     const hour = new Date(ms).getHours();
     if (hour >= 0 && hour < 24) byHour[hour].count += 1;
   }
-  const latestRequestAt = requests[0]?.startedAt;
+  const successRate =
+    totalRequests > 0
+      ? Number(((successRequests / totalRequests) * 100).toFixed(2))
+      : 0;
+  const failureRate =
+    totalRequests > 0
+      ? Number(((failedRequests / totalRequests) * 100).toFixed(2))
+      : 0;
+  const avgRetriesPerRequest =
+    totalRequests > 0 ? Number((retryCount / totalRequests).toFixed(2)) : 0;
+  const outputInputRatio =
+    totalInputTokens > 0
+      ? Number((totalOutputTokens / totalInputTokens).toFixed(4))
+      : 0;
 
   return {
     totalEvents: events.length,
@@ -634,24 +703,35 @@ const computeOverview = (
     successRequests,
     failedRequests,
     inflightRequests,
-    successRate:
-      totalRequests > 0
-        ? Number(((successRequests / totalRequests) * 100).toFixed(2))
-        : 0,
+    successRate,
+    failureRate,
     totalRetries: retryCount,
+    avgRetriesPerRequest,
     totalInputTokens,
     totalOutputTokens,
+    totalTokens,
+    outputInputRatio,
     avgLatencyMs,
     p50LatencyMs,
     p95LatencyMs,
+    fastestLatencyMs,
+    slowestLatencyMs,
     totalDurationMs,
     requestsPerMinuteAvg,
     peakRequestsPerMinute,
+    status2xx: statusClassCounts["2xx"],
+    status4xx: statusClassCounts["4xx"],
+    status5xx: statusClassCounts["5xx"],
+    statusOther: statusClassCounts.other,
+    statusUnknown: statusClassCounts.unknown,
     statusCodeCounts,
     sourceCounts,
     errorTypeCounts,
     byHour,
+    firstRequestAt,
     latestRequestAt,
+    observationWindowMs,
+    observationWindowMinutes,
   };
 };
 
@@ -709,10 +789,25 @@ const computeTrend = (
         value = item.inputTokens;
       } else if (metric === "output_tokens") {
         value = item.outputTokens;
+      } else if (metric === "error_rate") {
+        value = item.requests > 0 ? (item.errors / item.requests) * 100 : 0;
+      } else if (metric === "success_rate") {
+        value =
+          item.requests > 0
+            ? ((item.requests - item.errors) / item.requests) * 100
+            : 0;
       }
       return {
         bucketStart: new Date(bucketStart).toISOString(),
-        value: Number(value.toFixed(metric === "latency" ? 2 : 0)),
+        value: Number(
+          value.toFixed(
+            metric === "latency" ||
+              metric === "error_rate" ||
+              metric === "success_rate"
+              ? 2
+              : 0,
+          ),
+        ),
         requests: item.requests,
         errors: item.errors,
         inputTokens: item.inputTokens,
@@ -730,6 +825,19 @@ const computeBreakdown = (
     let key = "unknown";
     if (dimension === "status_code") {
       key = String(request.statusCode ?? "unknown");
+    } else if (dimension === "status_class") {
+      const code = request.statusCode;
+      if (typeof code !== "number") {
+        key = "unknown";
+      } else if (code >= 200 && code < 300) {
+        key = "2xx";
+      } else if (code >= 400 && code < 500) {
+        key = "4xx";
+      } else if (code >= 500 && code < 600) {
+        key = "5xx";
+      } else {
+        key = "other";
+      }
     } else if (dimension === "source") {
       key = request.source || "unknown";
     } else if (dimension === "error_type") {
@@ -861,7 +969,9 @@ export const createApiStatsService = (deps: {
     const metric: ApiStatsTrendMetric =
       payload.metric === "latency" ||
       payload.metric === "input_tokens" ||
-      payload.metric === "output_tokens"
+      payload.metric === "output_tokens" ||
+      payload.metric === "error_rate" ||
+      payload.metric === "success_rate"
         ? payload.metric
         : "requests";
     const interval: ApiStatsInterval =
@@ -886,6 +996,7 @@ export const createApiStatsService = (deps: {
   }) => {
     const apiProfileId = normalizeApiProfileId(payload.apiProfileId);
     const dimension: ApiStatsBreakdownDimension =
+      payload.dimension === "status_class" ||
       payload.dimension === "source" ||
       payload.dimension === "error_type" ||
       payload.dimension === "model" ||

@@ -58,6 +58,7 @@ export interface FileConfig {
   };
   cacheDir?: string;
   outputDir?: string;
+  outputPath?: string;
   glossaryPath?: string;
   useGlobalDefaults?: boolean;
 

@@ -1,6 +1,16 @@
 import { ipcMain, BrowserWindow } from "electron";
 import { spawn, ChildProcess } from "child_process";
-import { existsSync, unlinkSync, writeFileSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
+import { randomUUID } from "crypto";
+import { tmpdir } from "os";
 import { basename, delimiter, extname, join } from "path";
 import { validatePipelineRun } from "./pipelineV2Validation";
 import type { ApiStatsEventInput } from "./apiStatsStore";
@@ -24,8 +34,72 @@ let activeChild: ChildProcess | null = null;
 let stopRequested = false;
 let activeStopFlagPath: string | null = null;
 let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
-const FORCE_KILL_TIMEOUT_MS = 15000;
+let activeRunId: string | null = null;
+let activeSendLog: RunnerDeps["sendLog"] | null = null;
+const FORCE_KILL_TIMEOUT_MS = 60000;
 const PYTHON_INTERPRETER_NAME_RE = /^python(?:\d+(?:\.\d+)*)?(?:\.exe)?$/i;
+const FLOWV2_TEMP_ROOT = join(tmpdir(), "murasaki-translator", "flowv2");
+const FLOWV2_SESSION_TEMP_DIR = join(FLOWV2_TEMP_ROOT, String(process.pid));
+const FLOWV2_STALE_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const FLOWV2_LEGACY_FILE_RE =
+  /^temp_(?:flowv2_stop_.+\.flag|rules_(?:pre|post)_[a-z0-9]+\.json)$/i;
+
+const isLegacyFlowV2TempFile = (fileName: string): boolean =>
+  FLOWV2_LEGACY_FILE_RE.test(String(fileName || ""));
+
+const cleanupLegacyTempFilesInDir = (dirPath: string): number => {
+  let removed = 0;
+  try {
+    if (!dirPath || !existsSync(dirPath)) return removed;
+    const entries = readdirSync(dirPath);
+    for (const entry of entries) {
+      if (!isLegacyFlowV2TempFile(entry)) continue;
+      const fullPath = join(dirPath, entry);
+      try {
+        if (!statSync(fullPath).isFile()) continue;
+        unlinkSync(fullPath);
+        removed += 1;
+      } catch {
+        // ignore best-effort cleanup errors
+      }
+    }
+  } catch {
+    // ignore best-effort cleanup errors
+  }
+  return removed;
+};
+
+const ensureFlowV2SessionTempDir = (fallbackDir: string): string => {
+  try {
+    mkdirSync(FLOWV2_SESSION_TEMP_DIR, { recursive: true });
+    return FLOWV2_SESSION_TEMP_DIR;
+  } catch {
+    return fallbackDir;
+  }
+};
+
+const cleanupStaleFlowV2SessionDirs = () => {
+  try {
+    if (!existsSync(FLOWV2_TEMP_ROOT)) return;
+    const nowMs = Date.now();
+    const entries = readdirSync(FLOWV2_TEMP_ROOT);
+    for (const entry of entries) {
+      if (entry === String(process.pid)) continue;
+      if (!/^\d+$/.test(entry)) continue;
+      const fullPath = join(FLOWV2_TEMP_ROOT, entry);
+      try {
+        const st = statSync(fullPath);
+        if (!st.isDirectory()) continue;
+        if (nowMs - st.mtimeMs < FLOWV2_STALE_SESSION_TTL_MS) continue;
+        rmSync(fullPath, { recursive: true, force: true });
+      } catch {
+        // ignore best-effort cleanup errors
+      }
+    }
+  } catch {
+    // ignore best-effort cleanup errors
+  }
+};
 
 const clearForceKillTimer = () => {
   if (!forceKillTimer) return;
@@ -50,9 +124,17 @@ const stopActivePipelineChild = () => {
   if (!activeChild) return;
   if (stopRequested) return;
   stopRequested = true;
-  console.log(
-    "[FlowV2] Stop requested, waiting child for graceful shutdown...",
-  );
+  const stopLogMessage = `[FlowV2] Stop requested, waiting child for graceful shutdown (timeout=${Math.round(
+    FORCE_KILL_TIMEOUT_MS / 1000,
+  )}s)...`;
+  console.log(stopLogMessage);
+  if (activeRunId && activeSendLog) {
+    activeSendLog({
+      runId: activeRunId,
+      message: stopLogMessage,
+      level: "warn",
+    });
+  }
   try {
     if (activeStopFlagPath) {
       writeFileSync(activeStopFlagPath, `${Date.now()}`, "utf8");
@@ -65,7 +147,16 @@ const stopActivePipelineChild = () => {
   forceKillTimer = setTimeout(() => {
     if (!activeChild) return;
     const pid = activeChild.pid;
-    console.warn("[FlowV2] Graceful stop timed out, forcing child exit...");
+    const forceKillMessage =
+      "[FlowV2] Graceful stop timed out; forcing child exit to avoid zombie process.";
+    console.warn(forceKillMessage);
+    if (activeRunId && activeSendLog) {
+      activeSendLog({
+        runId: activeRunId,
+        message: forceKillMessage,
+        level: "warn",
+      });
+    }
     try {
       if (process.platform === "win32" && pid) {
         spawn("taskkill", ["/pid", pid.toString(), "/f", "/t"], {
@@ -162,6 +253,14 @@ const parseApiStatsEventLine = (line: string): ApiStatsEventInput | null => {
 };
 
 export const registerPipelineV2Runner = (deps: RunnerDeps) => {
+  activeSendLog = deps.sendLog;
+  cleanupStaleFlowV2SessionDirs();
+  try {
+    cleanupLegacyTempFilesInDir(deps.getMiddlewarePath());
+    cleanupLegacyTempFilesInDir(FLOWV2_SESSION_TEMP_DIR);
+  } catch {
+    // best-effort cleanup
+  }
   // --- Stop handler ---
   ipcMain.on("stop-pipelinev2", () => {
     stopActivePipelineChild();
@@ -250,8 +349,11 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
         "--run-id",
         runId,
       ];
+      const runtimeTempDir = ensureFlowV2SessionTempDir(middlewarePath);
+      cleanupLegacyTempFilesInDir(middlewarePath);
+      cleanupLegacyTempFilesInDir(runtimeTempDir);
       const stopFlagPath = join(
-        middlewarePath,
+        runtimeTempDir,
         `temp_flowv2_stop_${runId}.flag`,
       );
       try {
@@ -300,13 +402,9 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
         Array.isArray(rulesPre) &&
         rulesPre.length > 0
       ) {
-        const uid = require("crypto").randomUUID().slice(0, 8);
-        activeRulesPrePath = join(middlewarePath, `temp_rules_pre_${uid}.json`);
-        require("fs").writeFileSync(
-          activeRulesPrePath,
-          JSON.stringify(rulesPre),
-          "utf8",
-        );
+        const uid = randomUUID().slice(0, 8);
+        activeRulesPrePath = join(runtimeTempDir, `temp_rules_pre_${uid}.json`);
+        writeFileSync(activeRulesPrePath, JSON.stringify(rulesPre), "utf8");
         temporaryRulePaths.push(activeRulesPrePath);
       }
       if (activeRulesPrePath) {
@@ -320,16 +418,12 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
         Array.isArray(rulesPost) &&
         rulesPost.length > 0
       ) {
-        const uid = require("crypto").randomUUID().slice(0, 8);
+        const uid = randomUUID().slice(0, 8);
         activeRulesPostPath = join(
-          middlewarePath,
+          runtimeTempDir,
           `temp_rules_post_${uid}.json`,
         );
-        require("fs").writeFileSync(
-          activeRulesPostPath,
-          JSON.stringify(rulesPost),
-          "utf8",
-        );
+        writeFileSync(activeRulesPostPath, JSON.stringify(rulesPost), "utf8");
         temporaryRulePaths.push(activeRulesPostPath);
       }
       if (activeRulesPostPath) {
@@ -383,6 +477,7 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
         };
         let child: ChildProcess;
         try {
+          activeRunId = runId;
           child = spawn(python.path, resolveExecutionArgs(python, scriptArgs), {
             cwd: middlewarePath,
             env: withMiddlewarePythonPath(process.env, middlewarePath),
@@ -407,6 +502,7 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
             });
           }
           activeChild = null;
+          activeRunId = null;
           stopRequested = false;
           clearForceKillTimer();
           cleanupStopFlag();
@@ -449,7 +545,6 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
           const win = deps.getMainWindow();
           if (!win) return;
           win.webContents.send("log-update", `${line}\n`);
-          deps.sendLog({ runId, message: line, level: "info" });
         };
 
         child.stdout?.on("data", (buf) => {
@@ -493,6 +588,7 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
             });
           }
           activeChild = null;
+          activeRunId = null;
           stopRequested = false;
           clearForceKillTimer();
           cleanupStopFlag();
@@ -509,6 +605,7 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
           const wasStopRequested = stopRequested;
           stopRequested = false;
           activeChild = null;
+          activeRunId = null;
           clearForceKillTimer();
           cleanupStopFlag();
           cleanupTemporaryRulePaths();
@@ -541,4 +638,5 @@ export const __testOnly = {
   resolveExecutionArgs,
   withMiddlewarePythonPath,
   parseApiStatsEventLine,
+  isLegacyFlowV2TempFile,
 };

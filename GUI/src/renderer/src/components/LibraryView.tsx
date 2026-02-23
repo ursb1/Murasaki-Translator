@@ -772,6 +772,14 @@ export function FileConfigModal({
     localStorage.getItem("config_rules_pre_active_profile") || "";
   const globalPostProfileId =
     localStorage.getItem("config_rules_post_active_profile") || "";
+  const globalV2PipelineId =
+    localStorage.getItem("config_v2_pipeline_id") ||
+    localStorage.getItem("murasaki.v2.active_pipeline_id") ||
+    "";
+  const globalV2PipelineName =
+    v2Profiles.find((profile) => profile.id === globalV2PipelineId)?.name ||
+    globalV2PipelineId ||
+    t.notSet;
 
   useEffect(() => {
     setPreProfiles(loadRuleProfiles("pre"));
@@ -972,23 +980,21 @@ export function FileConfigModal({
               </div>
             </div>
 
-            {/* Right: useGlobal toggle (local only) + Close */}
+            {/* Right: useGlobal toggle + Close */}
             <div className="flex items-center gap-3 shrink-0">
-              {!isApiMode && (
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <span
-                    className={`text-xs font-medium ${config.useGlobalDefaults ? "text-primary" : "text-muted-foreground"}`}
-                  >
-                    {t.useGlobal}
-                  </span>
-                  <Switch
-                    checked={config.useGlobalDefaults}
-                    onCheckedChange={(c) =>
-                      setConfig((prev) => ({ ...prev, useGlobalDefaults: c }))
-                    }
-                  />
-                </label>
-              )}
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <span
+                  className={`text-xs font-medium ${config.useGlobalDefaults ? "text-primary" : "text-muted-foreground"}`}
+                >
+                  {t.useGlobal}
+                </span>
+                <Switch
+                  checked={config.useGlobalDefaults}
+                  onCheckedChange={(c) =>
+                    setConfig((prev) => ({ ...prev, useGlobalDefaults: c }))
+                  }
+                />
+              </label>
               <button
                 onClick={onClose}
                 className="p-1.5 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
@@ -1036,19 +1042,40 @@ export function FileConfigModal({
                       <Info className="w-3 h-3 text-muted-foreground/50 hover:text-primary cursor-help" />
                     </UITooltip>
                   </label>
+                  <span className="text-[10px] text-muted-foreground/50 tabular-nums">
+                    {t.currentGlobal}: {globalV2PipelineName}
+                  </span>
                 </div>
                 {v2Profiles.length > 0 ? (
                   <select
-                    value={config.v2PipelineId || ""}
+                    value={
+                      !config.useGlobalDefaults && config.v2PipelineId
+                        ? config.v2PipelineId
+                        : ""
+                    }
                     onChange={(e) =>
                       setConfig((prev) => ({
                         ...prev,
                         v2PipelineId: e.target.value || undefined,
                       }))
                     }
-                    className="w-full h-8 px-2.5 text-sm rounded-md border transition-all outline-none bg-background/50 border-border focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
+                    disabled={config.useGlobalDefaults}
+                    className={`w-full h-8 px-2.5 text-sm rounded-md border transition-all outline-none ${
+                      config.useGlobalDefaults
+                        ? "bg-secondary/30 border-transparent text-muted-foreground/50 cursor-not-allowed"
+                        : "bg-background/50 border-border focus:ring-2 focus:ring-primary/20 focus:border-primary/50"
+                    }`}
                   >
-                    <option value="">{t.selectPipeline}</option>
+                    <option
+                      value=""
+                      disabled={
+                        !config.useGlobalDefaults && Boolean(config.v2PipelineId)
+                      }
+                    >
+                      {config.useGlobalDefaults
+                        ? globalV2PipelineName
+                        : t.selectPipeline}
+                    </option>
                     {v2Profiles.map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.name}

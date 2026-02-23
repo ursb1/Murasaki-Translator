@@ -254,6 +254,7 @@ class OpenAICompatProvider(BaseProvider):
                 request_id=request.request_id,
                 duration_ms=duration_ms,
                 url=url,
+                request_headers=safe_request_headers,
             ) from exc
         except requests.RequestException as exc:
             duration_ms = int((time.perf_counter() - start) * 1000)
@@ -263,6 +264,7 @@ class OpenAICompatProvider(BaseProvider):
                 request_id=request.request_id,
                 duration_ms=duration_ms,
                 url=url,
+                request_headers=safe_request_headers,
             ) from exc
 
         duration_ms = int((time.perf_counter() - start) * 1000)
@@ -287,11 +289,15 @@ class OpenAICompatProvider(BaseProvider):
                 duration_ms=duration_ms,
                 url=url,
                 response_text=body_preview,
+                request_headers=safe_request_headers,
+                response_headers=safe_response_headers,
             )
 
         try:
             data = resp.json()
         except ValueError as exc:
+            body = (resp.text or "").strip()
+            body_preview = body[:MAX_ERROR_TEXT_CHARS]
             raise ProviderError(
                 "OpenAI-compatible response is not JSON",
                 error_type="invalid_json",
@@ -299,11 +305,16 @@ class OpenAICompatProvider(BaseProvider):
                 request_id=request.request_id,
                 duration_ms=duration_ms,
                 url=url,
+                response_text=body_preview,
+                request_headers=safe_request_headers,
+                response_headers=safe_response_headers,
             ) from exc
 
         try:
             text = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
+            body = (resp.text or "").strip()
+            body_preview = body[:MAX_ERROR_TEXT_CHARS]
             raise ProviderError(
                 "OpenAI-compatible response missing content",
                 error_type="invalid_response",
@@ -311,6 +322,9 @@ class OpenAICompatProvider(BaseProvider):
                 request_id=request.request_id,
                 duration_ms=duration_ms,
                 url=url,
+                response_text=body_preview,
+                request_headers=safe_request_headers,
+                response_headers=safe_response_headers,
             ) from exc
 
         usage = _extract_usage(data)

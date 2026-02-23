@@ -2,6 +2,7 @@
 
 import json
 import threading
+import time
 import pytest
 
 import murasaki_flow_v2.pipelines.runner as flow_v2_runner
@@ -957,6 +958,236 @@ def test_flow_v2_runner_chunk_mode_context_works_without_line_metadata(
 
 
 @pytest.mark.unit
+def test_flow_v2_runner_extract_relevant_glossary_matches_v1_behavior():
+    glossary = {
+        "キリヒト": "桐人",
+        "先生": "老师",
+        "一": "壹",
+        "炭焼き窯": "炭窑",
+    }
+    source = "キリヒトは炭焼き窯へ向かった。"
+    matched = PipelineRunner._extract_relevant_glossary(glossary, source, limit=20)
+    assert matched == {
+        "キリヒト": "桐人",
+        "炭焼き窯": "炭窑",
+    }
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_api_stats_event_contains_response_meta(
+    tmp_path,
+    monkeypatch,
+):
+    runner = _make_runner(tmp_path)
+    runner.pipeline = {
+        "provider": "provider_stub",
+        "prompt": "prompt_stub",
+        "parser": "parser_stub",
+        "chunk_policy": "chunk_stub",
+        "settings": {"max_retries": 0, "concurrency": 1},
+    }
+
+    class _Request:
+        def __init__(self):
+            self.model = "stub-model"
+            self.messages = [{"role": "user", "content": "x"}]
+            self.temperature = None
+            self.max_tokens = None
+            self.extra = {"top_p": 1}
+            self.headers = {"X-Test": "1"}
+            self.provider_id = "endpoint_1"
+            self.request_id = "req_meta_1"
+            self.meta = {"endpoint_id": "ep_1", "endpoint_label": "node-a"}
+
+    class _Provider:
+        profile = {
+            "type": "openai_compat",
+            "model": "stub-model",
+            "base_url": "http://localhost:8000/v1",
+        }
+
+        def build_request(self, _messages, _settings):
+            return _Request()
+
+        def send(self, _request):
+            return ProviderResponse(
+                text="translated",
+                raw={
+                    "data": {
+                        "id": "resp_1",
+                        "model": "stub-model",
+                        "choices": [{"finish_reason": "stop"}],
+                        "usage": {"prompt_tokens": 11, "completion_tokens": 13},
+                    },
+                    "usage": {"prompt_tokens": 11, "completion_tokens": 13},
+                    "request": {
+                        "url": "http://localhost:8000/v1/chat/completions",
+                        "headers": {"X-Test": "1"},
+                        "payload": {"model": "stub-model", "messages": [{"role": "user", "content": "x"}]},
+                    },
+                    "response": {
+                        "status_code": 200,
+                        "headers": {"content-type": "application/json"},
+                    },
+                },
+                status_code=200,
+                duration_ms=120,
+                url="http://localhost:8000/v1/chat/completions",
+                request_headers={"X-Test": "1"},
+                response_headers={"content-type": "application/json"},
+            )
+
+    class _Parser:
+        profile = {"type": "plain"}
+
+        def parse(self, _text):
+            return type("Parsed", (), {"text": "translated"})()
+
+    captured_events = []
+
+    doc = _DummyDoc(["L1"])
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.DocumentFactory.get_document",
+        lambda _path: doc,
+    )
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.build_messages",
+        lambda *_args, **_kwargs: [{"role": "user", "content": "x"}],
+    )
+    monkeypatch.setattr(runner.providers, "get_provider", lambda _ref: _Provider())
+    monkeypatch.setattr(runner.parsers, "get_parser", lambda _ref: _Parser())
+    monkeypatch.setattr(
+        runner.prompts, "get_prompt", lambda _ref: {"user_template": "{{source}}"}
+    )
+    monkeypatch.setattr(
+        runner.chunk_policies, "get_chunk_policy", lambda _ref: _DummyLineChunkPolicy()
+    )
+    monkeypatch.setattr(
+        flow_v2_runner,
+        "emit_api_stats_event",
+        lambda payload: captured_events.append(payload),
+    )
+
+    output_path = str(tmp_path / "stats_meta.txt")
+    runner.run("dummy-input.txt", output_path=output_path, save_cache=False)
+
+    phases = [event.get("phase") for event in captured_events]
+    assert "request_start" in phases
+    assert "request_end" in phases
+
+    end_event = next(
+        event for event in captured_events if event.get("phase") == "request_end"
+    )
+    end_meta = end_event.get("meta") or {}
+    assert end_meta.get("chunkType") == "line"
+    assert end_meta.get("parserRef") == "parser_stub"
+    assert end_meta.get("blockLineIds") == [0]
+    assert end_meta.get("targetLineIds") == [0]
+    assert end_meta.get("responseId") == "resp_1"
+    assert end_meta.get("responseModel") == "stub-model"
+    assert end_meta.get("finishReason") == "stop"
+    assert (end_meta.get("usage") or {}).get("prompt_tokens") == 11
+    assert end_event.get("requestPayload", {}).get("model") == "stub-model"
+    assert (end_event.get("responseHeaders") or {}).get("content-type") == "application/json"
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_request_error_payload_uses_merged_request_payload(
+    tmp_path,
+    monkeypatch,
+):
+    runner = _make_runner(tmp_path)
+    runner.pipeline = {
+        "provider": "provider_stub",
+        "prompt": "prompt_stub",
+        "parser": "parser_stub",
+        "chunk_policy": "chunk_stub",
+        "settings": {"max_retries": 0, "concurrency": 1},
+    }
+
+    class _Request:
+        def __init__(self):
+            self.model = "stub-model"
+            self.messages = [{"role": "user", "content": "x"}]
+            self.temperature = None
+            self.max_tokens = None
+            self.extra = {"top_p": 0.95, "max_tokens": 4096}
+            self.headers = {"X-Test": "1"}
+            self.provider_id = "endpoint_1"
+            self.request_id = "req_err_1"
+            self.meta = {"endpoint_id": "ep_1", "endpoint_label": "node-a"}
+
+    class _Provider:
+        profile = {
+            "type": "openai_compat",
+            "model": "stub-model",
+            "base_url": "http://localhost:8000/v1",
+        }
+
+        def build_request(self, _messages, _settings):
+            return _Request()
+
+        def send(self, _request):
+            raise ProviderError(
+                "OpenAI-compatible HTTP 524: timeout",
+                error_type="http_error",
+                status_code=524,
+                duration_ms=15000,
+                url="http://localhost:8000/v1/chat/completions",
+                response_text="timeout",
+                request_headers={"X-Test": "1"},
+                response_headers={"server": "cloudflare", "cf-ray": "test-ray"},
+            )
+
+    class _Parser:
+        profile = {"type": "plain"}
+
+        def parse(self, _text):
+            raise AssertionError("ProviderError path should not call parser")
+
+    captured_events = []
+    doc = _DummyDoc(["L1"])
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.DocumentFactory.get_document",
+        lambda _path: doc,
+    )
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.build_messages",
+        lambda *_args, **_kwargs: [{"role": "user", "content": "x"}],
+    )
+    monkeypatch.setattr(runner.providers, "get_provider", lambda _ref: _Provider())
+    monkeypatch.setattr(runner.parsers, "get_parser", lambda _ref: _Parser())
+    monkeypatch.setattr(
+        runner.prompts, "get_prompt", lambda _ref: {"user_template": "{{source}}"}
+    )
+    monkeypatch.setattr(
+        runner.chunk_policies, "get_chunk_policy", lambda _ref: _DummyLineChunkPolicy()
+    )
+    monkeypatch.setattr(
+        flow_v2_runner,
+        "emit_api_stats_event",
+        lambda payload: captured_events.append(payload),
+    )
+
+    output_path = str(tmp_path / "stats_error_payload.txt")
+    runner.run("dummy-input.txt", output_path=output_path, save_cache=False)
+
+    err_event = next(
+        event for event in captured_events if event.get("phase") == "request_error"
+    )
+    request_payload = err_event.get("requestPayload") or {}
+    assert request_payload.get("model") == "stub-model"
+    assert request_payload.get("messages") == [{"role": "user", "content": "x"}]
+    assert request_payload.get("top_p") == 0.95
+    assert request_payload.get("max_tokens") == 4096
+    assert "extra" not in request_payload
+    assert (err_event.get("requestHeaders") or {}).get("X-Test") == "1"
+    assert (err_event.get("responseHeaders") or {}).get("server") == "cloudflare"
+    assert (err_event.get("responsePayload") or {}).get("statusCode") == 524
+    assert (err_event.get("responsePayload") or {}).get("responseText") == "timeout"
+
+
+@pytest.mark.unit
 def test_flow_v2_runner_realtime_cache_survives_mid_run_abort(
     tmp_path,
     monkeypatch,
@@ -1096,6 +1327,94 @@ def test_flow_v2_runner_resume_from_existing_output_when_temp_cache_missing(
 
     assert call_counter["count"] == 1
     assert [block.prompt_text for block in input_doc.saved_blocks] == ["T1", "T2", "T3"]
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_resume_accepts_relaxed_fingerprint_match(
+    tmp_path,
+    monkeypatch,
+):
+    runner = _make_runner(tmp_path)
+    runner.pipeline = {
+        "id": "pipe_x",
+        "provider": "provider_stub",
+        "prompt": "prompt_stub",
+        "parser": "parser_stub",
+        "chunk_policy": "chunk_stub",
+        "settings": {"max_retries": 0, "concurrency": 1},
+    }
+
+    call_counter = {"count": 0}
+
+    class _Provider:
+        profile = {"model": "stub-model"}
+
+        def build_request(self, _messages, _settings):
+            return object()
+
+        def send(self, _request):
+            call_counter["count"] += 1
+            return ProviderResponse(text="T2", raw={})
+
+    class _Parser:
+        profile = {"type": "plain"}
+
+        def parse(self, text):
+            return type("Parsed", (), {"text": text})()
+
+    input_doc = _DummyDoc(["S1", "S2"])
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.DocumentFactory.get_document",
+        lambda _path: input_doc,
+    )
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.build_messages",
+        lambda *_args, **_kwargs: [{"role": "user", "content": "x"}],
+    )
+    monkeypatch.setattr(runner.providers, "get_provider", lambda _ref: _Provider())
+    monkeypatch.setattr(runner.parsers, "get_parser", lambda _ref: _Parser())
+    monkeypatch.setattr(
+        runner.prompts, "get_prompt", lambda _ref: {"user_template": "{{source}}"}
+    )
+    monkeypatch.setattr(
+        runner.chunk_policies, "get_chunk_policy", lambda _ref: _DummyLineChunkPolicy()
+    )
+
+    output_path = str(tmp_path / "resume_soft.txt")
+    temp_path = tmp_path / "resume_soft.txt.temp.jsonl"
+    temp_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "type": "fingerprint",
+                        "version": 2,
+                        "input": "dummy-input.txt",
+                        "pipeline": "pipe_x",
+                        "chunk_type": "line",
+                        "config_hash": "outdated_hash",
+                    },
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    {"type": "block", "index": 0, "src": "S1", "dst": "T1"},
+                    ensure_ascii=False,
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    runner.run(
+        "dummy-input.txt",
+        output_path=output_path,
+        resume=True,
+        save_cache=False,
+    )
+
+    assert call_counter["count"] == 1
+    assert [block.prompt_text for block in input_doc.saved_blocks] == ["T1", "T2"]
 
 
 @pytest.mark.unit
@@ -1253,3 +1572,202 @@ def test_flow_v2_runner_txt_line_mode_ignores_blank_lines_in_api_count(
     assert final_rows[-1]["sourceLines"] == 3
     assert progress_rows
     assert progress_rows[-1]["total"] == 3
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_strict_concurrency_uses_fixed_inflight_limit(
+    tmp_path,
+    monkeypatch,
+):
+    runner = _make_runner(tmp_path)
+    runner.pipeline = {
+        "provider": "provider_stub",
+        "prompt": "prompt_stub",
+        "parser": "parser_stub",
+        "chunk_policy": "chunk_stub",
+        "settings": {"max_retries": 0, "concurrency": 2},
+    }
+
+    state = {"active": 0, "max_active": 0, "count": 0}
+    lock = threading.Lock()
+
+    class _Provider:
+        profile = {"model": "stub-model", "strict_concurrency": True}
+
+        def build_request(self, _messages, _settings):
+            return object()
+
+        def send(self, _request):
+            with lock:
+                state["active"] += 1
+                state["count"] += 1
+                state["max_active"] = max(state["max_active"], state["active"])
+            try:
+                time.sleep(0.02)
+                return ProviderResponse(text="OK", raw={})
+            finally:
+                with lock:
+                    state["active"] -= 1
+
+    class _Parser:
+        profile = {"type": "plain"}
+
+        def parse(self, text):
+            return type("Parsed", (), {"text": text})()
+
+    doc = _DummyDoc(["A", "B", "C", "D"])
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.DocumentFactory.get_document",
+        lambda _path: doc,
+    )
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.build_messages",
+        lambda *_args, **_kwargs: [{"role": "user", "content": "x"}],
+    )
+    monkeypatch.setattr(runner.providers, "get_provider", lambda _ref: _Provider())
+    monkeypatch.setattr(runner.parsers, "get_parser", lambda _ref: _Parser())
+    monkeypatch.setattr(
+        runner.prompts, "get_prompt", lambda _ref: {"user_template": "{{source}}"}
+    )
+    monkeypatch.setattr(
+        runner.chunk_policies, "get_chunk_policy", lambda _ref: _DummyLineChunkPolicy()
+    )
+
+    runner.run("dummy-input.txt", output_path=str(tmp_path / "strict.txt"), save_cache=False)
+
+    assert state["count"] == 4
+    assert state["max_active"] == 2
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_txt_block_mode_uses_double_newline_separator(
+    tmp_path,
+    monkeypatch,
+):
+    runner = _make_runner(tmp_path)
+    runner.pipeline = {
+        "provider": "provider_stub",
+        "prompt": "prompt_stub",
+        "parser": "parser_stub",
+        "chunk_policy": "chunk_stub",
+        "settings": {"max_retries": 0, "concurrency": 1},
+    }
+
+    call_counter = {"count": 0}
+
+    class _Provider:
+        profile = {"model": "stub-model"}
+
+        def build_request(self, _messages, _settings):
+            return object()
+
+        def send(self, _request):
+            call_counter["count"] += 1
+            return ProviderResponse(text=f"T{call_counter['count']}", raw={})
+
+    class _Parser:
+        profile = {"type": "plain"}
+
+        def parse(self, text):
+            return type("Parsed", (), {"text": text})()
+
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.build_messages",
+        lambda *_args, **_kwargs: [{"role": "user", "content": "x"}],
+    )
+    monkeypatch.setattr(runner.providers, "get_provider", lambda _ref: _Provider())
+    monkeypatch.setattr(runner.parsers, "get_parser", lambda _ref: _Parser())
+    monkeypatch.setattr(
+        runner.prompts, "get_prompt", lambda _ref: {"user_template": "{{source}}"}
+    )
+    monkeypatch.setattr(
+        runner.chunk_policies,
+        "get_chunk_policy",
+        lambda _ref: _DummyBlockChunkPolicy(),
+    )
+
+    input_path = tmp_path / "block_input.txt"
+    input_path.write_text("L1\nL2\nL3\n", encoding="utf-8")
+    output_path = tmp_path / "block_output.txt"
+
+    runner.run(str(input_path), output_path=str(output_path), save_cache=False)
+
+    assert output_path.read_text(encoding="utf-8") == "T1\n\nT2\n\nT3\n\n"
+
+
+@pytest.mark.unit
+def test_flow_v2_runner_stop_preview_uses_double_newline_in_block_mode(
+    tmp_path,
+    monkeypatch,
+):
+    runner = _make_runner(tmp_path)
+    runner.pipeline = {
+        "provider": "provider_stub",
+        "prompt": "prompt_stub",
+        "parser": "parser_stub",
+        "chunk_policy": "chunk_stub",
+        "settings": {"max_retries": 0, "concurrency": 1},
+    }
+
+    class _Provider:
+        profile = {"model": "stub-model"}
+
+        def build_request(self, _messages, _settings):
+            return object()
+
+        def send(self, _request):
+            return ProviderResponse(text="T", raw={})
+
+    class _Parser:
+        profile = {"type": "plain"}
+
+        def parse(self, text):
+            return type("Parsed", (), {"text": text})()
+
+    stop_flag = tmp_path / "stop_block.flag"
+    done_state = {"count": 0}
+    original_block_done = flow_v2_runner.ProgressTracker.block_done
+
+    def _block_done_and_request_stop(self, *args, **kwargs):
+        result = original_block_done(self, *args, **kwargs)
+        done_state["count"] += 1
+        if done_state["count"] >= 2 and not stop_flag.exists():
+            stop_flag.write_text("1", encoding="utf-8")
+        return result
+
+    doc = _DummyDoc(["S1", "S2", "S3"])
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.DocumentFactory.get_document",
+        lambda _path: doc,
+    )
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.build_messages",
+        lambda *_args, **_kwargs: [{"role": "user", "content": "x"}],
+    )
+    monkeypatch.setattr(runner.providers, "get_provider", lambda _ref: _Provider())
+    monkeypatch.setattr(runner.parsers, "get_parser", lambda _ref: _Parser())
+    monkeypatch.setattr(
+        runner.prompts, "get_prompt", lambda _ref: {"user_template": "{{source}}"}
+    )
+    monkeypatch.setattr(
+        runner.chunk_policies,
+        "get_chunk_policy",
+        lambda _ref: _DummyBlockChunkPolicy(),
+    )
+    monkeypatch.setattr(
+        "murasaki_flow_v2.pipelines.runner.ProgressTracker.block_done",
+        _block_done_and_request_stop,
+    )
+
+    output_path = tmp_path / "stop_block.txt"
+    with pytest.raises(PipelineStopRequested, match="stop_requested"):
+        runner.run(
+            "dummy-input.txt",
+            output_path=str(output_path),
+            save_cache=False,
+            stop_flag_path=str(stop_flag),
+        )
+
+    interrupted_path = tmp_path / "stop_block.txt.interrupted.txt"
+    assert interrupted_path.exists()
+    assert interrupted_path.read_text(encoding="utf-8") == "T\n\nT\n\n"

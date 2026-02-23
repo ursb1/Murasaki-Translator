@@ -42,6 +42,8 @@ class ProviderError(RuntimeError):
         duration_ms: int | None = None,
         url: str | None = None,
         response_text: str | None = None,
+        request_headers: Dict[str, str] | None = None,
+        response_headers: Dict[str, str] | None = None,
     ) -> None:
         super().__init__(message)
         self.error_type = error_type
@@ -50,6 +52,8 @@ class ProviderError(RuntimeError):
         self.duration_ms = duration_ms
         self.url = url
         self.response_text = response_text
+        self.request_headers = request_headers
+        self.response_headers = response_headers
 
 
 class BaseProvider:

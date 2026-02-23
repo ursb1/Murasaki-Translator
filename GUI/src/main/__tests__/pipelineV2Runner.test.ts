@@ -118,3 +118,24 @@ describe("pipelineV2Runner api stats event parser", () => {
     ).toBeNull();
   });
 });
+
+describe("pipelineV2Runner temp artifact matcher", () => {
+  it("matches managed legacy temp artifact names", () => {
+    expect(__testOnly.isLegacyFlowV2TempFile("temp_flowv2_stop_run.flag")).toBe(
+      true,
+    );
+    expect(
+      __testOnly.isLegacyFlowV2TempFile("temp_rules_pre_ab12cd34.json"),
+    ).toBe(true);
+    expect(
+      __testOnly.isLegacyFlowV2TempFile("temp_rules_post_ab12cd34.json"),
+    ).toBe(true);
+  });
+
+  it("ignores non-managed files", () => {
+    expect(__testOnly.isLegacyFlowV2TempFile("temp_progress.jsonl")).toBe(
+      false,
+    );
+    expect(__testOnly.isLegacyFlowV2TempFile("notes.txt")).toBe(false);
+  });
+});

@@ -34,6 +34,10 @@ describe("apiStatsStore normalizeEvent", () => {
         "api-key": "abc",
         "content-type": "application/json",
       },
+      requestPayload: {
+        max_tokens: 1024,
+        auth_token: "secret_token",
+      },
     });
 
     expect(event.apiProfileId).toMatch(/^adhoc_[0-9a-f]{12}$/);
@@ -44,6 +48,28 @@ describe("apiStatsStore normalizeEvent", () => {
     expect(event.requestHeaders?.["X-Trace-Id"]).toBe("trace_1");
     expect(event.responseHeaders?.["api-key"]).toBe("[REDACTED]");
     expect(event.responseHeaders?.["content-type"]).toBe("application/json");
+    expect((event.requestPayload as Record<string, unknown>).max_tokens).toBe(1024);
+    expect((event.requestPayload as Record<string, unknown>).auth_token).toBe(
+      "[REDACTED]",
+    );
+  });
+
+  it("truncates oversized payload preview to storage cap", () => {
+    const hugeText = "x".repeat(120_000);
+    const event = mustNormalize({
+      apiProfileId: "api_demo",
+      requestId: "req_large_payload",
+      phase: "request_end",
+      source: "api_test",
+      origin: "unit_test",
+      requestPayload: {
+        content: hugeText,
+      },
+    });
+    const payload = event.requestPayload as Record<string, unknown>;
+    expect(payload.truncated).toBe(true);
+    expect(payload.rawLength).toBeGreaterThan(100_000);
+    expect(String(payload.preview || "").length).toBe(100_000);
   });
 });
 
@@ -82,6 +108,10 @@ describe("apiStatsStore aggregation", () => {
         durationMs: 300,
         inputTokens: 10,
         outputTokens: 20,
+        meta: {
+          blockIndex: 0,
+          finishReason: "stop",
+        },
       }),
       mustNormalize({
         apiProfileId: "api_demo",
@@ -120,6 +150,10 @@ describe("apiStatsStore aggregation", () => {
     expect(requests).toHaveLength(3);
     expect(requests.map((item) => item.requestId)).toEqual(["r3", "r2", "r1"]);
     expect(requests.find((item) => item.requestId === "r1")?.retryCount).toBe(1);
+    expect(requests.find((item) => item.requestId === "r1")?.meta).toMatchObject({
+      blockIndex: 0,
+      finishReason: "stop",
+    });
     expect(requests.find((item) => item.requestId === "r2")?.phaseFinal).toBe(
       "request_error",
     );
@@ -131,14 +165,25 @@ describe("apiStatsStore aggregation", () => {
     expect(overview.failedRequests).toBe(1);
     expect(overview.inflightRequests).toBe(1);
     expect(overview.successRate).toBe(33.33);
+    expect(overview.failureRate).toBe(33.33);
     expect(overview.totalRetries).toBe(1);
+    expect(overview.avgRetriesPerRequest).toBe(0.33);
     expect(overview.totalInputTokens).toBe(17);
     expect(overview.totalOutputTokens).toBe(21);
+    expect(overview.totalTokens).toBe(38);
+    expect(overview.outputInputRatio).toBe(1.2353);
     expect(overview.avgLatencyMs).toBe(400);
     expect(overview.p50LatencyMs).toBe(300);
     expect(overview.p95LatencyMs).toBe(500);
+    expect(overview.fastestLatencyMs).toBe(300);
+    expect(overview.slowestLatencyMs).toBe(500);
     expect(overview.requestsPerMinuteAvg).toBe(0.15);
     expect(overview.peakRequestsPerMinute).toBe(1);
+    expect(overview.status2xx).toBe(1);
+    expect(overview.status4xx).toBe(1);
+    expect(overview.status5xx).toBe(0);
+    expect(overview.statusUnknown).toBe(1);
+    expect(overview.statusOther).toBe(0);
     expect(overview.statusCodeCounts).toMatchObject({
       "200": 1,
       "429": 1,
@@ -154,7 +199,10 @@ describe("apiStatsStore aggregation", () => {
     });
     const localHour = new Date("2026-02-22T00:00:00.000Z").getHours();
     expect(overview.byHour[localHour]?.count).toBe(3);
+    expect(overview.firstRequestAt).toBe("2026-02-22T00:00:00.000Z");
     expect(overview.latestRequestAt).toBe("2026-02-22T00:20:00.000Z");
+    expect(overview.observationWindowMs).toBe(1_200_000);
+    expect(overview.observationWindowMinutes).toBe(20);
 
     const trendRequests = __testOnly.computeTrend(requests, "requests", "hour");
     expect(trendRequests).toHaveLength(1);
@@ -168,6 +216,10 @@ describe("apiStatsStore aggregation", () => {
 
     const trendLatency = __testOnly.computeTrend(requests, "latency", "hour");
     expect(trendLatency[0]?.value).toBe(400);
+    const trendErrorRate = __testOnly.computeTrend(requests, "error_rate", "hour");
+    expect(trendErrorRate[0]?.value).toBe(33.33);
+    const trendSuccessRate = __testOnly.computeTrend(requests, "success_rate", "hour");
+    expect(trendSuccessRate[0]?.value).toBe(66.67);
 
     const breakdownStatus = __testOnly.computeBreakdown(requests, "status_code");
     const statusMap = Object.fromEntries(
@@ -186,6 +238,19 @@ describe("apiStatsStore aggregation", () => {
     expect(errorMap).toMatchObject({
       rate_limited: 1,
       none: 2,
+    });
+
+    const breakdownStatusClass = __testOnly.computeBreakdown(
+      requests,
+      "status_class",
+    );
+    const statusClassMap = Object.fromEntries(
+      breakdownStatusClass.map((item) => [item.key, item.count]),
+    );
+    expect(statusClassMap).toMatchObject({
+      "2xx": 1,
+      "4xx": 1,
+      unknown: 1,
     });
   });
 });

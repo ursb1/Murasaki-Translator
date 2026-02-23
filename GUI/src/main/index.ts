@@ -1,4 +1,4 @@
-import {
+﻿import {
   app,
   shell,
   BrowserWindow,
@@ -7,6 +7,7 @@ import {
   Notification,
   nativeTheme,
   session,
+  clipboard,
 } from "electron";
 import type { IpcMainEvent as ElectronEvent } from "electron";
 import {
@@ -78,7 +79,7 @@ type WatchFolderEntry = {
 
 const watchFolderEntries = new Map<string, WatchFolderEntry>();
 
-// 主进程日志缓冲区 - 用于调试工具箱查看完整终端日志
+// 涓昏繘绋嬫棩蹇楃紦鍐插尯 - 鐢ㄤ簬璋冭瘯宸ュ叿绠辨煡鐪嬪畬鏁寸粓绔棩蹇?
 const mainProcessLogs: string[] = [];
 const MAX_MAIN_LOGS = 1000;
 
@@ -371,15 +372,26 @@ function createWindow(): void {
       event.preventDefault();
     }
   });
+
+  // Capture renderer/gpu process failures for post-mortem diagnosis.
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    console.error("[RendererGone]", {
+      reason: details.reason,
+      exitCode: details.exitCode,
+    });
+  });
+  mainWindow.webContents.on("unresponsive", () => {
+    console.warn("[RendererUnresponsive] window became unresponsive");
+  });
 }
 
 /**
- * 清理所有子进程
+ * 娓呯悊鎵€鏈夊瓙杩涚▼
  */
 async function cleanupProcesses(): Promise<void> {
   console.log("[App] Cleaning up processes...");
 
-  // 停止翻译进程
+  // 鍋滄缈昏瘧杩涚▼
   if (pythonProcess) {
     try {
       pythonProcess.kill();
@@ -404,7 +416,7 @@ async function cleanupProcesses(): Promise<void> {
     console.error("[App] Error stopping pipeline v2 server:", e);
   }
 
-  // 停止 ServerManager 管理的 llama-server
+  // 鍋滄 ServerManager 绠＄悊鐨?llama-server
   try {
     await ServerManager.getInstance().stop();
   } catch (e) {
@@ -421,7 +433,7 @@ async function cleanupProcesses(): Promise<void> {
 }
 
 /**
- * 清理临时文件目录（启动时调用，防止残留）
+ * 娓呯悊涓存椂鏂囦欢鐩綍锛堝惎鍔ㄦ椂璋冪敤锛岄槻姝㈡畫鐣欙級
  */
 function cleanupTempDirectory(): void {
   try {
@@ -460,14 +472,14 @@ function cleanupTempDirectory(): void {
   }
 }
 
-// macOS GPU 监控 sudo 配置
+// macOS GPU 鐩戞帶 sudo 閰嶇疆
 async function setupMacOSGPUMonitoring(): Promise<void> {
   if (process.platform !== "darwin") return;
 
   try {
     const { execSync, exec } = require("child_process");
 
-    // 检查是否已配置免密 sudo
+    // 妫€鏌ユ槸鍚﹀凡閰嶇疆鍏嶅瘑 sudo
     try {
       execSync("sudo -n powermetrics --help", {
         timeout: 2000,
@@ -481,7 +493,7 @@ async function setupMacOSGPUMonitoring(): Promise<void> {
       );
     }
 
-    // 使用 osascript 弹出 macOS 原生授权对话框
+    // 浣跨敤 osascript 寮瑰嚭 macOS 鍘熺敓鎺堟潈瀵硅瘽妗?
     const username = require("os").userInfo().username;
     const sudoersContent = `${username} ALL=(ALL) NOPASSWD: /usr/bin/powermetrics`;
     const command = `osascript -e 'do shell script "mkdir -p /etc/sudoers.d && echo \\"${sudoersContent}\\" > /etc/sudoers.d/murasaki-powermetrics && chmod 0440 /etc/sudoers.d/murasaki-powermetrics" with administrator privileges'`;
@@ -528,6 +540,21 @@ app.whenReady().then(() => {
   );
 
   createWindow();
+  app.on("child-process-gone", (_event, details) => {
+    if (details.type === "GPU") {
+      console.error("[GpuProcessGone]", {
+        reason: details.reason,
+        exitCode: details.exitCode,
+      });
+      return;
+    }
+    console.warn("[ChildProcessGone]", {
+      type: details.type,
+      serviceName: details.serviceName,
+      reason: details.reason,
+      exitCode: details.exitCode,
+    });
+  });
   const resolveProfilesDir = () => {
     const envDir =
       process.env.MURASAKI_PROFILES_DIR || process.env.PIPELINE_V2_PROFILES_DIR;
@@ -580,7 +607,7 @@ app.whenReady().then(() => {
     },
   });
 
-  // macOS: 配置 GPU 监控 sudo（在窗口创建后）
+  // macOS: 閰嶇疆 GPU 鐩戞帶 sudo锛堝湪绐楀彛鍒涘缓鍚庯級
   setupMacOSGPUMonitoring();
 
   app.on("activate", function () {
@@ -590,7 +617,7 @@ app.whenReady().then(() => {
   });
 });
 
-// 应用退出前清理资源
+// 搴旂敤閫€鍑哄墠娓呯悊璧勬簮
 let shutdownInProgress = false;
 const handleAppShutdown = async (): Promise<void> => {
   if (shutdownInProgress) return;
@@ -837,10 +864,10 @@ const spawnPythonProcess = (
 
   if (pythonInfo.type === "bundle") {
     // Bundle mode: directly execute the bundle with args
-    // PyInstaller bundle 内置入口点，需要移除脚本路径
+    // PyInstaller bundle 鍐呯疆鍏ュ彛鐐癸紝闇€瑕佺Щ闄よ剼鏈矾寰?
     // args = ['path/to/main.py', '--file', ...] -> ['--file', ...]
     cmd = pythonInfo.path;
-    // 移除脚本路径，仅保留实际参数
+    // 绉婚櫎鑴氭湰璺緞锛屼粎淇濈暀瀹為檯鍙傛暟
     finalArgs = args.slice(1);
     console.log(`[Spawn Bundle] ${cmd} ${finalArgs.join(" ")}`);
   } else {
@@ -861,7 +888,7 @@ const spawnPythonProcess = (
         ...finalArgs,
       ];
       console.log(
-        `[Spawn Python] debugpy enabled – waiting for debugger on port ${debugPort}`,
+        `[Spawn Python] debugpy enabled 鈥?waiting for debugger on port ${debugPort}`,
       );
     }
 
@@ -1114,7 +1141,7 @@ import {
 
 let remoteClient: RemoteClient | null = null;
 const REMOTE_NOTICE =
-  "远程模式已启用：所有交互都会直接发送到服务器，并同步镜像保存到本地。";
+  "i18n:remoteRuntime.noticeModeEnabled";
 const REMOTE_SYNC_ROOT = join(getUserDataPath(), "remote-sync");
 const REMOTE_SYNC_MIRROR_PATH = join(REMOTE_SYNC_ROOT, "sync-mirror.log");
 const REMOTE_EVENT_LOG_PATH = join(REMOTE_SYNC_ROOT, "network-events.log");
@@ -1420,30 +1447,34 @@ const buildRemoteActionHint = (params: {
   const hints: string[] = [];
   switch (params.code) {
     case "REMOTE_UNAUTHORIZED":
-      hints.push("请确认 API Key 是否正确，且服务端已启用鉴权。");
+      hints.push("i18n:remoteRuntime.hintUnauthorized");
       break;
     case "REMOTE_NOT_FOUND":
-      hints.push("请确认远程地址是否正确（通常为 http(s)://host:port）。");
+      hints.push("i18n:remoteRuntime.hintNotFound");
       break;
     case "REMOTE_TIMEOUT":
-      hints.push("请求超时，建议检查服务器负载或稍后重试。");
+      hints.push("i18n:remoteRuntime.hintTimeout");
       break;
     case "REMOTE_NETWORK":
-      hints.push("网络不可达，请检查网络/防火墙/代理与服务端在线状态。");
+      hints.push("i18n:remoteRuntime.hintNetwork");
       break;
     case "REMOTE_PROTOCOL":
-      hints.push("连接未就绪，请先在服务页测试远程连接。");
+      hints.push("i18n:remoteRuntime.hintProtocol");
       break;
     default:
       break;
   }
 
   if (remoteNetworkStats.lastError?.message) {
-    hints.push(`最近网络错误：${remoteNetworkStats.lastError.message}`);
+    hints.push(
+      `i18n:remoteRuntime.hintLatestNetworkError|${encodeURIComponent(
+        remoteNetworkStats.lastError.message,
+      )}`,
+    );
   }
 
-  hints.push("可在服务管理 → 远程运行详情 打开网络日志/任务镜像日志排查。");
-  return hints.join(" ");
+  hints.push("i18n:remoteRuntime.hintOpenDetails");
+  return hints.join("\n");
 };
 
 const formatRemoteError = (error: unknown) => {
@@ -2108,7 +2139,7 @@ ipcMain.handle("check-update", async () => {
 
 // --- Main Process Logs IPC ---
 ipcMain.handle("get-main-process-logs", () => {
-  return mainProcessLogs.slice(); // 返回副本
+  return mainProcessLogs.slice(); // 杩斿洖鍓湰
 });
 
 // --- System Diagnostics IPC ---
@@ -2156,7 +2187,7 @@ ipcMain.handle("get-system-diagnostics", async () => {
     return `"${value.replace(/"/g, '\\"')}"`;
   };
 
-  // 辅助函数：带超时的异步执行
+  // 杈呭姪鍑芥暟锛氬甫瓒呮椂鐨勫紓姝ユ墽琛?
   const execWithTimeout = async (
     cmd: string,
     timeout: number,
@@ -2484,7 +2515,7 @@ ipcMain.handle("get-system-diagnostics", async () => {
     }
   })();
 
-  // 并行等待所有检测完成
+  // 骞惰绛夊緟鎵€鏈夋娴嬪畬鎴?
   await Promise.all([gpuPromise, pythonPromise, cudaPromise, vulkanPromise]);
 
   // llama-server Status Check (Use ServerManager's actual port)
@@ -2655,10 +2686,10 @@ ipcMain.handle("read-server-log", async () => {
     }
 
     const stats = fs.statSync(logPath);
-    const maxBytes = 512 * 1024; // 最多读取 512KB（约 10000 行）
+    const maxBytes = 512 * 1024; // 鏈€澶氳鍙?512KB锛堢害 10000 琛岋級
     const lineCount = 500;
 
-    // 如果文件较小，直接读取
+    // 濡傛灉鏂囦欢杈冨皬锛岀洿鎺ヨ鍙?
     if (stats.size <= maxBytes) {
       const content = fs.readFileSync(logPath, "utf-8");
       const lines = content.split("\n");
@@ -2670,7 +2701,7 @@ ipcMain.handle("read-server-log", async () => {
       };
     }
 
-    // 大文件：仅读取末尾部分
+    // 澶ф枃浠讹細浠呰鍙栨湯灏鹃儴鍒?
     return new Promise((resolve) => {
       const chunks: string[] = [];
       const startPos = Math.max(0, stats.size - maxBytes);
@@ -2682,7 +2713,7 @@ ipcMain.handle("read-server-log", async () => {
       stream.on("data", (chunk: string) => chunks.push(chunk));
       stream.on("end", () => {
         const content = chunks.join("");
-        // 跳过第一行（可能是不完整行）
+        // 璺宠繃绗竴琛岋紙鍙兘鏄笉瀹屾暣琛岋級
         const lines = content.split("\n").slice(1);
         resolve({
           exists: true,
@@ -2835,7 +2866,7 @@ ipcMain.handle("get-model-info", async (_event, modelName: string) => {
   const paramsB = paramsMatch ? parseFloat(paramsMatch[1]) : null;
 
   // Extract quant (e.g., IQ4_XS, IQ3_M, Q4_K_M, Q5_K, Q8_0, F16)
-  // 优先匹配 IQ 系列，再匹配 Q 系列
+  // 浼樺厛鍖归厤 IQ 绯诲垪锛屽啀鍖归厤 Q 绯诲垪
   const quantMatch = modelName.match(
     /IQ[1-4]_?(XXS|XS|S|M|NL)|Q[2-8]_?[Kk]?_?[MmSsLl]?|[Ff]16|BF16/i,
   );
@@ -3016,7 +3047,7 @@ ipcMain.handle("check-env-component", async (_event, component: string) => {
       clearTimeout(timeout);
 
       try {
-        // 稳健提取：优先从进程输出解析 JSON，失败则回退读取报告文件
+        // 绋冲仴鎻愬彇锛氫紭鍏堜粠杩涚▼杈撳嚭瑙ｆ瀽 JSON锛屽け璐ュ垯鍥為€€璇诲彇鎶ュ憡鏂囦欢
         const mergedOutput = [output, errorOutput].filter(Boolean).join("\n");
         const report =
           extractLastJsonObject<any>(mergedOutput) ||
@@ -3030,7 +3061,7 @@ ipcMain.handle("check-env-component", async (_event, component: string) => {
           });
           return;
         }
-        // 找到指定组件的信息
+        // 鎵惧埌鎸囧畾缁勪欢鐨勪俊鎭?
         const componentData = report.components?.find(
           (c: any) => c.name.toLowerCase() === component.toLowerCase(),
         );
@@ -3211,11 +3242,11 @@ ipcMain.handle("fix-env-component", async (_event, component: string) => {
       resolved = true;
       proc.kill();
       resolve({ success: false, error: "Fix timed out (10 minutes)" });
-    }, 600000); // 10 分钟超时
+    }, 600000); // 10 鍒嗛挓瓒呮椂
     if (proc.stdout) {
       proc.stdout.on("data", (d) => {
         stdoutBuffer += d.toString();
-        // 解析进度并发送到前端（带分片拼接，避免跨 chunk JSON 断裂）
+        // 瑙ｆ瀽杩涘害骞跺彂閫佸埌鍓嶇锛堝甫鍒嗙墖鎷兼帴锛岄伩鍏嶈法 chunk JSON 鏂锛?
         const lines = stdoutBuffer.split(/\r?\n/);
         stdoutBuffer = lines.pop() || "";
         for (const line of lines) {
@@ -3230,7 +3261,7 @@ ipcMain.handle("fix-env-component", async (_event, component: string) => {
               console.log(
                 `[EnvFixer] Progress: ${progressData.stage} ${progressData.progress}%`,
               );
-              // 将进度事件发送到前端
+              // 灏嗚繘搴︿簨浠跺彂閫佸埌鍓嶇
               if (mainWindow && !mainWindow.isDestroyed()) {
                 mainWindow.webContents.send("env-fix-progress", {
                   component,
@@ -3241,7 +3272,7 @@ ipcMain.handle("fix-env-component", async (_event, component: string) => {
               console.error("[EnvFixer] Failed to parse progress:", e);
             }
           } else if (trimmedLine.startsWith("{") && trimmedLine.endsWith("}")) {
-            // 可能是结果 JSON 行，先收集后统一解析
+            // 鍙兘鏄粨鏋?JSON 琛岋紝鍏堟敹闆嗗悗缁熶竴瑙ｆ瀽
             output += line + "\n";
           } else {
             output += line + "\n";
@@ -3269,7 +3300,7 @@ ipcMain.handle("fix-env-component", async (_event, component: string) => {
       }
 
       try {
-        // 清理 output 中可能夹杂的非 JSON 内容
+        // 娓呯悊 output 涓彲鑳藉す鏉傜殑闈?JSON 鍐呭
         const mergedOutput = [output, errorOutput].filter(Boolean).join("\n");
         const result = extractLastJsonObject<any>(mergedOutput);
         if (!result) {
@@ -3288,7 +3319,9 @@ ipcMain.handle("fix-env-component", async (_event, component: string) => {
             false,
           message:
             result.fixResult?.message ||
-            (result.summary?.overallStatus === "ok" ? "修复成功" : "未知结果"),
+            (result.summary?.overallStatus === "ok"
+              ? "Fix succeeded"
+              : "Unknown fix result"),
           exitCode: code,
           output,
           errorOutput,
@@ -3425,7 +3458,7 @@ ipcMain.handle("read-file", async (_event, path: string) => {
   return null;
 });
 
-// 写入文件（用于导出译文）
+// 鍐欏叆鏂囦欢锛堢敤浜庡鍑鸿瘧鏂囷級
 ipcMain.handle("write-file", async (_event, path: string, content: string) => {
   try {
     const safePath = ensureLocalFilePathForUserOperation(path);
@@ -3454,7 +3487,7 @@ ipcMain.handle(
   },
 );
 
-// 加载翻译缓存（用于校对界面）
+// 鍔犺浇缈昏瘧缂撳瓨锛堢敤浜庢牎瀵圭晫闈級
 ipcMain.handle("load-cache", async (_event, cachePath: string) => {
   try {
     const safePath = ensureLocalFilePathForUserOperation(cachePath);
@@ -3468,33 +3501,164 @@ ipcMain.handle("load-cache", async (_event, cachePath: string) => {
   return null;
 });
 
-// 保存翻译缓存（用于校对界面）
+// 淇濆瓨缈昏瘧缂撳瓨锛堢敤浜庢牎瀵圭晫闈級
 ipcMain.handle(
   "save-cache",
   async (_event, cachePath: string, data: Record<string, unknown>) => {
-    try {
-      const safePath = ensureLocalFilePathForUserOperation(cachePath);
-      await fs.promises.mkdir(dirname(safePath), { recursive: true });
+    const tryWriteCacheJson = async (targetPath: string): Promise<string> => {
+      const safePath = ensureLocalFilePathForUserOperation(targetPath);
+      await ensureDirExists(safePath);
       await fs.promises.writeFile(
         safePath,
         JSON.stringify(data, null, 2),
         "utf-8",
       );
+      return safePath;
+    };
+    try {
+      await tryWriteCacheJson(cachePath);
       return true;
     } catch (e) {
+      const primaryError = e instanceof Error ? e.message : String(e);
+      const fallbackCandidates: string[] = [];
+      const outputPathRaw = String((data as Record<string, unknown>)?.outputPath || "").trim();
+      if (outputPathRaw) {
+        fallbackCandidates.push(`${outputPathRaw}.cache.json`);
+      }
+      const dedupedFallbackCandidates = Array.from(new Set(fallbackCandidates));
+      for (const candidatePath of dedupedFallbackCandidates) {
+        if (!candidatePath || candidatePath === cachePath) continue;
+        try {
+          const savedPath = await tryWriteCacheJson(candidatePath);
+          console.warn(
+            "[save-cache] Primary path failed, fallback succeeded:",
+            {
+              requestedPath: cachePath,
+              fallbackPath: savedPath,
+              primaryError,
+            },
+          );
+          return {
+            ok: true,
+            path: savedPath,
+            warning: "save_cache_fallback_path_used",
+          };
+        } catch {
+          // continue to next fallback candidate
+        }
+      }
       console.error("save-cache error:", e);
-      return false;
+      return {
+        ok: false,
+        error: primaryError || "save_cache_failed",
+      };
     }
   },
 );
 
-// 重建文档（从缓存）
+// 閲嶅缓鏂囨。锛堜粠缂撳瓨锛?
 ipcMain.handle("rebuild-doc", async (_event, { cachePath, outputPath }) => {
+  let tempPatchedCachePath = "";
   try {
     const safeCachePath = ensureLocalFilePathForUserOperation(cachePath);
-    const safeOutputPath = outputPath
-      ? ensureLocalFilePathForUserOperation(outputPath)
-      : undefined;
+    const cacheRaw = await fs.promises.readFile(safeCachePath, "utf-8");
+    const cacheData =
+      (JSON.parse(cacheRaw) as Record<string, unknown>) || ({} as Record<string, unknown>);
+    const normalizeSafePath = (value: unknown): string => {
+      const raw = String(value || "").trim();
+      if (!raw) return "";
+      try {
+        return ensureLocalFilePathForUserOperation(raw);
+      } catch {
+        return "";
+      }
+    };
+    const dedupe = (values: string[]): string[] => {
+      const result: string[] = [];
+      for (const value of values) {
+        const normalized = String(value || "").trim();
+        if (!normalized || result.includes(normalized)) continue;
+        result.push(normalized);
+      }
+      return result;
+    };
+    const resolveExistingFile = (values: string[]): string =>
+      dedupe(values).find((value) => {
+        if (!value || !fs.existsSync(value)) return false;
+        try {
+          return fs.statSync(value).isFile();
+        } catch {
+          return false;
+        }
+      }) || "";
+    const deriveSourceCandidatesFromOutput = (value: string): string[] => {
+      if (!value) return [];
+      const parsed = parse(value);
+      const ext = parsed.ext;
+      const stem = parsed.name;
+      const candidates: string[] = [];
+      if (/_translated$/i.test(stem)) {
+        candidates.push(join(parsed.dir, `${stem.replace(/_translated$/i, "")}${ext}`));
+      }
+      if (stem.includes("_")) {
+        const withoutLastSuffix = stem.replace(/_[^_]+$/, "");
+        if (withoutLastSuffix && withoutLastSuffix !== stem) {
+          candidates.push(join(parsed.dir, `${withoutLastSuffix}${ext}`));
+        }
+      }
+      return candidates;
+    };
+
+    const safeExplicitOutput = normalizeSafePath(outputPath);
+    const cacheOutputPath = normalizeSafePath(cacheData.outputPath);
+    const cacheDerivedOutputPath = safeCachePath.match(/\.cache\.json$/i)
+      ? safeCachePath.replace(/\.cache\.json$/i, "")
+      : "";
+    const outputCandidates = dedupe([
+      safeExplicitOutput,
+      cacheOutputPath,
+      cacheDerivedOutputPath,
+    ]);
+    const resolvedOutputPath = outputCandidates[0] || "";
+
+    const cacheSourcePath = normalizeSafePath(cacheData.sourcePath);
+    const sourceCandidates = dedupe([
+      cacheSourcePath,
+      ...outputCandidates.flatMap(deriveSourceCandidatesFromOutput),
+      safeExplicitOutput,
+      cacheOutputPath,
+      cacheDerivedOutputPath,
+    ]);
+    const resolvedSourcePath = resolveExistingFile(sourceCandidates);
+
+    let effectiveCachePath = safeCachePath;
+    const needsOutputPatch =
+      !!resolvedOutputPath && resolvedOutputPath !== cacheOutputPath;
+    const needsSourcePatch =
+      !!resolvedSourcePath && resolvedSourcePath !== cacheSourcePath;
+    if (needsOutputPatch || needsSourcePatch) {
+      const patchedCacheData: Record<string, unknown> = { ...cacheData };
+      if (needsOutputPatch) patchedCacheData.outputPath = resolvedOutputPath;
+      if (needsSourcePatch) patchedCacheData.sourcePath = resolvedSourcePath;
+      tempPatchedCachePath = join(
+        dirname(safeCachePath),
+        `temp_rebuild_cache_${randomUUID().slice(0, 8)}.json`,
+      );
+      await fs.promises.writeFile(
+        tempPatchedCachePath,
+        JSON.stringify(patchedCacheData, null, 2),
+        "utf-8",
+      );
+      effectiveCachePath = tempPatchedCachePath;
+    }
+
+    if (!resolvedSourcePath) {
+      console.warn(
+        "[Rebuild] No valid source path found in cache candidates:",
+        sourceCandidates,
+      );
+    }
+
     const middlewareDir = getMiddlewarePath();
     const scriptPath = join(middlewareDir, "murasaki_translator", "main.py");
     const pythonCmd = getPythonPath();
@@ -3504,11 +3668,11 @@ ipcMain.handle("rebuild-doc", async (_event, { cachePath, outputPath }) => {
       "--file",
       "REBUILD_STUB", // Parser requires --file
       "--rebuild-from-cache",
-      safeCachePath,
+      effectiveCachePath,
     ];
 
-    if (safeOutputPath) {
-      args.push("--output", safeOutputPath);
+    if (resolvedOutputPath) {
+      args.push("--output", resolvedOutputPath);
     }
 
     console.log("[Rebuild] Executing:", pythonCmd, args.join(" "));
@@ -3525,6 +3689,11 @@ ipcMain.handle("rebuild-doc", async (_event, { cachePath, outputPath }) => {
       }
 
       proc.on("close", (code: number) => {
+        if (tempPatchedCachePath) {
+          try {
+            fs.unlinkSync(tempPatchedCachePath);
+          } catch (_) {}
+        }
         if (code === 0) {
           resolve({ success: true });
         } else {
@@ -3536,12 +3705,17 @@ ipcMain.handle("rebuild-doc", async (_event, { cachePath, outputPath }) => {
       });
     });
   } catch (e: unknown) {
+    if (tempPatchedCachePath) {
+      try {
+        fs.unlinkSync(tempPatchedCachePath);
+      } catch (_) {}
+    }
     const errorMsg = e instanceof Error ? e.message : String(e);
     return { success: false, error: errorMsg };
   }
 });
 
-// 单块重翻（用于校对界面）
+// 鍗曞潡閲嶇炕锛堢敤浜庢牎瀵圭晫闈級
 ipcMain.handle(
   "retranslate-block",
   async (
@@ -3770,7 +3944,7 @@ ipcMain.handle(
       if (config.deviceMode === "cpu") {
         args.push("--gpu-layers", "0");
       } else {
-        // 默认使用 -1（尽可能加载到 GPU），若用户指定则使用用户值
+        // 榛樿浣跨敤 -1锛堝敖鍙兘鍔犺浇鍒?GPU锛夛紝鑻ョ敤鎴锋寚瀹氬垯浣跨敤鐢ㄦ埛鍊?
         const gpuLayers =
           config.gpuLayers !== undefined ? config.gpuLayers : -1;
         args.push("--gpu-layers", gpuLayers.toString());
@@ -3992,7 +4166,7 @@ ipcMain.handle(
   },
 );
 
-// 保存文件对话框
+// 淇濆瓨鏂囦欢瀵硅瘽妗?
 ipcMain.handle(
   "save-file",
   async (
@@ -4012,7 +4186,7 @@ ipcMain.handle(
   },
 );
 
-// 打开文件（使用系统默认程序）
+// 鎵撳紑鏂囦欢锛堜娇鐢ㄧ郴缁熼粯璁ょ▼搴忥級
 ipcMain.handle("open-path", async (_event, filePath: string) => {
   if (fs.existsSync(filePath)) {
     return await shell.openPath(filePath);
@@ -4020,7 +4194,20 @@ ipcMain.handle("open-path", async (_event, filePath: string) => {
   return "File not found";
 });
 
-// 在文件管理器中显示文件/文件夹
+ipcMain.handle("clipboard-write", async (_event, text: string) => {
+  try {
+    const normalized = typeof text === "string" ? text : String(text ?? "");
+    clipboard.writeText(normalized);
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+});
+
+// 鍦ㄦ枃浠剁鐞嗗櫒涓樉绀烘枃浠?鏂囦欢澶?
 ipcMain.handle("open-folder", async (_event, filePath: string) => {
   if (!filePath || typeof filePath !== "string") return false;
 
@@ -4070,13 +4257,15 @@ ipcMain.handle(
   "check-output-file-exists",
   async (_event, { inputFile, config }) => {
     try {
-      const { basename, extname, join } = await import("path");
-      const fs = await import("fs");
+      const normalizedInput = String(inputFile || "").trim();
+      if (!normalizedInput) return { exists: false };
+      const safeInput = ensureLocalFilePathForUserOperation(normalizedInput);
+      const safeConfig = config || {};
 
       const remoteUrl = String(
-        config?.remoteUrl || config?.serverUrl || "",
+        safeConfig?.remoteUrl || safeConfig?.serverUrl || "",
       ).trim();
-      if (config?.executionMode === "remote" && remoteUrl) {
+      if (safeConfig?.executionMode === "remote" && remoteUrl) {
         try {
           const parsed = new URL(remoteUrl);
           const host = parsed.hostname.toLowerCase();
@@ -4085,71 +4274,308 @@ ipcMain.handle(
             return { exists: false };
           }
         } catch {
-          // ignore malformed URL
+          // ignore malformed URL and continue local detection
         }
       }
 
-      let outPath = "";
-      const engineMode = String(config?.engineMode || "").trim();
-      if (config?.outputPath && typeof config.outputPath === "string") {
-        outPath = config.outputPath;
-      } else if (engineMode === "v2") {
-        if (config.outputDir && fs.existsSync(config.outputDir)) {
-          const ext = extname(inputFile);
-          const baseName = basename(inputFile, ext);
-          const outFilename = ext
-            ? `${baseName}_translated${ext}`
-            : `${baseName}_translated`;
-          outPath = join(config.outputDir, outFilename);
+      const candidateOutPaths: string[] = [];
+      const pushCandidate = (candidate: unknown) => {
+        const normalized = String(candidate || "").trim();
+        if (!normalized) return;
+        try {
+          const safeCandidate = ensureLocalFilePathForUserOperation(normalized);
+          if (!candidateOutPaths.includes(safeCandidate)) {
+            candidateOutPaths.push(safeCandidate);
+          }
+        } catch {
+          // ignore invalid path candidate
+        }
+      };
+
+      const engineMode = String(safeConfig?.engineMode || "")
+        .trim()
+        .toLowerCase();
+      const explicitOutputPath = String(safeConfig?.outputPath || "").trim();
+      const outputDirRaw = String(safeConfig?.outputDir || "").trim();
+      let safeOutputDir = "";
+      if (outputDirRaw) {
+        try {
+          safeOutputDir = ensureLocalFilePathForUserOperation(outputDirRaw);
+        } catch {
+          safeOutputDir = "";
+        }
+      }
+      const hasOutputDir = (() => {
+        if (!safeOutputDir || !fs.existsSync(safeOutputDir)) return false;
+        try {
+          return fs.statSync(safeOutputDir).isDirectory();
+        } catch {
+          return false;
+        }
+      })();
+
+      pushCandidate(explicitOutputPath);
+      if (engineMode === "v2") {
+        const ext = parse(safeInput).ext;
+        const baseName = ext ? basename(safeInput, ext) : basename(safeInput);
+        if (hasOutputDir) {
+          pushCandidate(
+            join(
+              safeOutputDir,
+              ext ? `${baseName}_translated${ext}` : `${baseName}_translated`,
+            ),
+          );
         } else {
-          const ext = extname(inputFile);
-          const base = inputFile.substring(0, inputFile.length - ext.length);
-          outPath = `${base}_translated${ext}`;
+          const base = ext ? safeInput.slice(0, -ext.length) : safeInput;
+          pushCandidate(`${base}_translated${ext}`);
+        }
+
+        if (!explicitOutputPath) {
+          const ext = parse(safeInput).ext;
+          const inputDir = dirname(safeInput);
+          const inputBaseName = ext
+            ? basename(safeInput, ext)
+            : basename(safeInput);
+          try {
+            const discovered = fs
+              .readdirSync(inputDir)
+              .filter((entry) => {
+                if (!entry.startsWith(`${inputBaseName}_`)) return false;
+                if (ext && !entry.endsWith(ext)) return false;
+                return true;
+              })
+              .map((entry) => join(inputDir, entry))
+              .filter((entryPath) => {
+                try {
+                  return fs.statSync(entryPath).isFile();
+                } catch {
+                  return false;
+                }
+              })
+              .sort((a, b) => {
+                try {
+                  return fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs;
+                } catch {
+                  return 0;
+                }
+              });
+            discovered.forEach(pushCandidate);
+          } catch {
+            // ignore discovery errors
+          }
         }
       } else {
-        // Logic must match main.py and start-translation handler
-        if (config.outputDir && fs.existsSync(config.outputDir)) {
-          const ext = inputFile.split(".").pop();
-          const baseName = basename(inputFile, `.${ext}`);
-          const outFilename = `${baseName}_translated.${ext}`;
-          outPath = join(config.outputDir, outFilename);
+        if (hasOutputDir) {
+          const ext = parse(safeInput).ext;
+          const extName = ext.startsWith(".") ? ext.slice(1) : ext;
+          const baseName = ext ? basename(safeInput, ext) : basename(safeInput);
+          const outFilename = extName
+            ? `${baseName}_translated.${extName}`
+            : `${baseName}_translated`;
+          pushCandidate(join(safeOutputDir, outFilename));
         } else {
-          const ext = extname(inputFile);
-          const base = inputFile.substring(0, inputFile.length - ext.length);
+          const ext = parse(safeInput).ext;
+          const base = ext ? safeInput.slice(0, -ext.length) : safeInput;
           let modelName = "unknown";
           if (
-            config.modelPath &&
-            typeof config.modelPath === "string" &&
-            config.modelPath.trim()
+            safeConfig.modelPath &&
+            typeof safeConfig.modelPath === "string" &&
+            safeConfig.modelPath.trim()
           ) {
-            const normalizedPath = config.modelPath.replace(/\\/g, "/");
+            const normalizedPath = safeConfig.modelPath.replace(/\\/g, "/");
             const fileName = normalizedPath.split("/").pop() || "";
             modelName = fileName.replace(/\.gguf$/i, "") || "unknown";
           }
-          const suffix = `_${modelName}`;
-          outPath = `${base}${suffix}${ext}`;
+          pushCandidate(`${base}_${modelName}${ext}`);
         }
       }
-      console.log("[check-output-file-exists] inputFile:", inputFile);
-      console.log("[check-output-file-exists] outPath:", outPath);
 
-      if (fs.existsSync(outPath)) {
-        console.log("Detected existing output:", outPath);
-        return { exists: true, path: outPath };
+      const cacheDirRaw = String(safeConfig?.cacheDir || "").trim();
+      let safeCacheDir = "";
+      if (cacheDirRaw) {
+        try {
+          safeCacheDir = ensureLocalFilePathForUserOperation(cacheDirRaw);
+        } catch {
+          safeCacheDir = "";
+        }
+      }
+      const hasCacheDir = (() => {
+        if (!safeCacheDir || !fs.existsSync(safeCacheDir)) return false;
+        try {
+          return fs.statSync(safeCacheDir).isDirectory();
+        } catch {
+          return false;
+        }
+      })();
+
+      const resolveResumeOutputPath = (
+        artifactPath: string,
+        fallbackOutputPath?: string,
+      ): string => {
+        if (fallbackOutputPath) return fallbackOutputPath;
+        if (artifactPath.endsWith(".temp.jsonl")) {
+          return artifactPath.slice(0, -".temp.jsonl".length);
+        }
+        if (artifactPath.endsWith(".cache.json")) {
+          return artifactPath.slice(0, -".cache.json".length);
+        }
+        return artifactPath;
+      };
+
+      console.log("[check-output-file-exists] inputFile:", safeInput);
+      console.log(
+        "[check-output-file-exists] candidateOutPaths:",
+        candidateOutPaths,
+      );
+      for (const candidatePath of candidateOutPaths) {
+        if (fs.existsSync(candidatePath)) {
+          console.log("Detected existing output:", candidatePath);
+          return {
+            exists: true,
+            path: candidatePath,
+            resumeOutputPath: candidatePath,
+          };
+        }
+
+        const tempPath = `${candidatePath}.temp.jsonl`;
+        if (fs.existsSync(tempPath)) {
+          console.log("Detected existing temp progress:", tempPath);
+          return {
+            exists: true,
+            path: tempPath,
+            isCache: true,
+            resumeOutputPath: candidatePath,
+          };
+        }
+
+        const defaultCachePath = `${candidatePath}.cache.json`;
+        if (fs.existsSync(defaultCachePath)) {
+          console.log("Detected existing cache:", defaultCachePath);
+          return {
+            exists: true,
+            path: defaultCachePath,
+            isCache: true,
+            resumeOutputPath: candidatePath,
+          };
+        }
+
+        if (hasCacheDir) {
+          const customCachePath = join(
+            safeCacheDir,
+            `${basename(candidatePath)}.cache.json`,
+          );
+          if (fs.existsSync(customCachePath)) {
+            console.log("Detected existing custom cache:", customCachePath);
+            return {
+              exists: true,
+              path: customCachePath,
+              isCache: true,
+              resumeOutputPath: candidatePath,
+            };
+          }
+        }
       }
 
-      // 检测临时进度文件（翻译中断后的主要缓存）
-      const tempPath = outPath + ".temp.jsonl";
-      if (fs.existsSync(tempPath)) {
-        console.log("Detected existing temp progress:", tempPath);
-        return { exists: true, path: tempPath, isCache: true };
-      }
+      if (engineMode === "v2") {
+        type ArtifactMatch = {
+          path: string;
+          isCache?: boolean;
+          resumeOutputPath?: string;
+        };
+        const parsedInput = parse(safeInput);
+        const inputBaseName = parsedInput.name;
+        const inputExt = parsedInput.ext;
+        const defaultResumeDir = hasOutputDir
+          ? safeOutputDir
+          : dirname(safeInput);
+        const scanDirs = Array.from(
+          new Set(
+            [
+              dirname(safeInput),
+              hasOutputDir ? safeOutputDir : "",
+              hasCacheDir ? safeCacheDir : "",
+            ]
+              .map((value) => String(value || "").trim())
+              .filter(Boolean),
+          ),
+        );
+        const discovered: ArtifactMatch[] = [];
+        const pushDiscovered = (
+          artifactPath: string,
+          isCache = false,
+          resumeOutputPath?: string,
+        ) => {
+          if (!artifactPath) return;
+          if (discovered.some((item) => item.path === artifactPath)) return;
+          discovered.push({
+            path: artifactPath,
+            isCache,
+            resumeOutputPath: resolveResumeOutputPath(
+              artifactPath,
+              resumeOutputPath,
+            ),
+          });
+        };
+        const getMtime = (artifactPath: string): number => {
+          try {
+            return fs.statSync(artifactPath).mtimeMs;
+          } catch {
+            return 0;
+          }
+        };
 
-      // 兼容旧版缓存文件
-      const cachePath = outPath + ".cache.json";
-      if (fs.existsSync(cachePath)) {
-        console.log("Detected existing cache:", cachePath);
-        return { exists: true, path: cachePath, isCache: true };
+        for (const dirPath of scanDirs) {
+          let entries: string[] = [];
+          try {
+            entries = fs.readdirSync(dirPath);
+          } catch {
+            continue;
+          }
+
+          for (const entry of entries) {
+            if (!entry.startsWith(`${inputBaseName}_`)) continue;
+            const fullPath = join(dirPath, entry);
+            let isFile = false;
+            try {
+              isFile = fs.statSync(fullPath).isFile();
+            } catch {
+              isFile = false;
+            }
+            if (!isFile) continue;
+
+            if (entry.endsWith(".temp.jsonl")) {
+              if (!inputExt || entry.includes(`${inputExt}.temp.jsonl`)) {
+                const outputName = entry.replace(/\.temp\.jsonl$/i, "");
+                const fallbackOutput = join(defaultResumeDir, outputName);
+                pushDiscovered(fullPath, true, fallbackOutput);
+              }
+              continue;
+            }
+            if (entry.endsWith(".cache.json")) {
+              if (!inputExt || entry.includes(`${inputExt}.cache.json`)) {
+                const outputName = entry.replace(/\.cache\.json$/i, "");
+                const fallbackOutput = join(defaultResumeDir, outputName);
+                pushDiscovered(fullPath, true, fallbackOutput);
+              }
+              continue;
+            }
+            if (!inputExt || entry.endsWith(inputExt)) {
+              pushDiscovered(fullPath, false, fullPath);
+            }
+          }
+        }
+
+        if (discovered.length > 0) {
+          discovered.sort((a, b) => getMtime(b.path) - getMtime(a.path));
+          const latest = discovered[0];
+          console.log("[check-output-file-exists] v2 wildcard detected:", latest);
+          return {
+            exists: true,
+            path: latest.path,
+            isCache: latest.isCache,
+            resumeOutputPath: latest.resumeOutputPath,
+          };
+        }
       }
 
       return { exists: false };
@@ -4496,7 +4922,7 @@ const runTranslationViaRemoteApi = async (
   };
   const emitRemoteTroubleshootingHint = () => {
     const hint =
-      "System: 远程排查：服务管理 → 远程运行详情 可打开网络日志/任务镜像日志（可按任务ID过滤）";
+      "System: Remote troubleshooting: open Service Manager > Remote Run Details to inspect network and task mirror logs.";
     emitRemoteLog(hint, "info");
     appendRemoteMirrorMessage({
       taskId,
@@ -4514,7 +4940,7 @@ const runTranslationViaRemoteApi = async (
       // ignore health fetch failure
     }
     emitRemoteLog(`System: Execution mode remote-api (${sourceLabel})`, "info");
-    // [Feature] 发送远程执行信息供 Dashboard 记录到翻译历史
+    // [Feature] 鍙戦€佽繙绋嬫墽琛屼俊鎭緵 Dashboard 璁板綍鍒扮炕璇戝巻鍙?
     const remoteInfoPayload = {
       executionMode: "remote-api",
       source: sourceLabel,
@@ -4631,7 +5057,7 @@ const runTranslationViaRemoteApi = async (
       if (wsActive && lastWsLogAt > 0 && Date.now() - lastWsLogAt > 2000) {
         wsActive = false;
       }
-      // 检查日志中是否已含 main.py 输出的 JSON_PROGRESS（含真实速度/token 数据）
+      // 妫€鏌ユ棩蹇椾腑鏄惁宸插惈 main.py 杈撳嚭鐨?JSON_PROGRESS锛堝惈鐪熷疄閫熷害/token 鏁版嵁锛?
       const logsContainProgress = taskLogs.some(
         (log) => typeof log === "string" && log.includes("JSON_PROGRESS:"),
       );
@@ -4650,8 +5076,8 @@ const runTranslationViaRemoteApi = async (
         nextLogIndex = Math.max(nextLogIndex, nextLogIndex + taskLogs.length);
       }
 
-      // 仅当日志中无 JSON_PROGRESS 时才发送补充性 block 进度
-      // 避免用硬编码零值覆盖 main.py 的真实速度/token 数据
+      // 浠呭綋鏃ュ織涓棤 JSON_PROGRESS 鏃舵墠鍙戦€佽ˉ鍏呮€?block 杩涘害
+      // 閬垮厤鐢ㄧ‖缂栫爜闆跺€艰鐩?main.py 鐨勭湡瀹為€熷害/token 鏁版嵁
       const recentlySawProgress = Date.now() - lastProgressSeenAt < 1500;
       if (!logsContainProgress && !recentlySawProgress) {
         const percentRaw =
@@ -4676,7 +5102,7 @@ const runTranslationViaRemoteApi = async (
       }
 
       if (status.status === "completed") {
-        // [Fix Bug 6/7] 追加获取所有剩余日志，确保 JSON_FINAL/PREVIEW_BLOCK 不被 200 行分页截断
+        // [Fix Bug 6/7] 杩藉姞鑾峰彇鎵€鏈夊墿浣欐棩蹇楋紝纭繚 JSON_FINAL/PREVIEW_BLOCK 涓嶈 200 琛屽垎椤垫埅鏂?
         if (
           typeof status.logTotal === "number" &&
           nextLogIndex < status.logTotal
@@ -4696,12 +5122,12 @@ const runTranslationViaRemoteApi = async (
           }
         }
         await client.downloadResult(taskId, outputPath);
-        // [Fix Bug 8] 尝试下载缓存文件（用于校对）
+        // [Fix Bug 8] 灏濊瘯涓嬭浇缂撳瓨鏂囦欢锛堢敤浜庢牎瀵癸級
         try {
           const cachePath = outputPath + ".cache.json";
           await client.downloadCache(taskId, cachePath);
         } catch (e) {
-          // 缓存下载失败不影响主流程
+          // 缂撳瓨涓嬭浇澶辫触涓嶅奖鍝嶄富娴佺▼
         }
         appendRemoteMirrorMessage({
           taskId,
@@ -4759,7 +5185,7 @@ const runTranslationViaRemoteApi = async (
         return;
       }
 
-      // 动态轮询：运行中快速获取进度(200ms)，空闲/排队时节省资源(1000ms)
+      // 鍔ㄦ€佽疆璇細杩愯涓揩閫熻幏鍙栬繘搴?200ms)锛岀┖闂?鎺掗槦鏃惰妭鐪佽祫婧?1000ms)
       const pollDelay = status.status === "running" ? 200 : 1000;
       await new Promise((resolve) => setTimeout(resolve, pollDelay));
     }
@@ -4838,7 +5264,7 @@ ipcMain.on(
     const pythonCmd = getPythonPath();
     console.log("Using Python:", pythonCmd);
 
-    // 使用跨平台检测获取正确的二进制路径
+    // 浣跨敤璺ㄥ钩鍙版娴嬭幏鍙栨纭殑浜岃繘鍒惰矾寰?
     let serverExePath: string;
     try {
       const platformInfo = detectPlatform();
@@ -4877,8 +5303,8 @@ ipcMain.on(
           ? "connected-local-daemon"
           : "connected-remote-session";
     } else if (daemonConnection?.url && config?.executionMode === "remote") {
-      // 仅当用户明确选择远程模式时才为本地 daemon 创建 RemoteClient。
-      // 本地翻译不走 HTTP API 桥接，避免轮询延迟导致的性能回退。
+      // 浠呭綋鐢ㄦ埛鏄庣‘閫夋嫨杩滅▼妯″紡鏃舵墠涓烘湰鍦?daemon 鍒涘缓 RemoteClient銆?
+      // 鏈湴缈昏瘧涓嶈蛋 HTTP API 妗ユ帴锛岄伩鍏嶈疆璇㈠欢杩熷鑷寸殑鎬ц兘鍥為€€銆?
       remoteExecutionClient = new RemoteClient(
         {
           url: daemonConnection.url,
@@ -5010,7 +5436,7 @@ ipcMain.on(
 
     console.log("[start-translation] Model check passed, building args...");
 
-    // serverExePath 已在上面的 try-catch 中验证
+    // serverExePath 宸插湪涓婇潰鐨?try-catch 涓獙璇?
     // Build args for murasaki_translator/main.py
     const args = [
       join("murasaki_translator", "main.py"),
@@ -5044,7 +5470,7 @@ ipcMain.on(
       const status = sm.getStatus();
 
       if (status.running && status.mode !== "api_v1") {
-        // 非 api_v1 daemon：直接连接其 llama-server 端口
+        // 闈?api_v1 daemon锛氱洿鎺ヨ繛鎺ュ叾 llama-server 绔彛
         args.push("--server", `http://127.0.0.1:${status.port}`);
         args.push("--no-server-spawn");
         console.log(
@@ -5057,8 +5483,8 @@ ipcMain.on(
           { level: "info", source: "main" },
         );
       } else if (status.running && status.mode === "api_v1") {
-        // api_v1 daemon：API server 端口与 llama-server 协议不兼容，
-        // 回退到标准 spawn（main.py 自行启动 llama-server）
+        // api_v1 daemon锛欰PI server 绔彛涓?llama-server 鍗忚涓嶅吋瀹癸紝
+        // 鍥為€€鍒版爣鍑?spawn锛坢ain.py 鑷鍚姩 llama-server锛?
         console.log(
           "[start-translation] api_v1 daemon detected, using direct spawn for performance.",
         );
@@ -5069,7 +5495,7 @@ ipcMain.on(
         );
         args.push("--server", serverExePath);
       } else {
-        // Daemon 未运行，回退到标准 spawn
+        // Daemon 鏈繍琛岋紝鍥為€€鍒版爣鍑?spawn
         args.push("--server", serverExePath);
       }
     } else {
@@ -5083,7 +5509,7 @@ ipcMain.on(
         args.push("--gpu-layers", "0");
         console.log("Mode: CPU Only (Forced gpu-layers 0)");
       } else {
-        // 默认使用 -1（尽可能加载到 GPU），若用户指定则使用用户值
+        // 榛樿浣跨敤 -1锛堝敖鍙兘鍔犺浇鍒?GPU锛夛紝鑻ョ敤鎴锋寚瀹氬垯浣跨敤鐢ㄦ埛鍊?
         const gpuLayers =
           config.gpuLayers !== undefined ? config.gpuLayers : -1;
         args.push("--gpu-layers", gpuLayers.toString());
@@ -5226,7 +5652,7 @@ ipcMain.on(
         args.push("--max-retries", config.maxRetries.toString());
       }
 
-      // Glossary Coverage Check（术语覆盖率检测）
+      // Glossary Coverage Check锛堟湳璇鐩栫巼妫€娴嬶級
       if (config.coverageCheck === false) {
         // Explicitly disable coverage retries on backend defaults
         args.push("--output-hit-threshold", "0");
@@ -5247,12 +5673,12 @@ ipcMain.on(
         );
       }
 
-      // Incremental Translation（增量翻译）
+      // Incremental Translation锛堝閲忕炕璇戯級
       if (config.resume) {
         args.push("--resume");
       }
 
-      // Text Protection（文本保护）
+      // Text Protection锛堟枃鏈繚鎶わ級
       if (config.textProtect) {
         args.push("--text-protect");
       }
@@ -5272,7 +5698,7 @@ ipcMain.on(
         }
       }
 
-      // Dynamic Retry Strategy（动态重试策略）
+      // Dynamic Retry Strategy锛堝姩鎬侀噸璇曠瓥鐣ワ級
       if (config.retryTempBoost !== undefined) {
         args.push("--retry-temp-boost", config.retryTempBoost.toString());
       }
@@ -5282,7 +5708,7 @@ ipcMain.on(
         args.push("--no-retry-prompt-feedback");
       }
 
-      // Save Cache（默认启用，用于校对界面）
+      // Save Cache锛堥粯璁ゅ惎鐢紝鐢ㄤ簬鏍″鐣岄潰锛?
       if (config.saveCache !== false) {
         args.push("--save-cache");
         // Cache Directory
@@ -5482,7 +5908,7 @@ ipcMain.on("stop-translation", () => {
           pythonProcess?.kill();
         } catch (_) {}
       });
-      // 超时兜底：3s 后若进程仍然存活
+      // 瓒呮椂鍏滃簳锛?s 鍚庤嫢杩涚▼浠嶇劧瀛樻椿
       setTimeout(() => {
         try {
           pythonProcess?.kill("SIGKILL");
@@ -5740,13 +6166,14 @@ ipcMain.handle(
       return { success: false };
     }
 
-    // 单例保护：防止并发下载导致孤儿进程
+    // 鍗曚緥淇濇姢锛氶槻姝㈠苟鍙戜笅杞藉鑷村鍎胯繘绋?
     if (hfDownloadProcess !== null) {
       console.warn(
         "[HF Download] Download already in progress, rejecting new request",
       );
       event.sender.send("hf-download-error", {
-        message: "已有下载任务进行中，请等待完成或取消后再试",
+        message:
+          "Another download task is already running. Wait for completion or cancel it first.",
       });
       return { success: false, error: "Download already in progress" };
     }

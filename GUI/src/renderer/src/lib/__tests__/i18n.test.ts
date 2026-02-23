@@ -93,4 +93,19 @@ describe("i18n", () => {
       expect(triggerLabels?.provider_error).toBeTruthy();
     }
   });
+
+  it("includes remote runtime notice/hint i18n keys", () => {
+    for (const lang of Object.values(translations)) {
+      const remoteRuntime = (lang as { remoteRuntime?: Record<string, unknown> })
+        .remoteRuntime;
+      expect(remoteRuntime?.noticeModeEnabled).toBeTruthy();
+      expect(remoteRuntime?.hintUnauthorized).toBeTruthy();
+      expect(remoteRuntime?.hintNotFound).toBeTruthy();
+      expect(remoteRuntime?.hintTimeout).toBeTruthy();
+      expect(remoteRuntime?.hintNetwork).toBeTruthy();
+      expect(remoteRuntime?.hintProtocol).toBeTruthy();
+      expect(remoteRuntime?.hintLatestNetworkError).toBeTruthy();
+      expect(remoteRuntime?.hintOpenDetails).toBeTruthy();
+    }
+  });
 });

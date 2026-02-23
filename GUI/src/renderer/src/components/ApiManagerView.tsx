@@ -229,6 +229,18 @@ const parseJsonValueMaybe = (raw: string) => {
   }
 };
 
+const parseBooleanFlag = (value: unknown, fallback = false): boolean => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  const text = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (!text) return fallback;
+  if (["1", "true", "yes", "on"].includes(text)) return true;
+  if (["0", "false", "no", "off"].includes(text)) return false;
+  return fallback;
+};
+
 const pairsToJson = (pairs: KeyValuePair[]) => {
   const payload: Record<string, string> = {};
   for (const pair of pairs) {
@@ -273,6 +285,7 @@ type ApiFormState = {
   params: string;
   timeout: string;
   concurrency: string;
+  strictConcurrency: boolean;
   maxRetries: string;
   rpm: string;
   temperature: string;
@@ -526,6 +539,7 @@ api_key: ""
 model: ""
 timeout: 600
 concurrency: 0
+strict_concurrency: false
 max_retries: 3
 rpm: 3600
 headers: {}
@@ -590,6 +604,7 @@ const DEFAULT_API_FORM: ApiFormState = {
   params: "",
   timeout: "",
   concurrency: "0",
+  strictConcurrency: false,
   maxRetries: "3",
   rpm: "3600",
   temperature: "",
@@ -4444,6 +4459,12 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
           data.concurrency !== undefined && data.concurrency !== null
             ? String(data.concurrency)
             : "",
+        strictConcurrency: parseBooleanFlag(
+          data.strict_concurrency ??
+            data.strictConcurrency ??
+            data.serial_requests,
+          false,
+        ),
         maxRetries:
           data.max_retries !== undefined && data.max_retries !== null
             ? String(data.max_retries)
@@ -4978,6 +4999,7 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
           payload.concurrency = newForm.concurrency;
         }
       }
+      payload.strict_concurrency = Boolean(newForm.strictConcurrency);
       if (newForm.maxRetries !== "") {
         const rawMaxRetries = Number.parseInt(newForm.maxRetries, 10);
         if (Number.isFinite(rawMaxRetries)) {
@@ -5010,6 +5032,8 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
           "params",
           "timeout",
           "concurrency",
+          "strict_concurrency",
+          "serial_requests",
           "max_retries",
           "rpm",
           "requests_per_minute",
@@ -5867,6 +5891,24 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
             </div>
 
             <div className="space-y-2">
+              <Label>{texts.formFields.strictConcurrencyLabel}</Label>
+              <div className="flex h-9 items-center justify-between rounded-md border border-input bg-background px-3 py-1">
+                <span className="text-xs text-muted-foreground">
+                  {texts.formHints.strictConcurrency}
+                </span>
+                <Switch
+                  checked={apiForm.strictConcurrency}
+                  onCheckedChange={(checked) =>
+                    updateYamlFromApiForm({
+                      ...apiForm,
+                      strictConcurrency: Boolean(checked),
+                    })
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
               <Label>{texts.formFields.rpmLabel}</Label>
               <InputAffix
                 type="number"
@@ -5904,26 +5946,6 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
               />
               <p className="text-xs text-muted-foreground whitespace-pre-line">
                 {texts.formHints.maxRetries}
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label>{texts.formFields.timeoutLabel}</Label>
-              <InputAffix
-                type="number"
-                value={apiForm.timeout}
-                onChange={(e) =>
-                  updateYamlFromApiForm({
-                    ...apiForm,
-                    timeout: e.target.value,
-                  })
-                }
-                placeholder={texts.formPlaceholders.timeout}
-                prefix={<Clock className="h-3.5 w-3.5" />}
-                suffix="s"
-              />
-              <p className="text-xs text-muted-foreground whitespace-pre-line">
-                {texts.formHints.timeout}
               </p>
             </div>
           </div>
@@ -6425,21 +6447,43 @@ export function ApiManagerView({ lang }: ApiManagerViewProps) {
               </div>
 
               {apiAdvancedTab === "extras" && (
-                <div className="space-y-2">
-                  <Label>{texts.formFields.groupLabel}</Label>
-                  <Input
-                    value={apiForm.group}
-                    onChange={(e) =>
-                      updateYamlFromApiForm({
-                        ...apiForm,
-                        group: e.target.value,
-                      })
-                    }
-                    placeholder={texts.formPlaceholders.group}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    {texts.formHints.group}
-                  </p>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>{texts.formFields.timeoutLabel}</Label>
+                    <InputAffix
+                      type="number"
+                      value={apiForm.timeout}
+                      onChange={(e) =>
+                        updateYamlFromApiForm({
+                          ...apiForm,
+                          timeout: e.target.value,
+                        })
+                      }
+                      placeholder={texts.formPlaceholders.timeout}
+                      prefix={<Clock className="h-3.5 w-3.5" />}
+                      suffix="s"
+                    />
+                    <p className="text-xs text-muted-foreground whitespace-pre-line">
+                      {texts.formHints.timeout}
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>{texts.formFields.groupLabel}</Label>
+                    <Input
+                      value={apiForm.group}
+                      onChange={(e) =>
+                        updateYamlFromApiForm({
+                          ...apiForm,
+                          group: e.target.value,
+                        })
+                      }
+                      placeholder={texts.formPlaceholders.group}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {texts.formHints.group}
+                    </p>
+                  </div>
                 </div>
               )}
 
