@@ -38,6 +38,7 @@ import {
   stopPipelineV2Runner,
 } from "./pipelineV2Runner";
 import { createApiStatsService } from "./apiStatsStore";
+import { formatScanDirectoryFailure } from "./ipcDiagnostics";
 
 let pythonProcess: ChildProcess | null = null;
 let translationStopRequested = false;
@@ -443,6 +444,25 @@ async function cleanupProcesses(): Promise<void> {
     const bridge = remoteTranslationBridge;
     remoteTranslationBridge = null;
     void bridge.client.cancelTask(bridge.taskId).catch(() => undefined);
+  }
+
+  if (remoteEventLogFlushTimer) {
+    clearTimeout(remoteEventLogFlushTimer);
+    remoteEventLogFlushTimer = null;
+  }
+  if (remoteMirrorLogFlushTimer) {
+    clearTimeout(remoteMirrorLogFlushTimer);
+    remoteMirrorLogFlushTimer = null;
+  }
+  try {
+    await flushRemoteEventLog();
+  } catch (e) {
+    console.warn("[App] Error flushing remote event log:", e);
+  }
+  try {
+    await flushRemoteMirrorLog();
+  } catch (e) {
+    console.warn("[App] Error flushing remote mirror log:", e);
   }
 
   await closeAllWatchFolders();
@@ -1984,14 +2004,14 @@ const scanDirectoryAsync = async (
 
     return results;
   } catch (e) {
-    // console.error('Scan dir error:', dir, e)
+    console.warn("[IPC]", formatScanDirectoryFailure(dir, e));
     return [];
   }
 };
 
 ipcMain.handle(
   "scan-directory",
-  async (_event, path: string, recursive: boolean = false) => {
+  async (event, path: string, recursive: boolean = false) => {
     try {
       if (!fs.existsSync(path)) return [];
 
@@ -2009,7 +2029,12 @@ ipcMain.handle(
       }
       return [];
     } catch (e) {
+      const message = formatScanDirectoryFailure(path, e);
       console.error("[IPC] scan-directory error:", e);
+      replyLogUpdate(event, `WARN: ${message}`, {
+        level: "warn",
+        source: "main",
+      });
       return [];
     }
   },
