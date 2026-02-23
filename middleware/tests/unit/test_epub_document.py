@@ -1,8 +1,9 @@
-﻿import zipfile
+import zipfile
 from pathlib import Path
 
 import pytest
 
+from murasaki_translator.core.chunker import TextBlock
 from murasaki_translator.documents.epub import EpubDocument
 
 
@@ -11,7 +12,7 @@ def _make_epub(tmp_path: Path) -> Path:
     with zipfile.ZipFile(epub_path, "w") as zf:
         content = """
         <html><body>
-        <p>hello <ruby><rb>漢字</rb><rt>かな</rt></ruby></p>
+        <p>hello <ruby><rb>漢字</rb><rt>かな</rt></ruby> and <ruby>谷<rt>たに</rt></ruby></p>
         <p>world</p>
         </body></html>
         """
@@ -20,7 +21,7 @@ def _make_epub(tmp_path: Path) -> Path:
 
 
 @pytest.mark.unit
-def test_epub_document_load_removes_rt(tmp_path: Path):
+def test_epub_document_load_strips_ruby_wrappers(tmp_path: Path):
     epub_path = _make_epub(tmp_path)
     doc = EpubDocument(str(epub_path))
     items = doc.load()
@@ -29,6 +30,28 @@ def test_epub_document_load_removes_rt(tmp_path: Path):
     assert "@id=" in first
     assert "@end=" in first
     assert "<rt>" not in first
+    assert "<rb>" not in first
+    assert "<ruby" not in first.lower()
+    assert "漢字" in first
+    assert "谷" in first
+
+
+@pytest.mark.unit
+def test_epub_document_save_strips_ruby_wrappers(tmp_path: Path):
+    epub_path = _make_epub(tmp_path)
+    doc = EpubDocument(str(epub_path))
+    items = doc.load()
+    combined = "\n".join(item["text"] for item in items)
+    output_path = tmp_path / "out.epub"
+    doc.save(
+        str(output_path),
+        [TextBlock(id=1, prompt_text=combined, metadata=[item["meta"] for item in items])],
+    )
+    with zipfile.ZipFile(output_path, "r") as zf:
+        chapter = zf.read("Text/ch1.xhtml").decode("utf-8", errors="ignore").lower()
+    assert "<ruby" not in chapter
+    assert "<rb>" not in chapter
+    assert "<rt>" not in chapter
 
 
 @pytest.mark.unit

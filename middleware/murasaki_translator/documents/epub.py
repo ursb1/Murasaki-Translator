@@ -73,6 +73,18 @@ class EpubDocument(BaseDocument):
                     if attr_lower in child.attrs:
                         child.attrs[attr_correct] = child.attrs.pop(attr_lower)
 
+    def _strip_ruby_annotations(self, soup: BeautifulSoup) -> None:
+        """Remove ruby annotation wrappers while keeping base text."""
+        for ruby in soup.find_all("ruby"):
+            # Drop furigana/pronunciation-only nodes.
+            for tag in ruby.find_all(["rt", "rp", "rtc"]):
+                tag.decompose()
+            # Unwrap base-text wrappers first.
+            for rb in ruby.find_all("rb"):
+                rb.unwrap()
+            # Finally unwrap <ruby> itself, keeping its remaining children/text.
+            ruby.unwrap()
+
     def _normalize_anchor_stream(self, text: str) -> str:
         """Normalize potentially mangled @id/@end anchors (full-width, spaces, newlines)."""
         if not text:
@@ -115,9 +127,8 @@ class EpubDocument(BaseDocument):
                             content = z.read(zip_path).decode('utf-8-sig', errors='ignore')
                             soup = BeautifulSoup(content, self._get_parser(content))
                             
-                            # Preprocess Ruby (RT tags are not for translation)
-                            for ruby in soup.find_all('ruby'):
-                                for tag in ruby.find_all(['rt', 'rp']): tag.decompose()
+                            # Normalize ruby annotations to plain base text for translation.
+                            self._strip_ruby_annotations(soup)
 
                             # Extract topmost containers
                             for node in soup.find_all(self.CONTAINERS):
@@ -261,9 +272,8 @@ class EpubDocument(BaseDocument):
                         content = raw_bytes.decode('utf-8-sig', errors='ignore')
                         soup = BeautifulSoup(content, self._get_parser(content))
                         
-                        # Match preprocessing
-                        for ruby in soup.find_all('ruby'):
-                            for tag in ruby.find_all(['rt', 'rp']): tag.decompose()
+                        # Keep traversal and fallback behavior consistent with load().
+                        self._strip_ruby_annotations(soup)
                         
                         # Re-traverse in SAME order
                         for node in soup.find_all(self.CONTAINERS):
