@@ -4039,10 +4039,7 @@ ipcMain.handle(
     // Let's check if ServerManager has a running instance.
     const sm = ServerManager.getInstance();
     const status = sm.getStatus();
-    if (status.running && status.mode !== "api_v1") {
-      args.push("--server", `http://127.0.0.1:${status.port}`);
-      args.push("--no-server-spawn");
-    } else if (status.running && status.mode === "api_v1") {
+    if (status.running) {
       console.warn(
         "[Retranslate] Local daemon is api_v1 mode, fallback to direct llama-server path for compatibility.",
       );
@@ -5314,6 +5311,19 @@ ipcMain.on(
         source: "main",
         runId: requestedRunId,
       });
+      replyJsonLog(
+        event,
+        "JSON_ERROR:",
+        {
+          title: "Start Translation Failed",
+          message,
+        },
+        {
+          level: "error",
+          source: "main",
+          runId: requestedRunId,
+        },
+      );
       event.reply("process-exit", {
         code: 1,
         signal: null,
@@ -5538,22 +5548,8 @@ ipcMain.on(
       const sm = ServerManager.getInstance();
       const status = sm.getStatus();
 
-      if (status.running && status.mode !== "api_v1") {
-        // 闈?api_v1 daemon锛氱洿鎺ヨ繛鎺ュ叾 llama-server 绔彛
-        args.push("--server", `http://127.0.0.1:${status.port}`);
-        args.push("--no-server-spawn");
-        console.log(
-          "[start-translation] Using local daemon server on port",
-          status.port,
-        );
-        replyLogUpdate(
-          event,
-          `System: Connected to local daemon on port ${status.port}`,
-          { level: "info", source: "main" },
-        );
-      } else if (status.running && status.mode === "api_v1") {
-        // api_v1 daemon锛欰PI server 绔彛涓?llama-server 鍗忚涓嶅吋瀹癸紝
-        // 鍥為€€鍒版爣鍑?spawn锛坢ain.py 鑷鍚姩 llama-server锛?
+      if (status.running) {
+        // Local daemon currently exposes api_v1; run direct llama-server path.
         console.log(
           "[start-translation] api_v1 daemon detected, using direct spawn for performance.",
         );
@@ -5564,7 +5560,6 @@ ipcMain.on(
         );
         args.push("--server", serverExePath);
       } else {
-        // Daemon 鏈繍琛岋紝鍥為€€鍒版爣鍑?spawn
         args.push("--server", serverExePath);
       }
     } else {
@@ -5902,10 +5897,23 @@ ipcMain.on(
 
       launchedProcess.on("error", (err) => {
         console.error("Spawn Error:", err);
-        replyLogUpdate(
+        const errorMessage = `CRITICAL ERROR: Failed to spawn python. ${err.message}`;
+        replyLogUpdate(event, errorMessage, {
+          level: "critical",
+          source: "main",
+        });
+        replyJsonLog(
           event,
-          `CRITICAL ERROR: Failed to spawn python. ${err.message}`,
-          { level: "critical", source: "main" },
+          "JSON_ERROR:",
+          {
+            title: "Start Translation Failed",
+            message: errorMessage,
+          },
+          {
+            level: "critical",
+            source: "main",
+            runId: launchedRunId,
+          },
         );
         cleanupTempRuleFiles();
         translationStopRequested = false;
