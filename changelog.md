@@ -33,6 +33,16 @@
 *   新增单测覆盖：`translation_worker` 静默输出场景下取消请求可及时生效。
 *   全仓行尾规范统一为 LF：新增 `.gitattributes`（`* text=auto eol=lf`），消除 CRLF/mixed 行尾差异噪音。
 
+### 可靠性与依赖闭环
+
+*   Remote API 取消收敛补强：`DELETE /api/v1/translate/{task_id}` 在 `RUNNING` 且持有进程句柄时会执行 best-effort immediate kill，并同步收敛到 `CANCELLED` 状态，降低取消延迟窗口。
+*   Remote API 并发初始化竞态修复：`worker` 懒初始化改为全局锁双检，避免并发任务触发重复初始化。
+*   V1 中断预览重建兼容：中断重建时按 `out_text -> preview_text -> output` 兜底读取，避免历史字段差异导致 `.interrupted.txt` 丢块。
+*   OpenAI 兼容 Provider 并发稳定性补强：默认改为线程局部 `requests.Session`，并保留 `provider._session` 注入兼容路径，不破坏既有测试与 monkeypatch。
+*   Main daemon 分支收敛：清理 `mode !== "api_v1"` 的不可达分支，保持现有 `api_v1` 行为不变，降低维护歧义。
+*   CI/Release 依赖闭环补齐：`middleware/requirements-test.txt` 显式包含 `requirements.txt` 与 `server/requirements.txt`，CI 与 Release 工作流新增关键依赖导入校验（`fastapi/uvicorn/httpx/multipart/pydantic`）。
+*   仓库忽略规则补充：新增 `.keiyaku/` 到 `.gitignore`，避免临时协作产物进入版本库。
+
 ## [2.0.2] - 2026-02-23
 
 ### EPUB结构翻译优化
