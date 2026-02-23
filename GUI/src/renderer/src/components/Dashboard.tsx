@@ -303,6 +303,36 @@ export const Dashboard = forwardRef<any, DashboardProps>(
     }, [isRunning, onRunningChange]);
 
     useEffect(() => {
+      const handleQueueUpdated = () => {
+        if (isRunning) return;
+        try {
+          const saved = localStorage.getItem("library_queue");
+          if (!saved) return;
+          const loaded = JSON.parse(saved);
+          if (!Array.isArray(loaded)) return;
+          setQueue(loaded);
+          const completed = new Set<string>();
+          loaded.forEach((item: QueueItem) => {
+            if (item.status === "completed") completed.add(item.path);
+          });
+          setCompletedFiles(completed);
+        } catch {
+          // ignore malformed queue payload
+        }
+      };
+      window.addEventListener(
+        "murasaki:library-queue-updated",
+        handleQueueUpdated as EventListener,
+      );
+      return () => {
+        window.removeEventListener(
+          "murasaki:library-queue-updated",
+          handleQueueUpdated as EventListener,
+        );
+      };
+    }, [isRunning]);
+
+    useEffect(() => {
       if (engineMode !== "v2" || !v2PipelineId || !active) return;
 
       let isSubscribed = true;
@@ -2135,6 +2165,13 @@ export const Dashboard = forwardRef<any, DashboardProps>(
 
       const resolvedPreRules = resolveRuleListForRun("pre", customConfig);
       const resolvedPostRules = resolveRuleListForRun("post", customConfig);
+      const toPctValue = (value: unknown, fallback: number): number => {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return fallback;
+        if (numeric <= 1 && numeric >= 0) return Math.round(numeric * 100);
+        if (numeric < 0) return 0;
+        return numeric;
+      };
 
       // 根据 ctx 自动计算 chunk-size
       const ctxValue =
@@ -2232,9 +2269,12 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           customConfig.lineToleranceAbs,
           parseInt(localStorage.getItem("config_line_tolerance_abs") || "10"),
         ),
-        lineTolerancePct: pickCustom(
-          customConfig.lineTolerancePct,
-          parseInt(localStorage.getItem("config_line_tolerance_pct") || "20"),
+        lineTolerancePct: toPctValue(
+          pickCustom(
+            customConfig.lineTolerancePct,
+            parseFloat(localStorage.getItem("config_line_tolerance_pct") || "20"),
+          ),
+          20,
         ),
         anchorCheck: pickCustom(
           customConfig.anchorCheck,
@@ -3652,14 +3692,10 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                 <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
                 <div>
                   <p className="font-bold text-amber-500 text-sm">
-                    {lang === "en"
-                      ? "No API Plan Selected"
-                      : "未选择 API 翻译方案"}
+                    {t.dashboard.apiPlanMissingTitle}
                   </p>
                   <p className="text-xs text-amber-400 mt-1">
-                    {lang === "en"
-                      ? "Please create and select an API translation plan in the API Manager."
-                      : "请先在「API 管理」中创建并选择一个翻译方案。"}
+                    {t.dashboard.apiPlanMissingDesc}
                   </p>
                 </div>
               </div>
@@ -3727,11 +3763,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                   className={`bg-card/80 hover:bg-card px-3 py-2 rounded-lg border flex items-center gap-3 transition-all cursor-pointer ${!v2PipelineId ? "border-amber-500/50 ring-1 ring-amber-500/20" : "border-border/50 hover:border-border"}`}
                 >
                   <UITooltip
-                    content={
-                      lang === "en"
-                        ? "Switch to Local Mode"
-                        : "切换到本地翻译模式"
-                    }
+                    content={t.dashboard.switchToLocalMode}
                   >
                     <div
                       className="w-7 h-7 shrink-0 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white cursor-pointer hover:scale-110 transition-transform relative"
@@ -3744,7 +3776,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                   </UITooltip>
                   <div className="flex-1 min-w-0">
                     <span className="text-[9px] text-muted-foreground font-medium uppercase tracking-wider">
-                      {lang === "en" ? "API Translation Plan" : "API 翻译方案"}
+                      {t.dashboard.apiPlanLabel}
                     </span>
                     <select
                       className="w-full bg-transparent text-sm font-medium text-foreground outline-none cursor-pointer truncate -ml-0.5"
@@ -3753,7 +3785,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                       onChange={(e) => setV2PipelineId(e.target.value)}
                     >
                       <option value="">
-                        {lang === "en" ? "Select plan..." : "请选择方案..."}
+                        {t.dashboard.selectPipelinePlaceholder}
                       </option>
                       {v2Profiles.map((p) => (
                         <option key={p.id} value={p.id}>
@@ -3772,18 +3804,14 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                   className={`bg-card/80 hover:bg-card px-3 py-2 rounded-lg border flex items-center gap-3 transition-all cursor-pointer ${!activeModelPath && activeModelsCount > 0 ? "border-amber-500/50 ring-1 ring-amber-500/20" : "border-border/50 hover:border-border"}`}
                 >
                   <UITooltip
-                    content={
-                      lang === "en"
-                        ? "Switch to API Mode"
-                        : "切换到 API 翻译模式"
-                    }
+                    content={t.dashboard.switchToApiMode}
                   >
                     <div
                       className="w-7 h-7 shrink-0 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white cursor-pointer hover:scale-110 transition-transform relative"
                     >
                       <Bot className="w-3.5 h-3.5" />
                       <span className="absolute -top-1 -right-1 text-[7px] bg-blue-500 text-white px-0.5 rounded font-bold leading-tight">
-                        {lang === "en" ? "Local" : "本地"}
+                        {t.dashboard.localModeBadge}
                       </span>
                     </div>
                   </UITooltip>

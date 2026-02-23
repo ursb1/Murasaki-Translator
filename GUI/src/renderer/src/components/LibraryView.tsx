@@ -798,8 +798,7 @@ export function FileConfigModal({
     const loadModels = async () => {
       if (isRemoteMode) {
         try {
-          // @ts-ignore
-          const result = await window.api?.remoteModels?.();
+          const result = await (window.api as any)?.remoteModels?.();
           if (!alive) return;
           if (result?.ok && Array.isArray(result.data)) {
             const mapped = result.data
@@ -2028,9 +2027,56 @@ export function LibraryView({
 
   useEffect(() => {
     if (!window.api?.watchFolderAdd) return;
-    watchFolders.forEach((entry) => {
-      void window.api.watchFolderAdd(entry);
-    });
+    let cancelled = false;
+
+    const reconcileWatchFolders = async () => {
+      if (!window.api?.watchFolderList) return;
+      const listed = await window.api.watchFolderList();
+      const entries =
+        listed?.ok && Array.isArray(listed.entries) ? listed.entries : null;
+      if (cancelled || !entries) return;
+      setWatchFolders((prev) => {
+        const localById = new Map(
+          prev.map((entry) => [entry.id, normalizeWatchFolderConfig(entry)]),
+        );
+        const merged: WatchFolderConfig[] = [];
+        for (const remoteEntry of entries) {
+          const remoteConfig = normalizeWatchFolderConfig(remoteEntry.config);
+          const localConfig = localById.get(remoteConfig.id);
+          merged.push({
+            ...(localConfig || remoteConfig),
+            ...remoteConfig,
+            enabled: Boolean(remoteEntry.active),
+          });
+          localById.delete(remoteConfig.id);
+        }
+        for (const localConfig of localById.values()) {
+          merged.push(localConfig);
+        }
+        return merged;
+      });
+    };
+
+    const restoreWatchFolders = async () => {
+      const results = await Promise.all(
+        watchFolders.map((entry) => window.api!.watchFolderAdd(entry)),
+      );
+      if (cancelled) return;
+      const failedCount = results.filter((item) => !item?.ok).length;
+      if (failedCount > 0) {
+        pushWatchNotice({
+          type: "warning",
+          message: `${t.watchFolderUpdateFail} (${failedCount})`,
+        });
+      }
+      await reconcileWatchFolders();
+    };
+
+    void restoreWatchFolders();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const buildModelNamesForFilter = useCallback(() => {
@@ -2114,7 +2160,16 @@ export function LibraryView({
       }
 
       if (newItems.length > 0) {
-        setQueue((prev) => [...prev, ...newItems]);
+        setQueue((prev) => {
+          // Commit-time dedupe avoids duplicate enqueue under bursty concurrent events.
+          const existing = new Set(prev.map((q) => q.path));
+          const appendItems = newItems.filter((item) => {
+            if (existing.has(item.path)) return false;
+            existing.add(item.path);
+            return true;
+          });
+          return appendItems.length > 0 ? [...prev, ...appendItems] : prev;
+        });
       }
 
       const prefix = options?.source === "watch" ? watchNoticePrefix : "";

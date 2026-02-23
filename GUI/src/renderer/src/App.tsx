@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { Dashboard } from "./components/Dashboard";
 import { SettingsView } from "./components/SettingsView";
@@ -34,6 +34,31 @@ export type View =
   | "advanced"
   | "history"
   | "proofread";
+
+const WATCH_FALLBACK_EXTENSIONS = [".txt", ".epub", ".srt", ".ass", ".ssa"];
+
+const detectFileType = (
+  path: string,
+): "txt" | "epub" | "srt" | "ass" | "ssa" | "unknown" => {
+  const ext = "." + path.split(".").pop()?.toLowerCase();
+  if (WATCH_FALLBACK_EXTENSIONS.includes(ext)) {
+    return ext.slice(1) as "txt" | "epub" | "srt" | "ass" | "ssa";
+  }
+  return "unknown";
+};
+
+const buildFallbackQueueItem = (
+  path: string,
+  fileType: "txt" | "epub" | "srt" | "ass" | "ssa",
+) => ({
+  id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+  path,
+  fileName: path.split(/[/\\]/).pop() || path,
+  fileType,
+  addedAt: new Date().toISOString(),
+  config: { useGlobalDefaults: true },
+  status: "pending" as const,
+});
 
 function AppContent() {
   const [lang, setLang] = useState<Language>(() => {
@@ -102,6 +127,38 @@ function AppContent() {
     onStopTranslation: () => dashboardRef.current?.stopTranslation?.(),
     onSwitchView: handleSwitchView,
   });
+
+  useEffect(() => {
+    const unsubscribe = window.api?.onWatchFolderFileAdded?.((payload) => {
+      if (!payload?.path) return;
+      if (view === "library") return;
+      const fileType = detectFileType(payload.path);
+      if (fileType === "unknown") return;
+      try {
+        const raw = localStorage.getItem("library_queue");
+        const parsed = raw ? JSON.parse(raw) : [];
+        const queue = Array.isArray(parsed)
+          ? (parsed as Array<{ path?: string }>)
+          : [];
+        if (queue.some((item) => String(item.path || "") === payload.path)) return;
+        const nextQueue = [
+          ...queue,
+          buildFallbackQueueItem(payload.path, fileType),
+        ];
+        localStorage.setItem("library_queue", JSON.stringify(nextQueue));
+        localStorage.setItem(
+          "file_queue",
+          JSON.stringify(nextQueue.map((item) => item.path)),
+        );
+        window.dispatchEvent(new CustomEvent("murasaki:library-queue-updated"));
+      } catch (error) {
+        console.error("[App] Watch fallback enqueue failed:", error);
+      }
+    });
+    return () => {
+      unsubscribe?.();
+    };
+  }, [view]);
 
   return (
     <div className="flex h-screen w-screen bg-background font-sans text-foreground overflow-hidden">
