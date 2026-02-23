@@ -278,7 +278,7 @@ def _get_task(task_id: str) -> Optional[TranslationTask]:
 
 def _count_running_tasks() -> int:
     with _tasks_lock:
-        return len([t for t in tasks.values() if t.status == TaskStatus.RUNNING])
+        return len([t for t in tasks.values() if t.get_status() == TaskStatus.RUNNING])
 
 
 def _try_transition_task_status(task: TranslationTask, next_status: TaskStatus) -> bool:
@@ -287,17 +287,18 @@ def _try_transition_task_status(task: TranslationTask, next_status: TaskStatus) 
     - 终态不可回退（completed/failed/cancelled）
     - 相同状态幂等
     """
-    current_status = task.status
-    if current_status == next_status:
+    with task.with_state_lock():
+        current_status = task.status
+        if current_status == next_status:
+            return True
+        if current_status in TERMINAL_TASK_STATUSES:
+            logger.warning(
+                f"Ignored task status transition for {task.task_id}: "
+                f"{current_status.value} -> {next_status.value}"
+            )
+            return False
+        task.status = next_status
         return True
-    if current_status in TERMINAL_TASK_STATUSES:
-        logger.warning(
-            f"Ignored task status transition for {task.task_id}: "
-            f"{current_status.value} -> {next_status.value}"
-        )
-        return False
-    task.status = next_status
-    return True
 
 def cleanup_old_tasks():
     """清理旧任务，防止内存泄漏和磁盘泄漏"""
@@ -312,7 +313,7 @@ def cleanup_old_tasks():
         
         for task_id, task in list(tasks.items()):
             age_hours = (now - task.created_at).total_seconds() / 3600
-            if task.status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
+            if task.get_status() in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
                 completed_count += 1
                 if age_hours > TASK_RETENTION_HOURS:
                     to_remove.append((task_id, task))
@@ -321,7 +322,7 @@ def cleanup_old_tasks():
         if completed_count > MAX_COMPLETED_TASKS:
             completed_tasks = [
                 (tid, t) for tid, t in list(tasks.items()) 
-                if t.status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]
+                if t.get_status() in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]
             ]
             completed_tasks.sort(key=lambda x: x[1].created_at)
             for tid, t in completed_tasks[:completed_count - MAX_COMPLETED_TASKS]:
@@ -334,8 +335,9 @@ def cleanup_old_tasks():
             # 删除关联的物理文件（防止磁盘泄漏）
             try:
                 # 删除输出文件
-                if task.output_path:
-                    output_file = Path(task.output_path)
+                output_path = task.get_output_path()
+                if output_path:
+                    output_file = Path(output_path)
                     if output_file.exists():
                         output_file.unlink()
                         logger.debug(f"Deleted output file: {output_file}")
@@ -860,35 +862,21 @@ async def get_task_status(
     if not task:
         raise HTTPException(404, f"Task {task_id} not found")
 
-    # 直接对 task.logs 取长度和切片，避免 list() 全量拷贝
-    # Python GIL 保证 len() 和 slice 操作的原子性
-    log_total = len(task.logs)
-    logs_truncated = False
-
-    if log_from is None:
-        # 兼容旧客户端：默认返回最近 50 条
-        start_index = max(0, log_total - 50)
-        logs = task.logs[start_index:]
-        logs_truncated = start_index > 0
-        next_log_index = start_index + len(logs)
-    else:
-        start_index = min(log_from, log_total)
-        end_index = min(log_total, start_index + log_limit)
-        logs = task.logs[start_index:end_index]
-        next_log_index = start_index + len(logs)
+    snapshot = task.snapshot_status(log_from=log_from, log_limit=log_limit)
+    status = snapshot["status"]
 
     return TaskStatusResponse(
         task_id=task_id,
-        status=task.status.value,
-        progress=task.progress,
-        current_block=task.current_block,
-        total_blocks=task.total_blocks,
-        logs=logs,
-        next_log_index=next_log_index,
-        log_total=log_total,
-        logs_truncated=logs_truncated,
-        result=task.result,
-        error=task.error
+        status=status.value,
+        progress=snapshot["progress"],
+        current_block=snapshot["current_block"],
+        total_blocks=snapshot["total_blocks"],
+        logs=snapshot["logs"],
+        next_log_index=snapshot["next_log_index"],
+        log_total=snapshot["log_total"],
+        logs_truncated=snapshot["logs_truncated"],
+        result=snapshot["result"],
+        error=snapshot["error"],
     )
 
 
@@ -899,17 +887,19 @@ async def cancel_task(task_id: str):
     task = _get_task(task_id)
     if not task:
         raise HTTPException(404, f"Task {task_id} not found")
-    if task.status in [TaskStatus.PENDING, TaskStatus.RUNNING]:
-        task.cancel_requested = True
-        if task.status == TaskStatus.PENDING:
+    current_status = task.get_status()
+    if current_status in [TaskStatus.PENDING, TaskStatus.RUNNING]:
+        task.request_cancel()
+        if current_status == TaskStatus.PENDING:
             _try_transition_task_status(task, TaskStatus.CANCELLED)
             task.add_log(f"[{datetime.now().strftime('%H:%M:%S')}] Cancelled before start")
             return {"message": "Task cancelled before start"}
         # RUNNING: best-effort immediate kill to reduce cancel latency.
-        if task._process is not None and worker is not None:
+        process = task.get_process()
+        if process is not None and worker is not None:
             try:
-                await worker._kill_process_tree(task._process)
-                task._process = None
+                await worker._kill_process_tree(process)
+                task.set_process(None)
                 _try_transition_task_status(task, TaskStatus.CANCELLED)
                 task.add_log(
                     f"[{datetime.now().strftime('%H:%M:%S')}] Cancelled by user (immediate stop)."
@@ -919,7 +909,7 @@ async def cancel_task(task_id: str):
                 logger.warning("Immediate cancel failed for task %s: %s", task_id, e)
         return {"message": "Cancel requested"}
     else:
-        return {"message": f"Task is {task.status.value}, cannot cancel"}
+        return {"message": f"Task is {current_status.value}, cannot cancel"}
 
 
 @app.post("/api/v1/upload/file", dependencies=[Depends(verify_api_key)])
@@ -957,10 +947,11 @@ async def download_cache(task_id: str):
     if not task:
         raise HTTPException(404, f"Task {task_id} not found")
     
-    if not task.output_path:
+    output_path = task.get_output_path()
+    if not output_path:
         raise HTTPException(404, "No output path available")
-    
-    cache_path = task.output_path + ".cache.json"
+
+    cache_path = output_path + ".cache.json"
     if not os.path.exists(cache_path):
         raise HTTPException(404, "Cache file not found")
     
@@ -972,11 +963,13 @@ async def download_result(task_id: str):
     task = _get_task(task_id)
     if not task:
         raise HTTPException(404, f"Task {task_id} not found")
-    if task.status != TaskStatus.COMPLETED:
-        raise HTTPException(400, f"Task is {task.status.value}, not completed")
-    
-    if task.output_path and Path(task.output_path).exists():
-        output_file = Path(task.output_path).resolve()
+    current_status = task.get_status()
+    if current_status != TaskStatus.COMPLETED:
+        raise HTTPException(400, f"Task is {current_status.value}, not completed")
+
+    output_path = task.get_output_path()
+    if output_path and Path(output_path).exists():
+        output_file = Path(output_path).resolve()
         outputs_dir = (Path(__file__).parent.parent / "outputs").resolve()
         if not _is_path_within(output_file, outputs_dir):
             raise HTTPException(400, "Unsafe output path")
@@ -1007,34 +1000,32 @@ async def websocket_logs(websocket: WebSocket, task_id: str):
             await websocket.send_json({"error": f"Task {task_id} not found"})
             return
         last_log_index = 0
-        
+
         while True:
-            # 发送新日志
-            if len(task.logs) > last_log_index:
-                new_logs = task.logs[last_log_index:]
-                for log in new_logs:
-                    await websocket.send_json({
-                        "type": "log",
-                        "message": log
-                    })
-                last_log_index = len(task.logs)
-            
+            snapshot = task.snapshot_realtime(log_from=last_log_index)
+            for log in snapshot["logs"]:
+                await websocket.send_json({
+                    "type": "log",
+                    "message": log
+                })
+            last_log_index = snapshot["next_log_index"]
+
             # 发送进度
             await websocket.send_json({
                 "type": "progress",
-                "progress": task.progress,
-                "current_block": task.current_block,
-                "total_blocks": task.total_blocks,
-                "status": task.status.value
+                "progress": snapshot["progress"],
+                "current_block": snapshot["current_block"],
+                "total_blocks": snapshot["total_blocks"],
+                "status": snapshot["status"].value
             })
-            
+
             # 任务完成则退出
-            if task.status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
+            if snapshot["status"] in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
                 await websocket.send_json({
                     "type": "complete",
-                    "status": task.status.value,
-                    "result": task.result,
-                    "error": task.error
+                    "status": snapshot["status"].value,
+                    "result": snapshot["result"],
+                    "error": snapshot["error"]
                 })
                 break
             
@@ -1054,7 +1045,7 @@ async def execute_translation(task: TranslationTask):
     
     try:
         # 若任务在排队期间已被取消，直接结束
-        if task.cancel_requested or task.status == TaskStatus.CANCELLED:
+        if task.is_cancel_requested() or task.get_status() == TaskStatus.CANCELLED:
             _try_transition_task_status(task, TaskStatus.CANCELLED)
             task.add_log(f"[{datetime.now().strftime('%H:%M:%S')}] Translation skipped (cancelled).")
             return
@@ -1073,21 +1064,22 @@ async def execute_translation(task: TranslationTask):
         result = await worker.translate(task)
 
         # 任务在 worker 内可能已被标记为取消，避免被 completed 覆盖
-        if task.status == TaskStatus.CANCELLED:
+        if task.get_status() == TaskStatus.CANCELLED:
             task.add_log(f"[{datetime.now().strftime('%H:%M:%S')}] Translation cancelled.")
             return
 
-        task.result = result
+        task.set_result(result)
         if _try_transition_task_status(task, TaskStatus.COMPLETED):
-            task.progress = 1.0
+            _, current_block, total_blocks = task.get_progress()
+            task.set_progress(1.0, current_block, total_blocks)
             task.add_log(f"[{datetime.now().strftime('%H:%M:%S')}] Translation completed!")
-        
+
     except Exception as e:
-        if task.status == TaskStatus.CANCELLED:
+        if task.get_status() == TaskStatus.CANCELLED:
             task.add_log(f"[{datetime.now().strftime('%H:%M:%S')}] Translation cancelled.")
             return
         if _try_transition_task_status(task, TaskStatus.FAILED):
-            task.error = str(e)
+            task.set_error(str(e))
             task.add_log(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR: {e}")
             logger.exception(f"Translation failed for task {task.task_id}")
 

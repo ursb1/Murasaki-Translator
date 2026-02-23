@@ -471,6 +471,62 @@ async def test_wait_for_server_ready_success(monkeypatch):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_wait_for_server_ready_uses_to_thread(monkeypatch):
+    worker = TranslationWorker(model_path="model.gguf")
+    worker.server_process = DummyServerProcess(returncode=None)
+
+    called = {}
+
+    async def fake_to_thread(func, *args, **kwargs):
+        called["func"] = func
+        called["args"] = args
+        called["kwargs"] = kwargs
+
+        class DummyResp:
+            status_code = 200
+
+        return DummyResp()
+
+    monkeypatch.setattr(worker_module.asyncio, "to_thread", fake_to_thread)
+    await worker._wait_for_server_ready(timeout=1)
+
+    assert called["func"] is worker_module.requests.get
+    assert called["args"][0].endswith("/v1/models")
+    assert called["kwargs"]["timeout"] == 2
+
+
+@pytest.mark.unit
+def test_translation_task_snapshot_status_and_realtime():
+    task = TranslationTask(task_id="snap", request=object())
+    task.set_status(TaskStatus.RUNNING)
+    task.set_progress(0.25, 1, 4)
+    task.set_result("ok")
+    task.set_error("warn")
+    for idx in range(80):
+        task.add_log(f"log-{idx}")
+
+    default_snapshot = task.snapshot_status(log_from=None, log_limit=20)
+    assert len(default_snapshot["logs"]) == 50
+    assert default_snapshot["logs"][0] == "log-30"
+    assert default_snapshot["next_log_index"] == 80
+    assert default_snapshot["log_total"] == 80
+    assert default_snapshot["logs_truncated"] is True
+    assert default_snapshot["status"] == TaskStatus.RUNNING
+    assert default_snapshot["progress"] == 0.25
+
+    ranged_snapshot = task.snapshot_status(log_from=70, log_limit=5)
+    assert ranged_snapshot["logs"] == ["log-70", "log-71", "log-72", "log-73", "log-74"]
+    assert ranged_snapshot["next_log_index"] == 75
+
+    realtime_snapshot = task.snapshot_realtime(log_from=78)
+    assert realtime_snapshot["logs"] == ["log-78", "log-79"]
+    assert realtime_snapshot["next_log_index"] == 80
+    assert realtime_snapshot["result"] == "ok"
+    assert realtime_snapshot["error"] == "warn"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_wait_for_server_ready_process_exit(monkeypatch):
     worker = TranslationWorker(model_path="model.gguf")
     worker.server_process = DummyServerProcess(returncode=1)

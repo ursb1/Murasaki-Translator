@@ -65,14 +65,119 @@ class TranslationTask:
     # 控制
     cancel_requested: bool = False
     _process: Optional[asyncio.subprocess.Process] = field(default=None, repr=False)
+    _state_lock: threading.RLock = field(
+        default_factory=threading.RLock,
+        repr=False,
+        init=False,
+    )
 
     def add_log(self, message: str):
         """添加日志，自动限制条数防止内存膨胀"""
-        self.logs.append(message)
-        # 超过限制时只保留最新的日志（使用安全的切片逻辑）
-        if len(self.logs) > self.MAX_LOG_LINES:
-            # 只保留最新的 MAX_LOG_LINES 条，避免复杂的头尾拼接导致错乱
-            self.logs = self.logs[-self.MAX_LOG_LINES:]
+        with self._state_lock:
+            self.logs.append(message)
+            # 超过限制时只保留最新的日志（使用安全的切片逻辑）
+            if len(self.logs) > self.MAX_LOG_LINES:
+                # 只保留最新的 MAX_LOG_LINES 条，避免复杂的头尾拼接导致错乱
+                self.logs = self.logs[-self.MAX_LOG_LINES:]
+
+    def request_cancel(self):
+        with self._state_lock:
+            self.cancel_requested = True
+
+    def is_cancel_requested(self) -> bool:
+        with self._state_lock:
+            return self.cancel_requested
+
+    def set_process(self, process: Optional[asyncio.subprocess.Process]):
+        with self._state_lock:
+            self._process = process
+
+    def get_process(self) -> Optional[asyncio.subprocess.Process]:
+        with self._state_lock:
+            return self._process
+
+    def set_output_path(self, output_path: str):
+        with self._state_lock:
+            self.output_path = output_path
+
+    def get_output_path(self) -> Optional[str]:
+        with self._state_lock:
+            return self.output_path
+
+    def set_status(self, status: TaskStatus):
+        with self._state_lock:
+            self.status = status
+
+    def get_status(self) -> TaskStatus:
+        with self._state_lock:
+            return self.status
+
+    def set_progress(self, progress: float, current_block: int, total_blocks: int):
+        with self._state_lock:
+            self.progress = progress
+            self.current_block = current_block
+            self.total_blocks = total_blocks
+
+    def get_progress(self) -> tuple[float, int, int]:
+        with self._state_lock:
+            return self.progress, self.current_block, self.total_blocks
+
+    def set_result(self, result: Optional[str]):
+        with self._state_lock:
+            self.result = result
+
+    def set_error(self, error: Optional[str]):
+        with self._state_lock:
+            self.error = error
+
+    def with_state_lock(self):
+        return self._state_lock
+
+    def snapshot_status(self, *, log_from: Optional[int], log_limit: int) -> dict:
+        with self._state_lock:
+            log_total = len(self.logs)
+            logs_truncated = False
+
+            if log_from is None:
+                # 兼容旧客户端：默认返回最近 50 条
+                start_index = max(0, log_total - 50)
+                logs = self.logs[start_index:]
+                logs_truncated = start_index > 0
+                next_log_index = start_index + len(logs)
+            else:
+                start_index = min(log_from, log_total)
+                end_index = min(log_total, start_index + log_limit)
+                logs = self.logs[start_index:end_index]
+                next_log_index = start_index + len(logs)
+
+            return {
+                "status": self.status,
+                "progress": self.progress,
+                "current_block": self.current_block,
+                "total_blocks": self.total_blocks,
+                "logs": logs,
+                "next_log_index": next_log_index,
+                "log_total": log_total,
+                "logs_truncated": logs_truncated,
+                "result": self.result,
+                "error": self.error,
+            }
+
+    def snapshot_realtime(self, log_from: int) -> dict:
+        with self._state_lock:
+            log_total = len(self.logs)
+            start_index = min(log_from, log_total)
+            logs = self.logs[start_index:]
+            return {
+                "status": self.status,
+                "progress": self.progress,
+                "current_block": self.current_block,
+                "total_blocks": self.total_blocks,
+                "logs": logs,
+                "next_log_index": start_index + len(logs),
+                "result": self.result,
+                "error": self.error,
+            }
 
 
 class TranslationWorker:
@@ -370,7 +475,7 @@ class TranslationWorker:
                 raise RuntimeError(f"llama-server exited with code {self.server_process.returncode}")
 
             try:
-                resp = requests.get(url, timeout=2)
+                resp = await asyncio.to_thread(requests.get, url, timeout=2)
                 if resp.status_code == 200:
                     return
             except requests.RequestException:
@@ -571,7 +676,7 @@ class TranslationWorker:
             output_dir = middleware_dir / "outputs"
             output_dir.mkdir(exist_ok=True)
             output_path = output_dir / f"{task.task_id}_output.txt"
-            task.output_path = str(output_path)
+            task.set_output_path(str(output_path))
 
             def _write_temp_json(prefix: str, payload: Any) -> str:
                 temp_file = tempfile.NamedTemporaryFile(
@@ -773,15 +878,15 @@ class TranslationWorker:
                     creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
                 )
 
-            task._process = process
+            task.set_process(process)
 
             # 实时读取输出（带短超时，避免静默场景下无法响应取消）
             read_timeout_s = 0.2
             while True:
                 # 优先检查取消，避免阻塞在 readline() 导致取消延迟
-                if task.cancel_requested:
+                if task.is_cancel_requested():
                     await self._kill_process_tree(process)
-                    task.status = TaskStatus.CANCELLED
+                    task.set_status(TaskStatus.CANCELLED)
                     task.add_log("[WARN] Translation cancelled by user")
                     return ""
 
@@ -814,15 +919,17 @@ class TranslationWorker:
                     try:
                         progress_json = line_text.split("PROGRESS:")[-1]
                         progress_data = json.loads(progress_json)
-                        task.current_block = progress_data.get("current", 0)
-                        task.total_blocks = progress_data.get("total", 0)
-                        if task.total_blocks > 0:
-                            task.progress = task.current_block / task.total_blocks
+                        current_block = progress_data.get("current", 0)
+                        total_blocks = progress_data.get("total", 0)
+                        progress = 0.0
+                        if total_blocks > 0:
+                            progress = current_block / total_blocks
+                        task.set_progress(progress, current_block, total_blocks)
                     except:
                         pass
 
             await process.wait()
-            task._process = None
+            task.set_process(None)
 
             # 读取结果
             if process.returncode == 0 and output_path.exists():

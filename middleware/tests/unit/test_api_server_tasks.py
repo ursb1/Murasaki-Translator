@@ -89,3 +89,76 @@ def test_cleanup_old_tasks_max_completed(monkeypatch):
 
     assert len(server.tasks) == 1
     assert "t2" in server.tasks
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_get_task_status_uses_snapshot_window(monkeypatch):
+    monkeypatch.setattr(server, "tasks", {})
+    task = _make_task("snapshot_task", TaskStatus.RUNNING, datetime.now())
+    task.set_progress(0.5, 5, 10)
+    for idx in range(120):
+        task.add_log(f"log-{idx}")
+    server.tasks[task.task_id] = task
+
+    default_resp = await server.get_task_status(task.task_id, log_from=None, log_limit=200)
+    assert default_resp.log_total == 120
+    assert default_resp.logs_truncated is True
+    assert len(default_resp.logs) == 50
+    assert default_resp.logs[0] == "log-70"
+    assert default_resp.next_log_index == 120
+
+    ranged_resp = await server.get_task_status(task.task_id, log_from=100, log_limit=10)
+    assert ranged_resp.logs == [f"log-{idx}" for idx in range(100, 110)]
+    assert ranged_resp.next_log_index == 110
+    assert ranged_resp.progress == 0.5
+    assert ranged_resp.current_block == 5
+    assert ranged_resp.total_blocks == 10
+
+
+class DummyWebSocket:
+    def __init__(self):
+        self.query_params = {}
+        self.headers = {}
+        self.accepted = False
+        self.messages = []
+        self.closed_code = None
+
+    async def accept(self):
+        self.accepted = True
+
+    async def close(self, code: int = 1000):
+        self.closed_code = code
+
+    async def send_json(self, payload):
+        self.messages.append(payload)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_websocket_logs_emits_snapshot_and_complete(monkeypatch):
+    monkeypatch.setattr(server, "tasks", {})
+    monkeypatch.delenv("MURASAKI_API_KEY", raising=False)
+    monkeypatch.setenv("MURASAKI_WS_AUTH_REQUIRED", "0")
+
+    task = _make_task("ws_task", TaskStatus.COMPLETED, datetime.now())
+    task.set_progress(1.0, 2, 2)
+    task.set_result("done")
+    task.add_log("line-1")
+    task.add_log("line-2")
+    server.tasks[task.task_id] = task
+
+    websocket = DummyWebSocket()
+    await server.websocket_logs(websocket, task.task_id)
+
+    assert websocket.accepted is True
+    assert [msg for msg in websocket.messages if msg.get("type") == "log"] == [
+        {"type": "log", "message": "line-1"},
+        {"type": "log", "message": "line-2"},
+    ]
+    progress_messages = [msg for msg in websocket.messages if msg.get("type") == "progress"]
+    assert len(progress_messages) == 1
+    assert progress_messages[0]["status"] == "completed"
+    complete_messages = [msg for msg in websocket.messages if msg.get("type") == "complete"]
+    assert len(complete_messages) == 1
+    assert complete_messages[0]["result"] == "done"
