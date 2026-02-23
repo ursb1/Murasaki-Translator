@@ -21,6 +21,7 @@ type RunnerDeps = {
   getPythonPath: () => PythonPath;
   getMiddlewarePath: () => string;
   getMainWindow: () => BrowserWindow | null;
+  isTranslationBusy?: () => boolean;
   recordApiStatsEvent?: (event: ApiStatsEventInput) => void | Promise<void>;
   sendLog: (payload: {
     runId: string;
@@ -176,6 +177,8 @@ export const stopPipelineV2Runner = () => {
   stopActivePipelineChild();
 };
 
+export const isPipelineV2RunnerBusy = (): boolean => Boolean(activeChild);
+
 /**
  * 将缓冲区按行分割，返回未完成的残余行。
  * 复用 V1 index.ts 的 flushBufferedLines 模式。
@@ -292,6 +295,25 @@ export const registerPipelineV2Runner = (deps: RunnerDeps) => {
     ) => {
       const reqRunId = String(payloadRunId || "").trim();
       const runId = reqRunId || Date.now().toString();
+
+      if (deps.isTranslationBusy?.()) {
+        const message = "Translation already running in V1/remote mode";
+        const win = deps.getMainWindow();
+        if (win) {
+          win.webContents.send("process-exit", {
+            code: 1,
+            signal: null,
+            stopRequested: false,
+            runId,
+          });
+        }
+        return {
+          ok: false,
+          runId,
+          code: 1,
+          error: { errors: [message] },
+        };
+      }
 
       // 如果已有活动的 V2 进程，拒绝
       if (activeChild) {

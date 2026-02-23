@@ -638,39 +638,6 @@ export class RemoteClient {
     return ws;
   }
 
-  /**
-   * Run full translation flow and wait for final result.
-   */
-  async translateAndWait(
-    options: TranslateOptions,
-    onProgress?: (progress: number, log: string) => void,
-  ): Promise<string> {
-    const { taskId } = await this.createTranslation(options);
-
-    while (true) {
-      const status = await this.getTaskStatus(taskId);
-
-      if (onProgress) {
-        const lastLog = status.logs[status.logs.length - 1] || "";
-        onProgress(status.progress, lastLog);
-      }
-
-      if (status.status === "completed") {
-        return status.result || "";
-      }
-
-      if (status.status === "failed") {
-        throw new Error(status.error || "Translation failed");
-      }
-
-      if (status.status === "cancelled") {
-        throw new Error("Translation cancelled");
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
-  }
-
   // ============================================
   // Private Methods
   // ============================================

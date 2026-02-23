@@ -34,6 +34,7 @@ import {
 import { stopPipelineV2Server } from "./pipelineV2Server";
 import {
   registerPipelineV2Runner,
+  isPipelineV2RunnerBusy,
   stopPipelineV2Runner,
 } from "./pipelineV2Runner";
 import { createApiStatsService } from "./apiStatsStore";
@@ -45,6 +46,7 @@ let remoteTranslationBridge: {
   client: any;
   taskId: string;
   cancelRequested: boolean;
+  runId?: string;
 } | null = null;
 let mainWindow: BrowserWindow | null = null;
 let hardwareSpecsInFlight: Promise<any> | null = null;
@@ -217,6 +219,18 @@ const sendLogUpdateToWindow = (
   );
 };
 
+const normalizeRunId = (runId: unknown): string | undefined => {
+  const normalized = typeof runId === "string" ? runId.trim() : "";
+  return normalized || undefined;
+};
+
+const clearActiveRunIfMatch = (runId?: string): void => {
+  if (!runId) return;
+  if (activeRunId === runId) {
+    activeRunId = null;
+  }
+};
+
 const requestRemoteTaskCancel = (reason?: string): boolean => {
   if (!remoteTranslationBridge) return false;
   translationStopRequested = true;
@@ -234,6 +248,7 @@ const requestRemoteTaskCancel = (reason?: string): boolean => {
     },
   );
   const cancellingTaskId = bridge.taskId;
+  const cancellingRunId = normalizeRunId(bridge.runId) || normalizeRunId(activeRunId);
   setTimeout(() => {
     if (
       remoteTranslationBridge &&
@@ -248,8 +263,9 @@ const requestRemoteTaskCancel = (reason?: string): boolean => {
         code: 1,
         signal: null,
         stopRequested: true,
-        runId: activeRunId || undefined,
+        runId: cancellingRunId,
       });
+      clearActiveRunIfMatch(cancellingRunId);
     }
   }, 8000);
   void bridge.client.cancelTask(bridge.taskId).catch((error: unknown) => {
@@ -443,7 +459,9 @@ function cleanupTempDirectory(): void {
       for (const file of files) {
         try {
           fs.unlinkSync(join(tempDir, file));
-        } catch (_) {}
+        } catch {
+          // ignore temp cleanup failure
+        }
       }
       console.log(`[App] Cleaned ${files.length} temp files`);
     }
@@ -464,7 +482,9 @@ function cleanupTempDirectory(): void {
           continue;
         try {
           fs.unlinkSync(join(middlewareDir, file));
-        } catch {}
+        } catch {
+          // ignore legacy temp cleanup failure
+        }
       }
     }
   } catch (e) {
@@ -594,6 +614,7 @@ app.whenReady().then(() => {
     getPythonPath,
     getMiddlewarePath,
     getMainWindow: () => mainWindow,
+    isTranslationBusy: () => Boolean(pythonProcess || remoteTranslationBridge),
     recordApiStatsEvent: (event) => {
       void apiStatsService.appendEvent(event);
     },
@@ -2268,7 +2289,9 @@ ipcMain.handle("get-system-diagnostics", async () => {
           }
         }
       }
-    } catch {}
+    } catch {
+      // ignore nvidia-smi xml fallback failure
+    }
 
     try {
       const { stdout } = await execWithTimeout(
@@ -2290,7 +2313,9 @@ ipcMain.handle("get-system-diagnostics", async () => {
           return;
         }
       }
-    } catch {}
+    } catch {
+      // ignore nvidia-smi csv fallback failure
+    }
 
     if (process.platform === "win32") {
       try {
@@ -2316,7 +2341,9 @@ ipcMain.handle("get-system-diagnostics", async () => {
           result.gpu = { name, driver: driver || undefined, vram };
           return;
         }
-      } catch {}
+      } catch {
+        // ignore wmic gpu detection failure
+      }
 
       try {
         const { stdout } = await execWithTimeout(
@@ -2341,7 +2368,9 @@ ipcMain.handle("get-system-diagnostics", async () => {
           result.gpu = { name, driver: driver || undefined, vram };
           return;
         }
-      } catch {}
+      } catch {
+        // ignore powershell gpu detection failure
+      }
     }
 
     if (process.platform === "darwin") {
@@ -2366,7 +2395,9 @@ ipcMain.handle("get-system-diagnostics", async () => {
           result.gpu = { name: String(name), driver: "METAL", vram };
           return;
         }
-      } catch {}
+      } catch {
+        // ignore macOS gpu detection failure
+      }
     }
 
     if (process.platform === "linux") {
@@ -2390,7 +2421,9 @@ ipcMain.handle("get-system-diagnostics", async () => {
             return;
           }
         }
-      } catch {}
+      } catch {
+        // ignore linux nvidia-smi detection failure
+      }
 
       try {
         const { stdout } = await execWithTimeout("lspci", 4000);
@@ -2404,7 +2437,9 @@ ipcMain.handle("get-system-diagnostics", async () => {
           };
           return;
         }
-      } catch {}
+      } catch {
+        // ignore lspci detection failure
+      }
 
       try {
         const { stdout } = await execWithTimeout("glxinfo -B", 4000);
@@ -2417,7 +2452,9 @@ ipcMain.handle("get-system-diagnostics", async () => {
             driver: "Detected via glxinfo",
           };
         }
-      } catch {}
+      } catch {
+        // ignore glxinfo detection failure
+      }
     }
   })();
 
@@ -2447,7 +2484,9 @@ ipcMain.handle("get-system-diagnostics", async () => {
           result.python = { version, path: executable };
           return;
         }
-      } catch {}
+      } catch {
+        // ignore python candidate probing failure
+      }
     }
 
     if (primary.type === "bundle" && fs.existsSync(primary.path)) {
@@ -2480,7 +2519,9 @@ ipcMain.handle("get-system-diagnostics", async () => {
           result.cuda = { version: `driver ${first}`, available: true };
           return;
         }
-      } catch {}
+      } catch {
+        // ignore cuda fallback probe failure
+      }
       result.cuda = { version: "N/A", available: false };
     }
   })();
@@ -2510,7 +2551,9 @@ ipcMain.handle("get-system-diagnostics", async () => {
           version: versionMatch ? versionMatch[1] : undefined,
         };
         return;
-      } catch {}
+      } catch {
+        // ignore vulkan fallback probe failure
+      }
       result.vulkan = { available: false };
     }
   })();
@@ -2995,93 +3038,6 @@ ipcMain.handle("get-hardware-specs", async () => {
   }
 });
 
-ipcMain.handle("check-env-component", async (_event, component: string) => {
-  const middlewareDir = getMiddlewarePath();
-  const scriptPath = join(middlewareDir, "env_fixer.py");
-  const pythonCmd = getScriptPythonInfo();
-
-  console.log(`[EnvFixer] Checking component: ${component}`);
-
-  return new Promise((resolve) => {
-    if (!fs.existsSync(scriptPath)) {
-      resolve({ success: false, error: `Script not found: ${scriptPath}` });
-      return;
-    }
-
-    const proc = spawnPythonProcess(
-      pythonCmd,
-      ["env_fixer.py", "--check", "--json"],
-      {
-        cwd: middlewareDir,
-      },
-    );
-
-    let output = "";
-    let errorOutput = "";
-    let resolved = false;
-
-    const timeout = setTimeout(() => {
-      if (resolved) return;
-      resolved = true;
-      proc.kill();
-      resolve({ success: false, error: "Check timed out" });
-    }, 30000);
-
-    if (proc.stdout) {
-      proc.stdout.on("data", (d) => (output += d.toString()));
-    }
-    if (proc.stderr) {
-      proc.stderr.on("data", (d) => (errorOutput += d.toString()));
-    }
-
-    proc.on("error", (err) => {
-      if (resolved) return;
-      resolved = true;
-      clearTimeout(timeout);
-      resolve({ success: false, error: err.message });
-    });
-
-    proc.on("close", (_code) => {
-      if (resolved) return;
-      resolved = true;
-      clearTimeout(timeout);
-
-      try {
-        // 绋冲仴鎻愬彇锛氫紭鍏堜粠杩涚▼杈撳嚭瑙ｆ瀽 JSON锛屽け璐ュ垯鍥為€€璇诲彇鎶ュ憡鏂囦欢
-        const mergedOutput = [output, errorOutput].filter(Boolean).join("\n");
-        const report =
-          extractLastJsonObject<any>(mergedOutput) ||
-          readEnvReportFromFile<any>(middlewareDir);
-        if (!report) {
-          resolve({
-            success: false,
-            error: "Failed to parse report: no JSON object found",
-            output,
-            errorOutput,
-          });
-          return;
-        }
-        // 鎵惧埌鎸囧畾缁勪欢鐨勪俊鎭?
-        const componentData = report.components?.find(
-          (c: any) => c.name.toLowerCase() === component.toLowerCase(),
-        );
-        resolve({
-          success: true,
-          report,
-          component: componentData || null,
-        });
-      } catch (e) {
-        resolve({
-          success: false,
-          error: `Failed to parse report: ${e}`,
-          output,
-          errorOutput,
-        });
-      }
-    });
-  });
-});
-
 const runEnvCheckReport = (
   middlewareDir: string,
   pythonCmd: { type: "python"; path: string },
@@ -3153,7 +3109,6 @@ const runEnvCheckReport = (
     });
   });
 
-ipcMain.removeHandler("check-env-component");
 ipcMain.handle("check-env-component", async (_event, component: string) => {
   const middlewareDir = getMiddlewarePath();
   const scriptPath = join(middlewareDir, "env_fixer.py");
@@ -3692,7 +3647,9 @@ ipcMain.handle("rebuild-doc", async (_event, { cachePath, outputPath }) => {
         if (tempPatchedCachePath) {
           try {
             fs.unlinkSync(tempPatchedCachePath);
-          } catch (_) {}
+          } catch {
+            // ignore temp cache cleanup failure
+          }
         }
         if (code === 0) {
           resolve({ success: true });
@@ -3708,7 +3665,9 @@ ipcMain.handle("rebuild-doc", async (_event, { cachePath, outputPath }) => {
     if (tempPatchedCachePath) {
       try {
         fs.unlinkSync(tempPatchedCachePath);
-      } catch (_) {}
+      } catch {
+        // ignore temp cache cleanup failure
+      }
     }
     const errorMsg = e instanceof Error ? e.message : String(e);
     return { success: false, error: errorMsg };
@@ -3744,7 +3703,9 @@ ipcMain.handle(
       for (const artifactPath of tempArtifacts) {
         try {
           fs.unlinkSync(artifactPath);
-        } catch (_) {}
+        } catch {
+          // ignore temporary artifact cleanup failure
+        }
       }
     };
 
@@ -3768,12 +3729,16 @@ ipcMain.handle(
         : getPipelineV2ProfilesDir();
       try {
         fs.mkdirSync(profilesDir, { recursive: true });
-      } catch (_) {}
+      } catch {
+        // ignore profiles dir mkdir failure
+      }
 
       const tempDir = join(getUserDataPath(), "temp");
       try {
         fs.mkdirSync(tempDir, { recursive: true });
-      } catch (_) {}
+      } catch {
+        // ignore temp dir mkdir failure
+      }
       const uid = randomUUID().slice(0, 8);
       const inputPath = join(tempDir, `proofread_v2_${uid}.txt`);
       const outputPath = join(tempDir, `proofread_v2_${uid}_out.txt`);
@@ -3981,7 +3946,7 @@ ipcMain.handle(
         );
         args.push(
           "--line-tolerance-pct",
-          ((config.lineTolerancePct ?? 20) / 100).toString(),
+          normalizeLineTolerancePct(config.lineTolerancePct, 0.2).toString(),
         );
       }
       if (config.anchorCheck) {
@@ -4932,6 +4897,29 @@ const runTranslationViaRemoteApi = async (
     });
   };
 
+  const tryCancelRemoteTaskInBackground = () => {
+    if (!taskId) return;
+    let attempt = 0;
+    const maxAttempts = 3;
+    const tryOnce = async () => {
+      attempt += 1;
+      try {
+        await client.cancelTask(taskId);
+        emitRemoteLog(
+          `System: Remote task ${taskId} cancel request sent after recovery (attempt ${attempt}/${maxAttempts}).`,
+          "warn",
+        );
+      } catch (error) {
+        if (attempt >= maxAttempts) return;
+        const delayMs = 1200 * attempt;
+        setTimeout(() => {
+          void tryOnce();
+        }, delayMs);
+      }
+    };
+    void tryOnce();
+  };
+
   try {
     try {
       const health = await client.getHealth();
@@ -5009,6 +4997,7 @@ const runTranslationViaRemoteApi = async (
       client,
       taskId,
       cancelRequested: false,
+      runId,
     };
     emitRemoteLog(`System: Remote task created (${taskId})`, "info");
     appendRemoteMirrorMessage({
@@ -5037,13 +5026,38 @@ const runTranslationViaRemoteApi = async (
         onError: () => {
           wsActive = false;
         },
+        onProgress: (progress, currentBlock, totalBlocks) => {
+          wsActive = true;
+          const percentRaw =
+            typeof progress === "number" && Number.isFinite(progress)
+              ? progress <= 1
+                ? progress * 100
+                : progress
+              : totalBlocks > 0
+                ? (currentBlock / totalBlocks) * 100
+                : 0;
+          const progressPayload = {
+            current: Number.isFinite(currentBlock) ? currentBlock : 0,
+            total: Number.isFinite(totalBlocks) ? totalBlocks : 0,
+            percent: Math.max(0, Math.min(100, Number(percentRaw.toFixed(2)))),
+          };
+          const progressSig = `${progressPayload.current}/${progressPayload.total}/${progressPayload.percent}`;
+          if (progressSig !== lastProgressSig) {
+            emitRemoteJson("JSON_PROGRESS:", progressPayload);
+            lastProgressSig = progressSig;
+          }
+          lastProgressSeenAt = Date.now();
+        },
+        onComplete: () => {
+          wsActive = false;
+        },
       });
     } catch {
       wsClient = null;
       wsActive = false;
     }
 
-    while (true) {
+    for (;;) {
       if (!remoteTranslationBridge || remoteTranslationBridge.taskId !== taskId)
         return;
       const status = await client.getTaskStatus(taskId, {
@@ -5206,6 +5220,13 @@ const runTranslationViaRemoteApi = async (
       level: "error",
       message: `Remote translation failed. ${message}`,
     });
+    if (taskId && !stopRequested) {
+      emitRemoteLog(
+        `System: Polling failed while task is active, trying best-effort cancellation (${taskId}).`,
+        "warn",
+      );
+      tryCancelRemoteTaskInBackground();
+    }
     event.reply("process-exit", {
       code: 1,
       signal: null,
@@ -5233,10 +5254,23 @@ const runTranslationViaRemoteApi = async (
 ipcMain.on(
   "start-translation",
   async (event, { inputFile, modelPath, config, runId }) => {
-    if (pythonProcess || remoteTranslationBridge) return; // Already running
+    const requestedRunId = normalizeRunId(runId) || randomUUID();
+    if (pythonProcess || remoteTranslationBridge || isPipelineV2RunnerBusy()) {
+      replyLogUpdate(event, "WARN: Translation already running", {
+        level: "warn",
+        source: "main",
+        runId: requestedRunId,
+      });
+      event.reply("process-exit", {
+        code: 1,
+        signal: null,
+        stopRequested: false,
+        runId: requestedRunId,
+      });
+      return;
+    }
     translationStopRequested = false;
-    activeRunId =
-      typeof runId === "string" && runId.trim() ? runId.trim() : randomUUID();
+    activeRunId = requestedRunId;
 
     const middlewareDir = getMiddlewarePath();
     const tempRuleFiles: string[] = [];
@@ -5249,15 +5283,27 @@ ipcMain.on(
         }
       }
     };
+    const failStartAndExit = (message: string) => {
+      replyLogUpdate(event, message, {
+        level: "error",
+        source: "main",
+        runId: requestedRunId,
+      });
+      event.reply("process-exit", {
+        code: 1,
+        signal: null,
+        stopRequested: false,
+        runId: requestedRunId,
+      });
+      cleanupTempRuleFiles();
+      translationStopRequested = false;
+      clearActiveRunIfMatch(requestedRunId);
+    };
     // Use the proper translator script
     const scriptPath = join(middlewareDir, "murasaki_translator", "main.py");
 
     if (!fs.existsSync(scriptPath)) {
-      replyLogUpdate(event, `ERR: Script not found at ${scriptPath}`, {
-        level: "error",
-        source: "main",
-      });
-      activeRunId = null;
+      failStartAndExit(`ERR: Script not found at ${scriptPath}`);
       return;
     }
 
@@ -5276,11 +5322,7 @@ ipcMain.on(
       serverExePath = getLlamaServerPath();
     } catch (e: unknown) {
       const errorMsg = e instanceof Error ? e.message : String(e);
-      replyLogUpdate(event, `ERR: ${errorMsg}`, {
-        level: "error",
-        source: "main",
-      });
-      activeRunId = null;
+      failStartAndExit(`ERR: ${errorMsg}`);
       return;
     }
 
@@ -5359,16 +5401,21 @@ ipcMain.on(
     ).trim();
 
     if (remoteExecutionClient) {
-      await runTranslationViaRemoteApi(event, {
-        client: remoteExecutionClient,
-        sourceLabel: remoteExecutionSource,
-        inputFile,
-        effectiveModelPath: effectiveRemoteModelPath,
-        config,
-        isExternalRemote,
-        runId: activeRunId,
-      });
-      activeRunId = null;
+      try {
+        await runTranslationViaRemoteApi(event, {
+          client: remoteExecutionClient,
+          sourceLabel: remoteExecutionSource,
+          inputFile,
+          effectiveModelPath: effectiveRemoteModelPath,
+          config,
+          isExternalRemote,
+          runId: requestedRunId,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        failStartAndExit(`ERR: Remote execution crashed unexpectedly: ${message}`);
+      }
+      clearActiveRunIfMatch(requestedRunId);
       return;
     }
 
@@ -5427,10 +5474,7 @@ ipcMain.on(
 
     if (!effectiveModelPath || !fs.existsSync(effectiveModelPath)) {
       console.error("[start-translation] Model not found, returning early");
-      replyLogUpdate(event, `ERR: Model not found at ${effectiveModelPath}`, {
-        level: "error",
-        source: "main",
-      });
+      failStartAndExit(`ERR: Model not found at ${effectiveModelPath}`);
       return;
     }
 
@@ -5629,7 +5673,7 @@ ipcMain.on(
         );
         args.push(
           "--line-tolerance-pct",
-          ((config.lineTolerancePct ?? 20) / 100).toString(),
+          normalizeLineTolerancePct(config.lineTolerancePct, 0.2).toString(),
         );
       }
       if (config.anchorCheck) {
@@ -5746,14 +5790,32 @@ ipcMain.on(
     }
 
     try {
-      pythonProcess = spawnPythonProcess(pythonCmd, args, {
+      const launchedProcess = spawnPythonProcess(pythonCmd, args, {
         cwd: middlewareDir,
         env: customEnv,
         stdio: ["ignore", "pipe", "pipe"],
       });
+      const launchedRunId = requestedRunId;
+      pythonProcess = launchedProcess;
 
       let stdoutBuffer = "";
       let stderrBuffer = "";
+      let hasReportedExit = false;
+
+      const reportProcessExit = (
+        code: number | null,
+        signal: NodeJS.Signals | null,
+        stopRequested: boolean,
+      ) => {
+        if (hasReportedExit) return;
+        hasReportedExit = true;
+        event.reply("process-exit", {
+          code,
+          signal,
+          stopRequested,
+          runId: launchedRunId,
+        });
+      };
 
       const flushBufferedLines = (
         buffer: string,
@@ -5813,7 +5875,7 @@ ipcMain.on(
         }
       };
 
-      pythonProcess.on("error", (err) => {
+      launchedProcess.on("error", (err) => {
         console.error("Spawn Error:", err);
         replyLogUpdate(
           event,
@@ -5822,12 +5884,15 @@ ipcMain.on(
         );
         cleanupTempRuleFiles();
         translationStopRequested = false;
-        pythonProcess = null;
-        activeRunId = null;
+        if (pythonProcess === launchedProcess) {
+          pythonProcess = null;
+        }
+        reportProcessExit(1, null, false);
+        clearActiveRunIfMatch(launchedRunId);
       });
 
-      if (pythonProcess.stdout) {
-        pythonProcess.stdout.on("data", (data) => {
+      if (launchedProcess.stdout) {
+        launchedProcess.stdout.on("data", (data) => {
           const str = data.toString();
           console.log("STDOUT:", str);
           stdoutBuffer += str;
@@ -5836,8 +5901,8 @@ ipcMain.on(
         });
       }
 
-      if (pythonProcess.stderr) {
-        pythonProcess.stderr.on("data", (data) => {
+      if (launchedProcess.stderr) {
+        launchedProcess.stderr.on("data", (data) => {
           const str = data.toString();
           stderrBuffer += str;
           const flushed = flushBufferedLines(stderrBuffer, handleStderrLine);
@@ -5845,7 +5910,7 @@ ipcMain.on(
         });
       }
 
-      pythonProcess.on("close", (code, signal) => {
+      launchedProcess.on("close", (code, signal) => {
         if (stdoutBuffer.trim()) {
           flushBufferedLines(`${stdoutBuffer}\n`, handleStdoutLine);
         }
@@ -5854,28 +5919,24 @@ ipcMain.on(
         }
         const stopRequested = translationStopRequested;
         translationStopRequested = false;
-        const exitRunId = activeRunId;
         console.log(
           `[Translation] Process exited (code=${String(code)}, signal=${String(signal)}, stopRequested=${stopRequested})`,
         );
-        event.reply("process-exit", {
-          code,
-          signal,
-          stopRequested,
-          runId: exitRunId || undefined,
-        });
-        pythonProcess = null;
-        activeRunId = null;
+        reportProcessExit(code, signal as NodeJS.Signals | null, stopRequested);
+        if (pythonProcess === launchedProcess) {
+          pythonProcess = null;
+        }
+        clearActiveRunIfMatch(launchedRunId);
         cleanupTempRuleFiles();
       });
     } catch (e: unknown) {
       const errorMsg = e instanceof Error ? e.message : String(e);
-      replyLogUpdate(event, `Exception: ${errorMsg}`, {
-        level: "error",
-        source: "main",
-      });
-      cleanupTempRuleFiles();
-      activeRunId = null;
+      try {
+        pythonProcess?.kill();
+      } catch {
+        // ignore kill failures during setup rollback
+      }
+      failStartAndExit(`Exception: ${errorMsg}`);
       console.error(e);
     }
   },
@@ -5889,7 +5950,8 @@ ipcMain.on("stop-translation", () => {
 
   if (pythonProcess) {
     translationStopRequested = true;
-    const pid = pythonProcess.pid;
+    const targetProcess = pythonProcess;
+    const pid = targetProcess.pid;
     console.log(`[Stop] Stopping translation process with PID: ${pid}`);
 
     if (process.platform === "win32" && pid) {
@@ -5905,20 +5967,24 @@ ipcMain.on("stop-translation", () => {
         console.error("[Stop] taskkill spawn error:", err.message);
         // Fallback
         try {
-          pythonProcess?.kill();
-        } catch (_) {}
+          targetProcess.kill();
+        } catch {
+          // ignore fallback kill failure
+        }
       });
       // 瓒呮椂鍏滃簳锛?s 鍚庤嫢杩涚▼浠嶇劧瀛樻椿
       setTimeout(() => {
         try {
-          pythonProcess?.kill("SIGKILL");
-        } catch (_) {}
+          if (pythonProcess === targetProcess) {
+            targetProcess.kill("SIGKILL");
+          }
+        } catch {
+          // ignore force-kill failure
+        }
       }, 3000);
     } else {
-      pythonProcess.kill();
+      targetProcess.kill();
     }
-
-    pythonProcess = null;
 
     console.log("[Stop] Translation process stopped signal sent");
   }
@@ -6003,7 +6069,9 @@ ipcMain.handle(
           if (tempFile && fs.existsSync(tempFile)) {
             try {
               fs.unlinkSync(tempFile);
-            } catch (_) {}
+            } catch {
+              // ignore temp input cleanup failure
+            }
           }
 
           if (code === 0) {
@@ -6312,7 +6380,9 @@ ipcMain.handle("hf-download-cancel", async () => {
       } catch {
         try {
           hfDownloadProcess.kill();
-        } catch {}
+        } catch {
+          // ignore cancel fallback kill failure
+        }
       }
     } else {
       hfDownloadProcess.kill("SIGTERM");
