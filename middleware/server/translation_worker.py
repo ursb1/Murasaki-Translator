@@ -775,37 +775,51 @@ class TranslationWorker:
 
             task._process = process
 
-            # 实时读取输出
+            # 实时读取输出（带短超时，避免静默场景下无法响应取消）
+            read_timeout_s = 0.2
             while True:
-                line = await process.stdout.readline()
-                if not line:
-                    break
-
-                line_text = line.decode('utf-8', errors='ignore').strip()
-                if line_text:
-                    # Skip think-stream deltas to avoid log flooding in remote mode
-                    if line_text.startswith("JSON_THINK_DELTA:"):
-                        continue
-                    task.add_log(line_text)
-
-                    # 解析进度
-                    if "PROGRESS:" in line_text:
-                        try:
-                            progress_json = line_text.split("PROGRESS:")[-1]
-                            progress_data = json.loads(progress_json)
-                            task.current_block = progress_data.get("current", 0)
-                            task.total_blocks = progress_data.get("total", 0)
-                            if task.total_blocks > 0:
-                                task.progress = task.current_block / task.total_blocks
-                        except:
-                            pass
-
-                # 检查取消请求
+                # 优先检查取消，避免阻塞在 readline() 导致取消延迟
                 if task.cancel_requested:
                     await self._kill_process_tree(process)
                     task.status = TaskStatus.CANCELLED
                     task.add_log("[WARN] Translation cancelled by user")
                     return ""
+
+                try:
+                    line = await asyncio.wait_for(
+                        process.stdout.readline(),
+                        timeout=read_timeout_s,
+                    )
+                except asyncio.TimeoutError:
+                    # 无输出时定期回到循环顶端检查取消。
+                    if process.returncode is not None:
+                        break
+                    continue
+
+                if not line:
+                    if process.returncode is not None:
+                        break
+                    continue
+
+                line_text = line.decode('utf-8', errors='ignore').strip()
+                if not line_text:
+                    continue
+                # Skip think-stream deltas to avoid log flooding in remote mode
+                if line_text.startswith("JSON_THINK_DELTA:"):
+                    continue
+                task.add_log(line_text)
+
+                # 解析进度
+                if "PROGRESS:" in line_text:
+                    try:
+                        progress_json = line_text.split("PROGRESS:")[-1]
+                        progress_data = json.loads(progress_json)
+                        task.current_block = progress_data.get("current", 0)
+                        task.total_blocks = progress_data.get("total", 0)
+                        if task.total_blocks > 0:
+                            task.progress = task.current_block / task.total_blocks
+                    except:
+                        pass
 
             await process.wait()
             task._process = None

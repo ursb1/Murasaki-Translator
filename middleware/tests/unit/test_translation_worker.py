@@ -34,6 +34,31 @@ class DummyProcess:
         return self.returncode
 
 
+class BlockingStdout:
+    def __init__(self):
+        self.cancel_count = 0
+
+    async def readline(self):
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            self.cancel_count += 1
+            raise
+        return b""
+
+
+class BlockingProcess:
+    def __init__(self):
+        self.stdout = BlockingStdout()
+        self.returncode = None
+        self.pid = 24680
+
+    async def wait(self):
+        await asyncio.sleep(0)
+        self.returncode = -9
+        return self.returncode
+
+
 class DummyServerProcess:
     def __init__(self, returncode=None):
         self.returncode = returncode
@@ -224,6 +249,43 @@ async def test_translate_cancel_requested_kills_process(monkeypatch):
     assert result == ""
     assert task.status == TaskStatus.CANCELLED
     assert killed["called"] is True
+    assert any("cancelled" in line.lower() for line in task.logs)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_translate_cancel_requested_during_silent_output(monkeypatch):
+    worker = TranslationWorker(model_path="model.gguf")
+    monkeypatch.setattr(worker, "is_ready", lambda: True)
+
+    process = BlockingProcess()
+    killed = {"called": False}
+
+    async def fake_kill(target_process):
+        killed["called"] = True
+        assert target_process is process
+        process.returncode = -9
+
+    async def fake_create_subprocess_exec(*cmd, **kwargs):
+        return process
+
+    monkeypatch.setattr(worker, "_kill_process_tree", fake_kill)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    task = TranslationTask(task_id="cancel_silent", request=DummyRequest())
+
+    async def trigger_cancel():
+        await asyncio.sleep(0.05)
+        task.cancel_requested = True
+
+    cancel_trigger = asyncio.create_task(trigger_cancel())
+    result = await asyncio.wait_for(worker.translate(task), timeout=2)
+    await cancel_trigger
+
+    assert result == ""
+    assert task.status == TaskStatus.CANCELLED
+    assert killed["called"] is True
+    assert process.stdout.cancel_count >= 1
     assert any("cancelled" in line.lower() for line in task.logs)
 
 
