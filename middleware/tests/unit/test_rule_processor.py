@@ -1,6 +1,7 @@
 ﻿import pytest
 
 from rule_processor import RuleProcessor
+from murasaki_translator.core.text_protector import TextProtector
 
 
 @pytest.mark.unit
@@ -65,3 +66,21 @@ def test_rule_processor_python_transform_function():
     text = "input"
     out = processor.process(text, src_text="source")
     assert out == "input:source"
+
+
+@pytest.mark.unit
+def test_rule_processor_python_transform_with_protector_restore():
+    script = (
+        "def transform(text, src_text=None, protector=None):\n"
+        "    if protector is None:\n"
+        "        return text\n"
+        "    return protector.restore(text)\n"
+    )
+    rules = [
+        {"type": "python", "script": script, "active": True},
+    ]
+    processor = RuleProcessor(rules)
+    protector = TextProtector()
+    protector.replacements = {"@P1@": "Alice"}
+    out = processor.process("@P1@", protector=protector)
+    assert out == "Alice"

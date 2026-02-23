@@ -10,7 +10,10 @@ This module provides text transformation capabilities with support for:
 import re
 import ast
 import inspect
-import threading
+import json
+import os
+import subprocess
+import sys
 from typing import List, Dict, Any, Optional, Tuple
 
 try:
@@ -70,6 +73,131 @@ PYTHON_SCRIPT_SAFE_BUILTINS = {
     "round": round,
     "__import__": _safe_import,
 }
+
+PYTHON_SCRIPT_SUBPROCESS_CODE = r"""
+import inspect
+import json
+import os
+import re
+import sys
+
+def _safe_import(name, globals=None, locals=None, fromlist=(), level=0):
+    if name == "re":
+        return re
+    raise ImportError("Only 're' import is allowed")
+
+SAFE_BUILTINS = {
+    "len": len,
+    "range": range,
+    "min": min,
+    "max": max,
+    "sum": sum,
+    "str": str,
+    "int": int,
+    "float": float,
+    "bool": bool,
+    "list": list,
+    "dict": dict,
+    "set": set,
+    "tuple": tuple,
+    "enumerate": enumerate,
+    "zip": zip,
+    "sorted": sorted,
+    "abs": abs,
+    "round": round,
+    "__import__": _safe_import,
+}
+
+def _call_python_func(func, text, src_text=None, protector=None):
+    sig = inspect.signature(func)
+    params = list(sig.parameters.values())
+    positional = [
+        p
+        for p in params
+        if p.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        )
+    ]
+    has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params)
+
+    if positional:
+        count = len(positional)
+        if count >= 3:
+            return func(text, src_text, protector)
+        if count == 2:
+            return func(text, src_text)
+        if count == 1:
+            return func(text)
+    if has_varkw or any(
+        p.kind == inspect.Parameter.KEYWORD_ONLY for p in params
+    ):
+        return func(text=text, src_text=src_text, protector=protector)
+    return func()
+
+def _load_protector(payload, module_root):
+    if not isinstance(payload, dict):
+        return None
+    if isinstance(module_root, str) and module_root:
+        try:
+            if module_root not in sys.path:
+                sys.path.insert(0, module_root)
+        except Exception:
+            pass
+    try:
+        from murasaki_translator.core.text_protector import TextProtector
+    except Exception:
+        return None
+
+    try:
+        protector = TextProtector(
+            patterns=payload.get("patterns"),
+            enabled=bool(payload.get("enabled", True)),
+            placeholder_format=str(payload.get("placeholder_format") or "@P{index}@"),
+            block_id=int(payload.get("block_id") or 0),
+            aggressive_cleaning=bool(payload.get("aggressive_cleaning", False)),
+        )
+        replacements = payload.get("replacements")
+        if isinstance(replacements, dict):
+            protector.replacements = {
+                str(k): str(v) for k, v in replacements.items()
+            }
+        counter = payload.get("counter")
+        if isinstance(counter, int) and counter > 0:
+            protector.counter = counter
+        return protector
+    except Exception:
+        return None
+
+def main():
+    payload = json.loads(sys.stdin.read() or "{}")
+    script = str(payload.get("script") or "")
+    text = payload.get("text")
+    if not isinstance(text, str):
+        text = "" if text is None else str(text)
+    src_text = payload.get("src_text")
+    if src_text is not None and not isinstance(src_text, str):
+        src_text = str(src_text)
+    protector = _load_protector(payload.get("protector"), payload.get("module_root"))
+
+    scope = {
+        "__builtins__": SAFE_BUILTINS,
+        "re": re,
+    }
+    exec(script, scope, scope)
+    func = scope.get("transform")
+    if not callable(func):
+        raise RuntimeError("Missing transform() definition")
+
+    value = _call_python_func(func, text, src_text, protector)
+    print(json.dumps({"ok": True, "value": value}, ensure_ascii=False))
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+"""
 
 
 def validate_regex(pattern: str) -> Tuple[bool, str]:
@@ -330,56 +458,137 @@ class RuleProcessor:
         self._compiled_python_scripts[script] = None
         return None
 
+    def _serialize_protector(self, protector: Any) -> Optional[Dict[str, Any]]:
+        if protector is None:
+            return None
+        payload: Dict[str, Any] = {}
+        try:
+            patterns = getattr(protector, "patterns", None)
+            if isinstance(patterns, list):
+                payload["patterns"] = [str(item) for item in patterns]
+
+            enabled = getattr(protector, "enabled", None)
+            if isinstance(enabled, bool):
+                payload["enabled"] = enabled
+
+            placeholder_format = getattr(protector, "placeholder_format", None)
+            if isinstance(placeholder_format, str):
+                payload["placeholder_format"] = placeholder_format
+
+            block_id = getattr(protector, "block_id", None)
+            if isinstance(block_id, int):
+                payload["block_id"] = block_id
+
+            aggressive_cleaning = getattr(protector, "aggressive_cleaning", None)
+            if isinstance(aggressive_cleaning, bool):
+                payload["aggressive_cleaning"] = aggressive_cleaning
+
+            replacements = getattr(protector, "replacements", None)
+            if isinstance(replacements, dict):
+                payload["replacements"] = {
+                    str(k): str(v)
+                    for k, v in replacements.items()
+                    if isinstance(k, str)
+                }
+
+            counter = getattr(protector, "counter", None)
+            if isinstance(counter, int):
+                payload["counter"] = counter
+        except Exception:
+            return None
+        return payload or None
+
+    def _run_python_script_subprocess(
+        self,
+        script: str,
+        text: str,
+        src_text: Optional[str],
+        protector: Any,
+    ) -> Tuple[bool, Any, Optional[str], bool]:
+        payload = {
+            "script": script,
+            "text": text,
+            "src_text": src_text,
+            "protector": self._serialize_protector(protector),
+            "module_root": os.path.dirname(__file__),
+        }
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, "-c", PYTHON_SCRIPT_SUBPROCESS_CODE],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+            )
+        except Exception as e:
+            return False, None, f"Subprocess spawn error: {e}", False
+
+        try:
+            stdout, stderr = proc.communicate(
+                json.dumps(payload, ensure_ascii=False),
+                timeout=PYTHON_SCRIPT_TIMEOUT_SEC,
+            )
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
+            return False, None, f"Timeout after {PYTHON_SCRIPT_TIMEOUT_SEC}s", True
+
+        if proc.returncode != 0 and not stdout:
+            err_msg = (stderr or "").strip() or f"Subprocess exited with code {proc.returncode}"
+            return False, None, err_msg, False
+
+        lines = [line.strip() for line in (stdout or "").splitlines() if line.strip()]
+        if not lines:
+            err_msg = (stderr or "").strip() or "Empty subprocess response"
+            return False, None, err_msg, False
+
+        try:
+            result = json.loads(lines[-1])
+        except Exception:
+            err_msg = (stderr or "").strip() or f"Invalid subprocess response: {lines[-1][:200]}"
+            return False, None, err_msg, False
+
+        if not isinstance(result, dict):
+            return False, None, "Invalid subprocess result payload", False
+        if result.get("ok") is True:
+            return True, result.get("value"), None, False
+        return False, None, str(result.get("error") or "Runtime error"), False
+
     def _apply_python_script(self, script: str, text: str, src_text: Optional[str] = None, protector: Any = None) -> str:
-        func = self._compile_python_script(script)
-        if not func:
+        if not self._compile_python_script(script):
             if script and script.strip() and not self.get_python_script_error(script):
                 self._set_python_script_error(script, "Compile failed")
             return text
 
-        result_holder: Dict[str, Any] = {"done": False, "value": None, "error": None}
-
-        def runner():
-            try:
-                result_holder["value"] = self._call_python_func(
-                    func,
-                    text,
-                    src_text,
-                    protector,
+        ok, value, error_msg, is_timeout = self._run_python_script_subprocess(
+            self._normalize_python_script(script),
+            text,
+            src_text,
+            protector,
+        )
+        if not ok:
+            if is_timeout:
+                logger.error("[RuleProcessor] Python script timeout")
+                self._set_python_script_error(
+                    script,
+                    f"Timeout after {PYTHON_SCRIPT_TIMEOUT_SEC}s",
                 )
-            except Exception as e:
-                result_holder["error"] = e
-            finally:
-                result_holder["done"] = True
-
-        thread = threading.Thread(target=runner, daemon=True)
-        thread.start()
-        thread.join(PYTHON_SCRIPT_TIMEOUT_SEC)
-
-        if not result_holder["done"]:
-            logger.error("[RuleProcessor] Python script timeout")
-            self._set_python_script_error(
-                script,
-                f"Timeout after {PYTHON_SCRIPT_TIMEOUT_SEC}s",
-            )
+            else:
+                logger.error(
+                    f"[RuleProcessor] Python script runtime error: {error_msg}"
+                )
+                self._set_python_script_error(
+                    script,
+                    f"Runtime error: {error_msg}",
+                )
             return text
 
-        if result_holder["error"] is not None:
-            logger.error(
-                f"[RuleProcessor] Python script runtime error: {result_holder['error']}"
-            )
-            self._set_python_script_error(
-                script,
-                f"Runtime error: {result_holder['error']}",
-            )
-            return text
-
-        result = result_holder["value"]
-        if result is None:
+        if value is None:
             self._set_python_script_error(script, None)
             return text
         self._set_python_script_error(script, None)
-        return str(result)
+        return str(value)
 
     def process(self, text: str, src_text: Optional[str] = None, protector: Any = None, strict_line_count: bool = False, traces: Optional[List[Dict[str, Any]]] = None) -> str:
         """
