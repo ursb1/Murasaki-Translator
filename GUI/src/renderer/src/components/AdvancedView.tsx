@@ -224,7 +224,7 @@ export function AdvancedView({ lang, remoteRuntime }: AdvancedViewProps) {
   const loadHardwareSpecs = async () => {
     setLoadingSpecs(true);
     try {
-      // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
       const s = await window.api.getHardwareSpecs();
       console.log("Specs:", s);
       if (s) {
@@ -242,7 +242,7 @@ export function AdvancedView({ lang, remoteRuntime }: AdvancedViewProps) {
 
   const loadModelInfo = async (modelName: string) => {
     try {
-      // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
       const info = await window.api.getModelInfo(modelName);
       if (info) {
         console.log("Model Info:", info);

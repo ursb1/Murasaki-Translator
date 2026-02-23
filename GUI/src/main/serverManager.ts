@@ -85,7 +85,9 @@ export class ServerManager {
   private logs: string[] = [];
   private apiKey: string | null = null;
 
-  private constructor() {}
+  private constructor() {
+    // Singleton: prevent external instantiation.
+  }
 
   static getInstance(): ServerManager {
     if (!ServerManager.instance) {

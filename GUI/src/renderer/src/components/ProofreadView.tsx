@@ -166,7 +166,7 @@ import {
 // ...
 
 const CONSISTENCY_TAG_RE =
-  /(\s*)[(\[]?\b(line_mismatch|high_similarity|kana_residue|glossary_missed|hangeul_residue)\b[)\]]?(\s*)/g;
+  /(\s*)(?:\(|\[)?\b(line_mismatch|high_similarity|kana_residue|glossary_missed|hangeul_residue)\b(?:\)|\])?(\s*)/g;
 const CONSISTENCY_TOKEN_RE =
   /[\u4e00-\u9fff]{1,8}(?:[·•・][\u4e00-\u9fff]{1,8})*/g;
 const CONSISTENCY_STOPWORDS = new Set([
@@ -888,7 +888,7 @@ export default function ProofreadView({
 
         // Strip tags
         const cleanDst = dst.replace(
-          /(\s*)[(\[]?\b(line_mismatch|high_similarity|kana_residue|glossary_missed|hangeul_residue)\b[)\]]?(\s*)/g,
+          /(\s*)(?:\(|\[)?\b(line_mismatch|high_similarity|kana_residue|glossary_missed|hangeul_residue)\b(?:\)|\])?(\s*)/g,
           "",
         );
 
@@ -1395,7 +1395,7 @@ export default function ProofreadView({
       if (blockIndex !== -1) {
         // Also strip tags if model re-inserted them
         const cleanDst = newDst.replace(
-          /(\s*)[(\[]?\b(line_mismatch|high_similarity|kana_residue|glossary_missed|hangeul_residue)\b[)\]]?(\s*)/g,
+          /(\s*)(?:\(|\[)?\b(line_mismatch|high_similarity|kana_residue|glossary_missed|hangeul_residue)\b(?:\)|\])?(\s*)/g,
           "",
         );
 
@@ -2667,7 +2667,7 @@ export default function ProofreadView({
       localStorage.removeItem("proofread_target_file"); // Clear to prevent re-loading
       loadCacheFromPath(targetFile);
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   // Load specific cache file
   const loadCacheFromPath = async (path: string) => {
@@ -2675,7 +2675,7 @@ export default function ProofreadView({
     setLoading(true);
     try {
       console.log("[Proofread] Attempting to load cache:", path);
-      // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
       const data = await window.api.loadCache(path);
       if (data && data.blocks) {
         await processLoadedData(data, path);

@@ -63,7 +63,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
   const fetchGlossaries = async () => {
     setLoading(true);
     try {
-      // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
       const files = await window.api.getGlossaries();
       setGlossaries(files || []);
     } catch (e) {
@@ -77,7 +77,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
   };
 
   const openFolder = async () => {
-    // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
     try {
       await window.api.openGlossaryFolder();
     } catch (e) {
@@ -96,7 +96,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
     setIsEditing(false);
     setLoadingContent(true);
     try {
-      // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
       // We need full path logic in renderer or main.
       // Currently getGlossaries returns filenames.
       // Let's assume we need to join path in main or pass basic identifier.
@@ -123,7 +123,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
       // OR add 'read-glossary(filename)'.
       // I'll assume 'read-glossary' exists for this file.
 
-      // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
       const txt = await window.api.readGlossaryFile(file);
       setContent(txt || "");
     } catch (e) {
@@ -175,7 +175,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
     }
 
     try {
-      // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
       await window.api.saveGlossaryFile({
         filename: selectedGlossary,
         content: finalContent,
@@ -207,7 +207,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
       variant: "destructive",
       onConfirm: async () => {
         try {
-          // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
           await window.api.deleteGlossaryFile(selectedGlossary);
           setSelectedGlossary("");
           setContent("");
@@ -233,7 +233,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
     }
 
     try {
-      // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
       await window.api.createGlossaryFile({
         filename: finalName,
         content: finalName.endsWith(".json") ? "{}" : "",
@@ -328,7 +328,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
     }
 
     try {
-      // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
       const res = await window.api.renameGlossaryFile(
         renamingFile,
         renameNewName,
@@ -396,7 +396,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
             size="sm"
             onClick={async () => {
               try {
-                // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
                 const result = await window.api.selectFile({
                   title: t.glossaryView.importTitle,
                   filters: [
@@ -404,7 +404,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
                   ],
                 });
                 if (result) {
-                  // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
                   const content = await window.api.readFile(result);
                   if (!content) return;
                   // Robustness check: Stricter heuristic for glossary shapes
@@ -465,7 +465,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
                     });
                     return;
                   }
-                  // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
                   const importRes = await window.api.importGlossary(result);
                   if (importRes.success) {
                     showAlert({
@@ -1039,7 +1039,7 @@ export function GlossaryView({ lang }: { lang: Language }) {
             // Create new glossary with extracted terms using provided filename
             const content = JSON.stringify(terms, null, 2);
             try {
-              // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
               await window.api.createGlossaryFile({ filename, content });
               fetchGlossaries();
               showAlert({

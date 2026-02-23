@@ -319,7 +319,7 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
 
     try {
       // 只调用一次 IPC，获取所有组件的检测结果
-      // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
       const result = await window.api?.checkEnvComponent?.("Python"); // 任意组件名，会返回完整 report
 
       if (result?.success && result?.report?.components) {
@@ -488,7 +488,7 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
     try {
       if (action.type === "auto" || action.type === "download") {
         // 设置真实进度监听器
-        // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
         const progressHandler = (data: {
           component: string;
           stage: string;
@@ -521,10 +521,10 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
           }
         };
 
-        // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
         unsubscribeProgress = window.api?.onEnvFixProgress?.(progressHandler);
 
-        // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
         const result = await window.api?.fixEnvComponent?.(action.component);
 
         setFixProgress(100);
@@ -546,7 +546,7 @@ export function EnvFixerModal({ onClose }: EnvFixerModalProps) {
           setFixResult({ success: false, message: errorMsg });
         }
       } else if (action.type === "link" && action.url) {
-        // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
         await window.api?.openExternal?.(action.url);
         setFixProgress(100);
         setFixLogs((prev) => [...prev, `✓ ${t.logs.openedBrowser}`]);

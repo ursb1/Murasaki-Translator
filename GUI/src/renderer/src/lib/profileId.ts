@@ -2,7 +2,7 @@ export const slugifyProfileId = (value: string) =>
   value
     .trim()
     .toLowerCase()
-    .replace(/[\s\-]+/g, "_")
+    .replace(/[\s-]+/g, "_")
     .replace(/[^a-z0-9_]/g, "")
     .replace(/_+/g, "_")
     .replace(/^_+|_+$/g, "");

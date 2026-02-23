@@ -188,7 +188,7 @@ export function GlossaryConverter({
     if (Object.keys(parsedEntries).length === 0) return;
 
     try {
-      // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
       await window.api.createGlossaryFile({
         filename: fileName,
         content: JSON.stringify(parsedEntries, null, 2),

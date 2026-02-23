@@ -56,7 +56,7 @@ export function LogViewerModal({
     setLoading(true);
     try {
       if (mode === "server") {
-        // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
         const result = await window.api?.readServerLog?.();
         if (result?.exists) {
           setLogs(result.content || t.logEmpty);
@@ -64,14 +64,14 @@ export function LogViewerModal({
           setLogs(result?.error || t.logNotFound);
         }
       } else if (mode === "terminal") {
-        // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
         const result = await window.api?.getMainProcessLogs?.();
         setLogs(result?.length ? result.join("\n") : t.noTerminalLogs);
       } else {
         if (!filePath) {
           setLogs(t.noFile);
         } else {
-          // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
           const result = await window.api?.readTextTail?.(filePath, {
             lineCount: 500,
           });

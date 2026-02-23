@@ -104,7 +104,7 @@ export function ModelView({
     setLoading(true);
     setModelsError(null);
     try {
-      // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
       const files = await window.api.getModels();
       setModels(files);
 
@@ -112,10 +112,12 @@ export function ModelView({
       const infoMap: Record<string, ModelInfo> = {};
       for (const model of files) {
         try {
-          // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
           const info = await window.api.getModelInfo(model);
           if (info) infoMap[model] = info;
-        } catch (e) {}
+        } catch (e) {
+          // Ignore per-model info failures to keep listing robust.
+        }
       }
       setModelInfoMap(infoMap);
 
@@ -154,7 +156,7 @@ export function ModelView({
     }
     setRemoteLoading(true);
     try {
-      // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
       const result = await window.api?.remoteModels?.();
       if (result?.ok && Array.isArray(result.data)) {
         const mapped = result.data
@@ -234,7 +236,7 @@ export function ModelView({
 
       const filePath = `${modelsDir}/${model}`;
 
-      // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
       const result = await window.api?.hfVerifyModel?.(
         APP_CONFIG.modelDownload.huggingfaceOrg,
         filePath,

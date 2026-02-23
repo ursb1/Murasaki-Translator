@@ -327,7 +327,7 @@ export function SettingsView({ lang }: { lang: Language }) {
     setDiagLoading(true);
     setDiagError(null);
     try {
-      // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
       const result = await window.api.getSystemDiagnostics();
       if (result) {
         setDiagnostics(result);
@@ -374,7 +374,7 @@ export function SettingsView({ lang }: { lang: Language }) {
       | "Permissions",
   ) => {
     try {
-      // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
       const result = await window.api.checkEnvComponent(component);
       if (result.success && result.component) {
         setEnvCheckResults((prev) => {
@@ -459,7 +459,7 @@ export function SettingsView({ lang }: { lang: Language }) {
     setEnvFixing((prev) => ({ ...prev, [component]: true }));
 
     try {
-      // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
       const result = await window.api.fixEnvComponent(component);
 
       setAlertConfig({
@@ -557,7 +557,7 @@ export function SettingsView({ lang }: { lang: Language }) {
   const checkUpdates = async () => {
     setUpdateStatus("checking");
     try {
-      // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
       const res = await window.api.checkUpdate();
       if (res.success) {
         // Robust version comparison helper
@@ -669,7 +669,7 @@ export function SettingsView({ lang }: { lang: Language }) {
   };
 
   const handleSelectDir = async () => {
-    // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
     const path = await window.api.selectDirectory();
     if (path) {
       setOutputDir(path);
@@ -960,7 +960,7 @@ export function SettingsView({ lang }: { lang: Language }) {
     // Read server.log (llama-server logs)
     let serverLogData: unknown = null;
     try {
-      // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
       serverLogData = await window.api.readServerLog();
     } catch (e) {
       serverLogData = { error: String(e) };
@@ -969,7 +969,7 @@ export function SettingsView({ lang }: { lang: Language }) {
     // Get system diagnostics (GPU, CUDA, Vulkan, Python, etc.)
     let systemDiagnostics: unknown = null;
     try {
-      // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
       systemDiagnostics = await window.api.getSystemDiagnostics();
     } catch (e) {
       systemDiagnostics = { error: String(e) };
@@ -978,7 +978,7 @@ export function SettingsView({ lang }: { lang: Language }) {
     // Get main process logs
     let mainProcessLogs: unknown = null;
     try {
-      // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
       mainProcessLogs = await window.api.getMainProcessLogs();
     } catch (e) {
       mainProcessLogs = { error: String(e) };
@@ -1673,7 +1673,7 @@ export function SettingsView({ lang }: { lang: Language }) {
                   variant="outline"
                   size="sm"
                   onClick={async () => {
-                    // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
                     const path = (await window.api.selectFolder()) as
                       | string
                       | null;

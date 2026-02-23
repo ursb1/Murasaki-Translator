@@ -656,7 +656,7 @@ export function ServiceView({
 
   const resolveLocalLogPath = async (fileName: string) => {
     try {
-      // @ts-ignore
+// @ts-ignore - Preload bridge typing is intentionally relaxed.
       const modelsPath = await (window as any).api?.getModelsPath?.();
       if (!modelsPath) return fileName;
       const sep = modelsPath.includes("\\") ? "\\" : "/";
