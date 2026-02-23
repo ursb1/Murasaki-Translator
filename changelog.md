@@ -1,5 +1,22 @@
 # Murasaki Translator - Changelog
 
+## [2.0.2] - 2026-02-23
+
+### EPUB 文档工厂与结构稳定性
+
+*   EPUB 文档工厂默认剥离注音包装标签：`EpubDocument` 在 `load/save` 两侧统一移除 `<ruby>/<rb>/<rt>/<rp>/<rtc>`，仅保留正文基文本，降低模型输入中的标签噪声与结构干扰。
+*   EPUB 重建链路与加载链路对齐：保存阶段使用与加载阶段一致的 ruby 预处理，避免“翻译时已去注音、重建时标签形态不一致”导致的映射偏差。
+*   新增 EPUB 单元测试覆盖：
+    *   `load` 侧验证 ruby 包装标签已剥离且正文保留；
+    *   `save` 侧验证重建后的章节内容不再包含 `ruby/rb/rt` 标签；
+    *   继续保留锚点归一化测试，确保结构化回填稳定。
+
+### V2 分块日语残留重试
+
+*   Pipeline V2 在 `block` 模式新增假名残留比例重试：当 `processing.source_lang` **显式配置**为 `ja/jp` 且译文假名比例达到阈值时，自动触发重翻。
+*   新增可配置项：`processing.kana_retry_enabled`（默认 `true`）、`processing.kana_retry_threshold`（默认 `0.30`）、`processing.kana_retry_min_chars`（默认 `20`）。
+*   重试类型新增 `kana_residue`，并在 `request_retry` 事件元数据中补充 `kanaRetryRatio / kanaRetryThreshold / kanaChars / kanaEffectiveChars`，便于定位“输出残留日文”问题。
+
 ## [2.0.1] - 2026-02-23
 
 ### 稳定性与恢复链路
