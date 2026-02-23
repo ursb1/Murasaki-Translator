@@ -13,6 +13,7 @@ import { ApiManagerView } from "./components/ApiManagerView";
 import { Language, translations } from "./lib/i18n";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { useAppHotkeys } from "./lib/useHotkeys";
+import { persistLibraryQueue } from "./lib/libraryQueueStorage";
 
 import { RuleEditor } from "./components/RuleEditor";
 import { AlertModal } from "./components/ui/AlertModal";
@@ -145,11 +146,7 @@ function AppContent() {
           ...queue,
           buildFallbackQueueItem(payload.path, fileType),
         ];
-        localStorage.setItem("library_queue", JSON.stringify(nextQueue));
-        localStorage.setItem(
-          "file_queue",
-          JSON.stringify(nextQueue.map((item) => item.path)),
-        );
+        persistLibraryQueue(nextQueue);
         window.dispatchEvent(new CustomEvent("murasaki:library-queue-updated"));
       } catch (error) {
         console.error("[App] Watch fallback enqueue failed:", error);

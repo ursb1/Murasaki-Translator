@@ -61,6 +61,10 @@ import {
   generateId,
   getFileType,
 } from "../types/common";
+import {
+  loadLibraryQueueWithLegacyMigration,
+  persistLibraryQueue,
+} from "../lib/libraryQueueStorage";
 import type { ProcessExitPayload } from "../types/api";
 import { FileConfigModal } from "./LibraryView";
 import { stripSystemMarkersForDisplay } from "../lib/displayText";
@@ -109,40 +113,25 @@ interface GlossaryOption {
 
 const AUTO_START_QUEUE_KEY = "murasaki_auto_start_queue";
 const CONFIG_SYNC_KEY = "murasaki_pending_config_sync";
+const isRetryableQueueStatus = (status: QueueItem["status"]) =>
+  status === "failed" || status === "interrupted";
 
 export const Dashboard = forwardRef<any, DashboardProps>(
   ({ lang, active, onRunningChange, remoteRuntime }, ref) => {
     const t = translations[lang];
 
     // Queue System (Synced with LibraryView)
-    const [queue, setQueue] = useState<QueueItem[]>(() => {
-      try {
-        const saved = localStorage.getItem("library_queue");
-        if (saved) return JSON.parse(saved);
-      } catch (e) {
-        console.error("Failed to load queue:", e);
-      }
-
-      // Legacy fallback
-      try {
-        const legacy = localStorage.getItem("file_queue");
-        if (legacy) {
-          const paths = JSON.parse(legacy) as string[];
-          return paths.map((path) => ({
-            id: generateId(),
-            path,
-            fileName: path.split(/[/\\]/).pop() || path,
-            fileType: getFileType(path),
-            addedAt: new Date().toISOString(),
-            config: { useGlobalDefaults: true },
-            status: "pending" as const,
-          })) as QueueItem[];
-        }
-      } catch (e) {
-        // Ignore legacy queue parse failure and continue with empty queue.
-      }
-      return [];
-    });
+    const [queue, setQueue] = useState<QueueItem[]>(() =>
+      loadLibraryQueueWithLegacyMigration((path) => ({
+        id: generateId(),
+        path,
+        fileName: path.split(/[/\\]/).pop() || path,
+        fileType: getFileType(path),
+        addedAt: new Date().toISOString(),
+        config: { useGlobalDefaults: true },
+        status: "pending" as const,
+      })),
+    );
 
     // Sync verification on active
     useEffect(() => {
@@ -168,11 +157,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
 
     // Persistence
     useEffect(() => {
-      localStorage.setItem("library_queue", JSON.stringify(queue));
-      localStorage.setItem(
-        "file_queue",
-        JSON.stringify(queue.map((q) => q.path)),
-      );
+      persistLibraryQueue(queue);
     }, [queue]);
 
     const [currentQueueIndex, setCurrentQueueIndex] = useState(-1);
@@ -864,12 +849,27 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       }
     }, [modelPath, isRemoteMode]);
 
-    // Confirm sync with file_queue for legacy
+    // Keep queue ref synced for async handlers
     useEffect(() => {
-      // We might want to keep file_queue synced in case other parts use it,
-      // but library_queue is the master.
       queueRef.current = queue;
     }, [queue]);
+
+    const markQueueItemStatus = useCallback(
+      (
+        inputPath: string,
+        status: QueueItem["status"],
+        error?: string,
+      ): void => {
+        setQueue((prev) =>
+          prev.map((item) =>
+            item.path === inputPath
+              ? { ...item, status, error: error || undefined }
+              : item,
+          ),
+        );
+      },
+      [],
+    );
 
     useEffect(() => {
       return () => {
@@ -1097,13 +1097,16 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           queueIndex >= 0 &&
           queueIndex < queue.length
         ) {
+          const queueStatus: QueueItem["status"] = stopRequested
+            ? "interrupted"
+            : "failed";
           const errorMessage = stopRequested
             ? t.dashboard.runStopped
             : t.dashboard.runFailed;
           setQueue((prev) =>
             prev.map((item, i) =>
               i === queueIndex
-                ? { ...item, status: "failed", error: errorMessage }
+                ? { ...item, status: queueStatus, error: errorMessage }
                 : item,
             ),
           );
@@ -1972,21 +1975,21 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         variant: "destructive",
         onConfirm: () => {
           setQueue([]);
-          localStorage.setItem("library_queue", JSON.stringify([]));
+          persistLibraryQueue([]);
         },
       });
     }, [t, showConfirm]);
 
     const handleRetryFailed = useCallback(() => {
       const failedCount = queue.filter(
-        (item) => item.status === "failed",
+        (item) => isRetryableQueueStatus(item.status),
       ).length;
       if (failedCount === 0) {
         pushQueueNotice({ type: "info", message: t.dashboard.retryFailedNone });
         return;
       }
       const nextQueue = queue.map((item) =>
-        item.status === "failed"
+        isRetryableQueueStatus(item.status)
           ? { ...item, status: "pending" as const, error: undefined }
           : item,
       );
@@ -2472,6 +2475,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       // Update local session state to match effective config for UI feedback
       setAlignmentMode(finalConfig.alignmentMode);
       setSaveCot(finalConfig.saveCot);
+      markQueueItemStatus(inputPath, "processing");
 
       window.api?.startTranslation(
         inputPath,
@@ -2668,6 +2672,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       const cacheDir = resolvedCacheDir.trim();
 
       try {
+        markQueueItemStatus(inputPath, "processing");
         const rulesPreLocal = resolveRuleListForRun("pre", customConfig);
         const rulesPostLocal = resolveRuleListForRun("post", customConfig);
 
@@ -2704,6 +2709,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         if (result && !result.ok) {
           setIsRunning(false);
           currentRunEngineModeRef.current = null;
+          markQueueItemStatus(inputPath, "failed", t.dashboard.runFailed);
+          setCurrentQueueIndex(-1);
           setRunNotice({
             type: "error",
             message: t.dashboard.runFailed,
@@ -2712,6 +2719,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       } catch (err) {
         setIsRunning(false);
         currentRunEngineModeRef.current = null;
+        markQueueItemStatus(inputPath, "failed", t.dashboard.runFailed);
+        setCurrentQueueIndex(-1);
       }
     };
 
@@ -3363,7 +3372,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           },
         }[queueNotice.type]
       : null;
-    const failedCount = queue.filter((item) => item.status === "failed").length;
+    const failedCount = queue.filter((item) =>
+      isRetryableQueueStatus(item.status),
+    ).length;
     const completedCount = queue.filter(
       (item) => item.status === "completed",
     ).length;

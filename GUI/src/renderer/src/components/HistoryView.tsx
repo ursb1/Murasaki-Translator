@@ -25,6 +25,7 @@ import {
   generateId,
   getFileType,
 } from "../types/common";
+import { persistLibraryQueue } from "../lib/libraryQueueStorage";
 
 // ============================================================================
 // Types - Translation History Data Structures
@@ -1109,11 +1110,7 @@ export function HistoryView({ lang, onNavigate }: HistoryViewProps) {
       config: { useGlobalDefaults: true },
     };
     const nextQueue = [...queue, item];
-    localStorage.setItem("library_queue", JSON.stringify(nextQueue));
-    localStorage.setItem(
-      "file_queue",
-      JSON.stringify(nextQueue.map((q) => q.path)),
-    );
+    persistLibraryQueue(nextQueue);
     localStorage.setItem(AUTO_START_QUEUE_KEY, "true");
     localStorage.setItem(CONFIG_SYNC_KEY, Date.now().toString());
 

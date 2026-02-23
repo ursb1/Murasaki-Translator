@@ -53,6 +53,10 @@ import { formatGlobalValue } from "../lib/formatting";
 import { APP_CONFIG } from "../lib/config";
 import { emitToast } from "../lib/toast";
 import {
+  loadLibraryQueueWithLegacyMigration,
+  persistLibraryQueue,
+} from "../lib/libraryQueueStorage";
+import {
   filterWatchFilesByTypes,
   isLikelyTranslatedOutput,
   normalizeWatchFolderConfig,
@@ -82,8 +86,6 @@ interface QueueImportPreview {
 
 // ============ Constants ============
 
-const LIBRARY_QUEUE_KEY = "library_queue";
-const FILE_QUEUE_KEY = "file_queue";
 const WATCH_FOLDERS_KEY = "watch_folders";
 const SUPPORTED_EXTENSIONS = [".txt", ".epub", ".srt", ".ass", ".ssa"];
 const WATCH_FILE_TYPES = SUPPORTED_EXTENSIONS.map((ext) =>
@@ -1735,35 +1737,17 @@ export function LibraryView({
   } | null>(null);
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Queue state
-  const [queue, setQueue] = useState<QueueItem[]>(() => {
-    try {
-      const saved = localStorage.getItem(LIBRARY_QUEUE_KEY);
-      if (saved) return JSON.parse(saved);
-    } catch (e) {
-      console.error("[LibraryView] Load failed:", e);
-    }
-
-    // Migrate from legacy
-    try {
-      const legacy = localStorage.getItem(FILE_QUEUE_KEY);
-      if (legacy) {
-        const paths = JSON.parse(legacy) as string[];
-        return paths.map((path) => ({
-          id: generateId(),
-          path,
-          fileName: path.split(/[/\\]/).pop() || path,
-          fileType: getFileType(path),
-          addedAt: new Date().toISOString(),
-          config: { useGlobalDefaults: true },
-          status: "pending" as const,
-        }));
-      }
-    } catch (e) {
-      console.error("[LibraryView] Migration failed:", e);
-    }
-
-    return [];
-  });
+  const [queue, setQueue] = useState<QueueItem[]>(() =>
+    loadLibraryQueueWithLegacyMigration((path) => ({
+      id: generateId(),
+      path,
+      fileName: path.split(/[/\\]/).pop() || path,
+      fileType: getFileType(path),
+      addedAt: new Date().toISOString(),
+      config: { useGlobalDefaults: true },
+      status: "pending" as const,
+    })),
+  );
 
   const [isDragOver, setIsDragOver] = useState(false);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
@@ -1937,7 +1921,13 @@ export function LibraryView({
   const filteredQueue = useMemo(() => {
     const keyword = searchQuery.trim().toLowerCase();
     return queue.filter((item) => {
-      if (statusFilter !== "all" && item.status !== statusFilter) return false;
+      if (statusFilter === "failed") {
+        if (item.status !== "failed" && item.status !== "interrupted") {
+          return false;
+        }
+      } else if (statusFilter !== "all" && item.status !== statusFilter) {
+        return false;
+      }
       if (!keyword) return true;
       return (
         item.fileName.toLowerCase().includes(keyword) ||
@@ -2006,15 +1996,7 @@ export function LibraryView({
 
   // Persist
   useEffect(() => {
-    try {
-      localStorage.setItem(LIBRARY_QUEUE_KEY, JSON.stringify(queue));
-      localStorage.setItem(
-        FILE_QUEUE_KEY,
-        JSON.stringify(queue.map((q) => q.path)),
-      );
-    } catch (e) {
-      console.error("[LibraryView] Save failed:", e);
-    }
+    persistLibraryQueue(queue);
   }, [queue]);
 
   useEffect(() => {

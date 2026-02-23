@@ -73,7 +73,7 @@ export interface QueueItem {
   fileName: string;
   fileType: "txt" | "epub" | "srt" | "ass" | "ssa";
   addedAt: string;
-  status: "pending" | "processing" | "completed" | "failed";
+  status: "pending" | "processing" | "completed" | "failed" | "interrupted";
   config?: FileConfig;
   error?: string;
 }
