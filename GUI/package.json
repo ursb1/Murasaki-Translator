@@ -19,7 +19,8 @@
     "dev:debug": "electron-vite dev --inspect --sourcemap",
     "dev:debug:brk": "electron-vite dev --inspect-brk --sourcemap",
     "build": "electron-vite build",
-    "build:win": "npm run build && electron-builder --win --x64",
+    "repack:win-zip": "node ./scripts/repackWinZip.js",
+    "build:win": "npm run build && electron-builder --win --x64 && npm run repack:win-zip",
     "preview": "electron-vite preview",
     "start": "electron-vite preview"
   },
