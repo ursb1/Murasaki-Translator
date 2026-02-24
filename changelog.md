@@ -10,12 +10,12 @@
 - refactor: Renderer 侧原生下拉统一迁移到通用 `Select`，覆盖 Dashboard、LibraryView、ProofreadView、AdvancedView、RuleEditor、ServiceView、ResultChecker、ApiStatsModal 与 ApiManagerView（`GUI/src/renderer/src/components/*.tsx`）。
 - test: 新增 `Select` 解析单测，覆盖 `option`、`optgroup` 与无 `value` 回退场景（`GUI/src/renderer/src/components/ui/__tests__/Select.test.ts`）。
 
-#### [GUI界面层] 仪表盘下拉样式与错位修复
+#### [构建与发布层] Windows 发布包目录重构与文档对齐
 
-- fix: 首页顶部配置区选择框改为轻量尺寸与弱对比视觉，降低与背景层的突兀感（`GUI/src/renderer/src/components/Dashboard.tsx`）。
-- fix: 仪表盘配置区保持原有 `v1=3栏 / v2=2栏` 布局逻辑，移除导致卡片错位的额外占位方案（`GUI/src/renderer/src/components/Dashboard.tsx`）。
-- fix: 通用 `Select` 默认采用左对齐定位，仅为图表模式小下拉启用居中展开，避免跨页面弹层横向偏移（`GUI/src/renderer/src/components/ui/Select.tsx`、`GUI/src/renderer/src/components/Dashboard.tsx`）。
-- fix: 下拉弹层增加打开预定位、点击冒泡隔离与宽度上限控制，修复偶发错位、文本遮挡与首帧跳位问题（`GUI/src/renderer/src/components/ui/Select.tsx`）。
+- feat: Windows ZIP 发布结构重排为“根目录三文件 + 二级目录”：根目录仅保留 `Murasaki Translator.exe` 启动器、`README.md`、`LICENSE.txt`，其余 Electron 运行时统一下沉到 `app/`，不再使用 portable 平铺结构（`GUI/scripts/repackWinZip.js`）。
+- refactor: `build:win` 接入 `repack:win-zip` 后处理链路，`electron-builder` 完成后自动重排 ZIP，现有 GitHub Actions 发布流程可直接复用（`GUI/package.json`）。
+- test: 新增 `repackWinZip` 单测，覆盖可执行文件选择、顶层目录识别与 README/LICENSE 路径回退；`vitest` 纳入脚本测试目录（`GUI/scripts/repackWinZip.test.ts`、`GUI/vitest.config.ts`）。
+- docs: 按主 README 风格统一更新发布说明（Windows CUDA/Vulkan、macOS、Linux GUI、Linux CLI），并同步 Windows 模型路径到 `app\resources\middleware\models`（`README.md`、`.github/release-docs/README-*.md`）。
 
 ## [2.1.0] - 2026-02-23
 
