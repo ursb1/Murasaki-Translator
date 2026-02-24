@@ -32,6 +32,7 @@ import {
   Bot,
 } from "lucide-react";
 import { Button, Card, Tooltip as UITooltip } from "./ui/core";
+import { Select } from "./ui/Select";
 import { translations, Language } from "../lib/i18n";
 import { getVariants } from "../lib/utils";
 import { identifyModel } from "../lib/modelConfig";
@@ -119,6 +120,8 @@ const isRetryableQueueStatus = (status: QueueItem["status"]) =>
 export const Dashboard = forwardRef<any, DashboardProps>(
   ({ lang, active, onRunningChange, remoteRuntime }, ref) => {
     const t = translations[lang];
+    const topBarSelectClass =
+      "w-full h-8 border border-border/30 bg-background/45 text-sm font-medium text-foreground shadow-none hover:bg-background/55 focus-visible:ring-1 focus-visible:ring-border/50";
 
     // Queue System (Synced with LibraryView)
     const [queue, setQueue] = useState<QueueItem[]>(() =>
@@ -349,11 +352,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
             provData.url ||
             ""
           ).trim();
-          const apiKey = (
-            provData.api_key ||
-            provData.apiKey ||
-            ""
-          ).trim();
+          const apiKey = (provData.api_key || provData.apiKey || "").trim();
           const rawConcurrency =
             pipeData?.settings?.concurrency ?? pipeData?.concurrency ?? 0;
           const resolvedConcurrency = Number.isFinite(Number(rawConcurrency))
@@ -1330,7 +1329,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                 setApiMonitorData((prev) => ({
                   ...prev,
                   latencyMs:
-                    data.api_ping !== undefined ? data.api_ping : prev.latencyMs,
+                    data.api_ping !== undefined
+                      ? data.api_ping
+                      : prev.latencyMs,
                   concurrency:
                     data.api_concurrency !== undefined
                       ? data.api_concurrency
@@ -1416,8 +1417,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                         : data.type === "anchor_missing"
                           ? "anchor_missing"
                           : data.type === "provider_error"
-                          ? "provider_error"
-                          : "line_mismatch";
+                            ? "provider_error"
+                            : "line_mismatch";
               const retryMessages = t.dashboard.retryMessages;
               const coverageText =
                 typeof data.coverage === "number"
@@ -1439,25 +1440,26 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                           coverageText,
                         )
                       : data.type === "kana_residue"
-                        ? retryMessages.kanaResidue || retryMessages.lineMismatch
-                      : data.type === "empty"
-                        ? retryMessages.emptyBlock.replace(
-                            "{block}",
-                            String(data.block),
-                          )
-                        : data.type === "anchor_missing"
-                          ? retryMessages.anchorMissing.replace(
+                        ? retryMessages.kanaResidue ||
+                          retryMessages.lineMismatch
+                        : data.type === "empty"
+                          ? retryMessages.emptyBlock.replace(
                               "{block}",
                               String(data.block),
                             )
-                          : data.type === "provider_error"
-                            ? retryMessages.providerError
-                            : retryMessages.lineMismatch
-                                .replace("{block}", String(data.block))
-                                .replace(
-                                  "{diff}",
-                                  String(data.src_lines - data.dst_lines),
-                                ),
+                          : data.type === "anchor_missing"
+                            ? retryMessages.anchorMissing.replace(
+                                "{block}",
+                                String(data.block),
+                              )
+                            : data.type === "provider_error"
+                              ? retryMessages.providerError
+                              : retryMessages.lineMismatch
+                                  .replace("{block}", String(data.block))
+                                  .replace(
+                                    "{diff}",
+                                    String(data.src_lines - data.dst_lines),
+                                  ),
               });
               if (v2StatsRef.current) {
                 v2StatsRef.current = applyRetryEventToV2HistoryStats(
@@ -1637,7 +1639,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                   totalChars: data.outputChars,
                   avgSpeed: data.avgSpeed,
                   duration: data.totalTime,
-                  ...(v2StatsRef.current ? { v2Stats: v2StatsRef.current } : {}),
+                  ...(v2StatsRef.current
+                    ? { v2Stats: v2StatsRef.current }
+                    : {}),
                 });
               }
             } catch (e) {
@@ -1981,8 +1985,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
     }, [t, showConfirm]);
 
     const handleRetryFailed = useCallback(() => {
-      const failedCount = queue.filter(
-        (item) => isRetryableQueueStatus(item.status),
+      const failedCount = queue.filter((item) =>
+        isRetryableQueueStatus(item.status),
       ).length;
       if (failedCount === 0) {
         pushQueueNotice({ type: "info", message: t.dashboard.retryFailedNone });
@@ -2285,7 +2289,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
         lineTolerancePct: toPctValue(
           pickCustom(
             customConfig.lineTolerancePct,
-            parseFloat(localStorage.getItem("config_line_tolerance_pct") || "20"),
+            parseFloat(
+              localStorage.getItem("config_line_tolerance_pct") || "20",
+            ),
           ),
           20,
         ),
@@ -2507,7 +2513,10 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       const itemConfig = item?.config;
       const customConfig: FileConfig =
         itemConfig && !itemConfig.useGlobalDefaults ? itemConfig : {};
-      const effectivePipelineId = resolveQueueItemPipelineId(item, v2PipelineId);
+      const effectivePipelineId = resolveQueueItemPipelineId(
+        item,
+        v2PipelineId,
+      );
       if (!effectivePipelineId) {
         showAlert({
           title: t.dashboard.selectPipelineTitle,
@@ -2766,9 +2775,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
       const queueItem = queueRef.current[index];
       const itemConfig = queueItem?.config;
       const customConfig =
-        itemConfig && !itemConfig.useGlobalDefaults
-          ? itemConfig
-          : undefined;
+        itemConfig && !itemConfig.useGlobalDefaults ? itemConfig : undefined;
       const effectivePipelineId = resolveQueueItemPipelineId(
         queueItem,
         v2PipelineId,
@@ -2959,7 +2966,11 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           cancelText: t.dashboard.remotePrecheckCancel,
           onConfirm: () => {
             setCurrentQueueIndex(index);
-            startTranslation(inputPath, undefined, matchedGlossary || undefined);
+            startTranslation(
+              inputPath,
+              undefined,
+              matchedGlossary || undefined,
+            );
           },
         });
         return;
@@ -3030,10 +3041,9 @@ export const Dashboard = forwardRef<any, DashboardProps>(
     });
 
     const handleStop = () => {
-      const runningMode = currentRunEngineModeRef.current || engineModeRef.current;
-      console.log(
-        `[Dashboard] User requested stop (mode=${runningMode})`,
-      );
+      const runningMode =
+        currentRunEngineModeRef.current || engineModeRef.current;
+      console.log(`[Dashboard] User requested stop (mode=${runningMode})`);
       if (runningMode === "v2") {
         window.api?.pipelineV2Stop?.();
       } else {
@@ -3833,12 +3843,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                   }
                   className={`bg-card/80 hover:bg-card px-3 py-2 rounded-lg border flex items-center gap-3 transition-all cursor-pointer ${!v2PipelineId ? "border-amber-500/50 ring-1 ring-amber-500/20" : "border-border/50 hover:border-border"}`}
                 >
-                  <UITooltip
-                    content={t.dashboard.switchToLocalMode}
-                  >
-                    <div
-                      className="w-7 h-7 shrink-0 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white cursor-pointer hover:scale-110 transition-transform relative"
-                    >
+                  <UITooltip content={t.dashboard.switchToLocalMode}>
+                    <div className="w-7 h-7 shrink-0 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white cursor-pointer hover:scale-110 transition-transform relative">
                       <Zap className="w-3.5 h-3.5" />
                       <span className="absolute -top-1 -right-1 text-[7px] bg-violet-500 text-white px-0.5 rounded font-bold leading-tight">
                         API
@@ -3849,8 +3855,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                     <span className="text-[9px] text-muted-foreground font-medium uppercase tracking-wider">
                       {t.dashboard.apiPlanLabel}
                     </span>
-                    <select
-                      className="w-full bg-transparent text-sm font-medium text-foreground outline-none cursor-pointer truncate -ml-0.5"
+                    <Select
+                      className={topBarSelectClass}
                       data-engine-switch-ignore="true"
                       value={v2PipelineId}
                       onChange={(e) => setV2PipelineId(e.target.value)}
@@ -3864,7 +3870,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                           {p.providerName ? ` (${p.providerName})` : ""}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </div>
                 </div>
               ) : (
@@ -3874,12 +3880,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                   }
                   className={`bg-card/80 hover:bg-card px-3 py-2 rounded-lg border flex items-center gap-3 transition-all cursor-pointer ${!activeModelPath && activeModelsCount > 0 ? "border-amber-500/50 ring-1 ring-amber-500/20" : "border-border/50 hover:border-border"}`}
                 >
-                  <UITooltip
-                    content={t.dashboard.switchToApiMode}
-                  >
-                    <div
-                      className="w-7 h-7 shrink-0 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white cursor-pointer hover:scale-110 transition-transform relative"
-                    >
+                  <UITooltip content={t.dashboard.switchToApiMode}>
+                    <div className="w-7 h-7 shrink-0 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white cursor-pointer hover:scale-110 transition-transform relative">
                       <Bot className="w-3.5 h-3.5" />
                       <span className="absolute -top-1 -right-1 text-[7px] bg-blue-500 text-white px-0.5 rounded font-bold leading-tight">
                         {t.dashboard.localModeBadge}
@@ -3914,8 +3916,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                         </div>
                       )}
                     </div>
-                    <select
-                      className="w-full bg-transparent text-sm font-medium text-foreground outline-none cursor-pointer truncate -ml-0.5"
+                    <Select
+                      className={topBarSelectClass}
                       data-engine-switch-ignore="true"
                       value={activeModelPath}
                       onChange={(e) => {
@@ -3961,7 +3963,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                                 {m.replace(".gguf", "")}
                               </option>
                             ))}
-                    </select>
+                    </Select>
                   </div>
                   <div
                     data-engine-switch-ignore="true"
@@ -3990,8 +3992,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                     <span className="text-[9px] text-muted-foreground font-medium uppercase tracking-wider">
                       Prompt Preset
                     </span>
-                    <select
-                      className="w-full bg-transparent text-sm font-medium text-foreground outline-none cursor-pointer truncate -ml-0.5"
+                    <Select
+                      className={topBarSelectClass}
                       data-engine-switch-ignore="true"
                       value={promptPreset}
                       onChange={(e) => handlePromptPresetChange(e.target.value)}
@@ -4005,7 +4007,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                       <option value="short">
                         {presetOptionLabel("short")}
                       </option>
-                    </select>
+                    </Select>
                   </div>
                 </div>
               )}
@@ -4018,8 +4020,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                   <span className="text-[9px] text-muted-foreground font-medium uppercase tracking-wider">
                     {t.dashboard.glossaryLabel}
                   </span>
-                  <select
-                    className="w-full bg-transparent text-sm font-medium text-foreground outline-none cursor-pointer truncate -ml-0.5"
+                  <Select
+                    className={topBarSelectClass}
                     data-engine-switch-ignore="true"
                     value={glossaryPath}
                     onChange={(e) => {
@@ -4038,7 +4040,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                         {g.label}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               </div>
             </div>
@@ -4193,7 +4195,8 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                   </span>
                   <div className="flex items-center gap-2">
                     <div className="relative">
-                      <select
+                      <Select
+                        menuAlign="center"
                         value={chartMode}
                         onChange={(e) => setChartMode(e.target.value as any)}
                         className="appearance-none bg-accent/50 border border-border/50 rounded px-2 py-0.5 text-[9px] font-medium text-foreground pr-5 focus:outline-none hover:bg-accent cursor-pointer"
@@ -4206,7 +4209,7 @@ export const Dashboard = forwardRef<any, DashboardProps>(
                         {engineMode !== "v2" && (
                           <option value="gpu">GPU %</option>
                         )}
-                      </select>
+                      </Select>
                       <ChevronDown className="w-2.5 h-2.5 absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
                     </div>
                   </div>

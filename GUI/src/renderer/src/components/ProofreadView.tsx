@@ -13,6 +13,7 @@ import React, {
 } from "react";
 import { flushSync } from "react-dom";
 import { Button, Tooltip, Switch } from "./ui/core";
+import { Select } from "./ui/Select";
 import {
   FolderOpen,
   RefreshCw,
@@ -3460,7 +3461,7 @@ export default function ProofreadView({
                       <label className="text-xs text-muted-foreground">
                         {pv.retryEngineMode}
                       </label>
-                      <select
+                      <Select
                         className="w-full border border-border p-2 rounded bg-secondary text-foreground text-xs"
                         value={retryForm.engineMode}
                         onChange={(e) =>
@@ -3473,7 +3474,7 @@ export default function ProofreadView({
                       >
                         <option value="v1">{pv.retryEngineModeLocal}</option>
                         <option value="v2">{pv.retryEngineModeApi}</option>
-                      </select>
+                      </Select>
                     </div>
                     {retryForm.engineMode === "v2" && (
                       <div className="space-y-2">
@@ -3481,7 +3482,7 @@ export default function ProofreadView({
                           {pv.retryV2Pipeline}
                         </label>
                         <div className="flex items-center gap-2">
-                          <select
+                          <Select
                             className="w-full border border-border p-2 rounded bg-secondary text-foreground text-xs"
                             value={retryForm.v2PipelineId}
                             onChange={(e) =>
@@ -3499,7 +3500,7 @@ export default function ProofreadView({
                                 {pipeline.name}
                               </option>
                             ))}
-                          </select>
+                          </Select>
                           <Button
                             variant="outline"
                             size="sm"
@@ -3604,7 +3605,7 @@ export default function ProofreadView({
                         <label className="text-xs text-muted-foreground">
                           {t.config.promptPreset}
                         </label>
-                        <select
+                        <Select
                           className="w-full border border-border p-2 rounded bg-secondary text-foreground text-xs"
                           value={retryForm.preset}
                           onChange={(e) =>
@@ -3620,13 +3621,13 @@ export default function ProofreadView({
                           <option value="short">
                             {t.dashboard.promptPresetLabels.short}
                           </option>
-                        </select>
+                        </Select>
                       </div>
                       <div className="space-y-2">
                         <label className="text-xs text-muted-foreground">
                           {t.config.device.mode}
                         </label>
-                        <select
+                        <Select
                           className="w-full border border-border p-2 rounded bg-secondary text-foreground text-xs"
                           value={retryForm.deviceMode}
                           onChange={(e) =>
@@ -3641,7 +3642,7 @@ export default function ProofreadView({
                           <option value="cpu">
                             {t.config.device.modes.cpu}
                           </option>
-                        </select>
+                        </Select>
                       </div>
                       {retryForm.deviceMode === "auto" && (
                         <div className="space-y-2 col-span-2">
@@ -3665,7 +3666,7 @@ export default function ProofreadView({
                         <label className="text-xs text-muted-foreground">
                           {t.config.gpuLayers}
                         </label>
-                        <select
+                        <Select
                           className="w-full border border-border p-2 rounded bg-secondary text-foreground text-xs"
                           value={retryForm.gpuLayers}
                           onChange={(e) =>
@@ -3680,7 +3681,7 @@ export default function ProofreadView({
                           <option value="32">32</option>
                           <option value="48">48</option>
                           <option value="64">64</option>
-                        </select>
+                        </Select>
                       </div>
                       <div className="space-y-2">
                         <label className="text-xs text-muted-foreground">
@@ -3723,7 +3724,7 @@ export default function ProofreadView({
                         <label className="text-xs text-muted-foreground">
                           {pv.retryStrictMode}
                         </label>
-                        <select
+                        <Select
                           className="w-full border border-border p-2 rounded bg-secondary text-foreground text-xs"
                           value={retryForm.strictMode}
                           onChange={(e) =>
@@ -3733,7 +3734,7 @@ export default function ProofreadView({
                           <option value="off">{av.strictModeOff}</option>
                           <option value="subs">{av.strictModeSubs}</option>
                           <option value="all">{av.strictModeAll}</option>
-                        </select>
+                        </Select>
                       </div>
                     </div>
                     <div className="grid grid-cols-3 gap-3">

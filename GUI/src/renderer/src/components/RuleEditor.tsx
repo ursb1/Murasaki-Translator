@@ -25,6 +25,7 @@ import {
   Settings2,
 } from "lucide-react";
 import { Button, Tooltip, Switch } from "./ui/core";
+import { Select } from "./ui/Select";
 import { computePopoverPosition } from "./ui/popoverPosition";
 import { translations, Language } from "../lib/i18n";
 import { AlertModal } from "./ui/AlertModal";
@@ -1138,7 +1139,7 @@ export function RuleEditor({ lang, mode }: RuleEditorProps) {
                   </div>
                 </Tooltip>
                 <div className="relative">
-                  <select
+                  <Select
                     className="h-9 min-w-[120px] bg-background border border-border/70 rounded-lg px-3 pr-8 text-sm font-semibold text-foreground focus:outline-none focus:ring-1 focus:ring-purple-500/40 transition-all appearance-none cursor-pointer"
                     value={activeProfileId}
                     onChange={(e) => handleSelectProfile(e.target.value)}
@@ -1148,7 +1149,7 @@ export function RuleEditor({ lang, mode }: RuleEditorProps) {
                         {profile.name}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                   <ChevronRight className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground rotate-90 pointer-events-none" />
                 </div>
                 <div className="relative">
@@ -1625,7 +1626,7 @@ export function RuleEditor({ lang, mode }: RuleEditorProps) {
                           {re.executor.typeLabel}
                         </div>
                         <div className="relative">
-                          <select
+                          <Select
                             className="w-full h-9 bg-background border border-border rounded-lg px-3 py-1 text-xs font-bold text-foreground focus:outline-none focus:ring-1 focus:ring-purple-500/40 transition-all appearance-none cursor-pointer"
                             value={rule.type}
                             onChange={(e) => {
@@ -1652,7 +1653,7 @@ export function RuleEditor({ lang, mode }: RuleEditorProps) {
                             <option value="python">
                               {re.executor.options.python}
                             </option>
-                          </select>
+                          </Select>
                           <ChevronRight className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground rotate-90 pointer-events-none" />
                         </div>
                       </div>
@@ -1664,7 +1665,7 @@ export function RuleEditor({ lang, mode }: RuleEditorProps) {
                               {re.executor.templateLabel}
                             </div>
                             <div className="relative">
-                              <select
+                              <Select
                                 className="w-full h-9 bg-background border border-border rounded-lg px-3 py-1 text-xs font-bold text-foreground focus:outline-none focus:ring-1 focus:ring-purple-500/40 transition-all appearance-none cursor-pointer"
                                 value={rule.pattern}
                                 onChange={(e) => {
@@ -1689,7 +1690,7 @@ export function RuleEditor({ lang, mode }: RuleEditorProps) {
                                     </option>
                                   ),
                                 )}
-                              </select>
+                              </Select>
                               <Sparkles className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-purple-500 pointer-events-none" />
                             </div>
                           </div>

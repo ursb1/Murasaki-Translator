@@ -37,6 +37,7 @@ import {
   Upload,
 } from "lucide-react";
 import { Button, Card, Switch, Input, Tooltip as UITooltip } from "./ui/core";
+import { Select } from "./ui/Select";
 import { FileIcon } from "./ui/FileIcon";
 import { AlertModal } from "./ui/AlertModal";
 import { useAlertModal } from "../hooks/useAlertModal";
@@ -1048,7 +1049,7 @@ export function FileConfigModal({
                   </span>
                 </div>
                 {v2Profiles.length > 0 ? (
-                  <select
+                  <Select
                     value={
                       !config.useGlobalDefaults && config.v2PipelineId
                         ? config.v2PipelineId
@@ -1083,7 +1084,7 @@ export function FileConfigModal({
                         {p.providerName ? ` (${p.providerName})` : ""}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 ) : (
                   <p className="text-xs text-muted-foreground/70 italic py-2">
                     {t.noPipelines}
@@ -1124,7 +1125,7 @@ export function FileConfigModal({
                     {t.currentGlobal}: {globalPreset}
                   </span>
                 </div>
-                <select
+                <Select
                   value={
                     !config.useGlobalDefaults && config.preset
                       ? config.preset
@@ -1155,7 +1156,7 @@ export function FileConfigModal({
                   <option value="novel">{t.presetOptions.novel}</option>
                   <option value="script">{t.presetOptions.script}</option>
                   <option value="short">{t.presetOptions.short}</option>
-                </select>
+                </Select>
               </div>
 
               <div className="space-y-1.5">
@@ -1171,7 +1172,7 @@ export function FileConfigModal({
                     {globalModel ? globalModel.split(/[/\\]/).pop() : t.notSet}
                   </span>
                 </div>
-                <select
+                <Select
                   value={
                     config.useGlobalDefaults
                       ? ""
@@ -1213,7 +1214,7 @@ export function FileConfigModal({
                           {model.replace(".gguf", "")}
                         </option>
                       ))}
-                </select>
+                </Select>
               </div>
 
               {!config.useGlobalDefaults && config.preset === "short" && (
@@ -1245,7 +1246,7 @@ export function FileConfigModal({
                     {t.currentGlobal}: {globalPreProfileName}
                   </span>
                 </div>
-                <select
+                <Select
                   value={
                     !config.useGlobalDefaults && config.rulesPreProfileId
                       ? config.rulesPreProfileId
@@ -1277,7 +1278,7 @@ export function FileConfigModal({
                       {profile.name}
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
 
               <div className="space-y-1.5">
@@ -1292,7 +1293,7 @@ export function FileConfigModal({
                     {t.currentGlobal}: {globalPostProfileName}
                   </span>
                 </div>
-                <select
+                <Select
                   value={
                     !config.useGlobalDefaults && config.rulesPostProfileId
                       ? config.rulesPostProfileId
@@ -1324,7 +1325,7 @@ export function FileConfigModal({
                       {profile.name}
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
             </div>
           </div>
@@ -1488,7 +1489,7 @@ export function FileConfigModal({
                         {t.currentGlobal}: {globalKvCache}
                       </span>
                     </div>
-                    <select
+                    <Select
                       value={
                         !config.useGlobalDefaults && config.kvCacheType
                           ? config.kvCacheType
@@ -1522,7 +1523,7 @@ export function FileConfigModal({
                       <option value="q8_0">{t.kvOptions.q8_0}</option>
                       <option value="q5_1">{t.kvOptions.q5_1}</option>
                       <option value="q4_0">{t.kvOptions.q4_0}</option>
-                    </select>
+                    </Select>
                   </div>
 
                   {/* Seed Input */}
@@ -1567,7 +1568,7 @@ export function FileConfigModal({
                       <span className="text-[10px] text-muted-foreground">
                         {t.currentGlobal}: {globalFlashAttn ? t.on : t.off}
                       </span>
-                      <select
+                      <Select
                         className={`
                       h-8 text-sm rounded-md border outline-none
                       ${
@@ -1602,7 +1603,7 @@ export function FileConfigModal({
                         </option>
                         <option value="true">{t.on}</option>
                         <option value="false">{t.off}</option>
-                      </select>
+                      </Select>
                     </div>
                   </div>
                 </div>
@@ -3282,7 +3283,7 @@ export function LibraryView({
                     </button>
                   )}
                 </div>
-                <select
+                <Select
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value as any)}
                   className="h-7 text-xs rounded-md border border-border/40 bg-background/80 px-2 text-muted-foreground hover:text-foreground"
@@ -3291,7 +3292,7 @@ export function LibraryView({
                   <option value="pending">{t.filterPending}</option>
                   <option value="completed">{t.filterCompleted}</option>
                   <option value="failed">{t.filterFailed}</option>
-                </select>
+                </Select>
               </div>
             </div>
           )}

@@ -9,6 +9,7 @@
 import yaml from "js-yaml";
 import type { ComponentProps, ComponentType, ReactNode } from "react";
 import { Button, Input as BaseInput, Label, Tooltip, Card } from "./ui/core";
+import { Select } from "./ui/Select";
 import { translations, Language } from "../lib/i18n";
 import { emitToast } from "../lib/toast";
 import {
@@ -110,19 +111,16 @@ const SelectField = ({
   className,
   children,
   ...props
-}: ComponentProps<"select">) => (
-  <div className="relative">
-    <select
-      className={cn(
-        "flex h-9 w-full appearance-none rounded-md border border-input bg-background px-3 py-1 pr-8 text-sm shadow-sm transition-colors hover:bg-muted/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-        className,
-      )}
-      {...props}
-    >
-      {children}
-    </select>
-    <ChevronDown className="pointer-events-none absolute right-3 top-2.5 h-4 w-4 text-muted-foreground" />
-  </div>
+}: ComponentProps<typeof Select>) => (
+  <Select
+    className={cn(
+      "flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors hover:bg-muted/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+      className,
+    )}
+    {...props}
+  >
+    {children}
+  </Select>
 );
 
 type InputAffixProps = Omit<ComponentProps<typeof BaseInput>, "prefix"> & {

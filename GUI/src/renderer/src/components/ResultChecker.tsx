@@ -6,6 +6,7 @@
 import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/core";
 import { Button } from "./ui/core";
+import { Select } from "./ui/Select";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -601,7 +602,7 @@ export function ResultChecker({
             className="w-full pl-10 pr-4 py-2 bg-muted rounded-lg text-sm"
           />
         </div>
-        <select
+        <Select
           value={filterType}
           onChange={(e) => setFilterType(e.target.value)}
           className="px-4 py-2 bg-muted rounded-lg text-sm"
@@ -622,7 +623,7 @@ export function ResultChecker({
           <option value="empty_output">
             {getTypeLabel("empty_output")} ({stats.byType.empty_output})
           </option>
-        </select>
+        </Select>
       </div>
 
       {/* 问题列表 */}

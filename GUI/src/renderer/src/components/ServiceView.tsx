@@ -12,6 +12,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { Button, Card, CardContent, Switch } from "./ui/core";
+import { Select } from "./ui/Select";
 import { translations, Language } from "../lib/i18n";
 import { AlertModal } from "./ui/AlertModal";
 import { useAlertModal } from "../hooks/useAlertModal";
@@ -876,7 +877,7 @@ export function ServiceView({
                       <label className="text-xs font-medium text-muted-foreground">
                         {s.hostLabel}
                       </label>
-                      <select
+                      <Select
                         className="w-full border border-border p-2 rounded bg-secondary text-foreground text-sm"
                         value={localHost}
                         onChange={(event) => {
@@ -889,7 +890,7 @@ export function ServiceView({
                       >
                         <option value="127.0.0.1">{s.hostLocal}</option>
                         <option value="0.0.0.0">{s.hostLan}</option>
-                      </select>
+                      </Select>
                     </div>
                   </div>
 

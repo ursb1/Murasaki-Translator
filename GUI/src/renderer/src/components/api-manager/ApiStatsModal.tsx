@@ -33,6 +33,7 @@ import {
   CardTitle,
   Input,
 } from "../ui/core";
+import { Select } from "../ui/Select";
 import { AlertModal } from "../ui/AlertModal";
 import { useAlertModal } from "../../hooks/useAlertModal";
 import { translations, type Language } from "../../lib/i18n";
@@ -705,7 +706,7 @@ export function ApiStatsModal({
               <div className="rounded-xl border border-border/60 bg-muted/20 p-3 sm:p-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
                 <div>
                   <div className="text-[11px] text-muted-foreground mb-1">{texts.ranges.label}</div>
-                  <select
+                  <Select
                     className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
                     value={rangeKey}
                     onChange={(e) => setRangeKey(e.target.value as RangeKey)}
@@ -714,11 +715,11 @@ export function ApiStatsModal({
                     <option value="7d">{texts.ranges.d7d}</option>
                     <option value="30d">{texts.ranges.d30d}</option>
                     <option value="all">{texts.ranges.all}</option>
-                  </select>
+                  </Select>
                 </div>
                 <div>
                   <div className="text-[11px] text-muted-foreground mb-1">{texts.metrics.label}</div>
-                  <select
+                  <Select
                     className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
                     value={metric}
                     onChange={(e) => setMetric(e.target.value as TrendMetric)}
@@ -729,11 +730,11 @@ export function ApiStatsModal({
                     <option value="output_tokens">{texts.metrics.outputTokens}</option>
                     <option value="error_rate">{texts.metrics.errorRate}</option>
                     <option value="success_rate">{texts.metrics.successRate}</option>
-                  </select>
+                  </Select>
                 </div>
                 <div>
                   <div className="text-[11px] text-muted-foreground mb-1">{texts.dimensions.label}</div>
-                  <select
+                  <Select
                     className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
                     value={dimension}
                     onChange={(e) => setDimension(e.target.value as BreakdownDimension)}
@@ -744,11 +745,11 @@ export function ApiStatsModal({
                     <option value="error_type">{texts.dimensions.errorType}</option>
                     <option value="model">{texts.dimensions.model}</option>
                     <option value="hour">{texts.dimensions.hour}</option>
-                  </select>
+                  </Select>
                 </div>
                 <div>
                   <div className="text-[11px] text-muted-foreground mb-1">{texts.filters.phaseAll}</div>
-                  <select
+                  <Select
                     className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
                     value={phase}
                     onChange={(e) => setPhase(e.target.value as RecordPhase)}
@@ -757,11 +758,11 @@ export function ApiStatsModal({
                     <option value="request_end">{texts.filters.phaseEnd}</option>
                     <option value="request_error">{texts.filters.phaseError}</option>
                     <option value="inflight">{texts.filters.phaseInflight}</option>
-                  </select>
+                  </Select>
                 </div>
                 <div>
                   <div className="text-[11px] text-muted-foreground mb-1">{texts.filters.statusAll}</div>
-                  <select
+                  <Select
                     className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
                     value={statusFilter}
                     onChange={(e) => setStatusFilter(e.target.value)}
@@ -772,11 +773,11 @@ export function ApiStatsModal({
                         {code}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
                 <div>
                   <div className="text-[11px] text-muted-foreground mb-1">{texts.filters.sourceAll}</div>
-                  <select
+                  <Select
                     className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
                     value={sourceFilter}
                     onChange={(e) => setSourceFilter(e.target.value)}
@@ -787,7 +788,7 @@ export function ApiStatsModal({
                         {sourceKey}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               </div>
 
