@@ -90,6 +90,10 @@ import {
   createV2SpeedSmoothingState,
   smoothV2SpeedMetrics,
 } from "../lib/v2SpeedMetrics";
+import {
+  resolveProviderMonitorApiKey,
+  resolveProviderMonitorUrl,
+} from "../lib/apiMonitorProvider";
 
 // Window.api type is defined in src/types/api.d.ts
 
@@ -321,7 +325,15 @@ export const Dashboard = forwardRef<any, DashboardProps>(
     }, [isRunning]);
 
     useEffect(() => {
-      if (engineMode !== "v2" || !v2PipelineId || !active) return;
+      if (engineMode !== "v2" || !v2PipelineId || !active) {
+        setApiMonitorData((prev) => ({
+          ...prev,
+          url: "",
+          latencyMs: null,
+          concurrency: 0,
+        }));
+        return;
+      }
 
       let isSubscribed = true;
       const loadProviderInfo = async (probeLatency: boolean) => {
@@ -332,27 +344,24 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           );
           const pipeData = pipeProfile?.data;
           const providerId = String(pipeData?.provider || "").trim();
-          if (!providerId || !isSubscribed) return;
+          if (!providerId || !isSubscribed) {
+            setApiMonitorData((prev) => ({
+              ...prev,
+              url: "",
+              latencyMs: null,
+            }));
+            return;
+          }
 
           const provProfile = await window.api?.pipelineV2ProfilesLoad?.(
             "api",
             providerId,
           );
           const provData = provProfile?.data;
-          if (
-            !provData ||
-            (!provData.url && !provData.baseUrl && !provData.base_url) ||
-            !isSubscribed
-          )
-            return;
+          if (!provData || !isSubscribed) return;
 
-          const targetUrl = (
-            provData.base_url ||
-            provData.baseUrl ||
-            provData.url ||
-            ""
-          ).trim();
-          const apiKey = (provData.api_key || provData.apiKey || "").trim();
+          const targetUrl = resolveProviderMonitorUrl(provData);
+          const apiKey = resolveProviderMonitorApiKey(provData);
           const rawConcurrency =
             pipeData?.settings?.concurrency ?? pipeData?.concurrency ?? 0;
           const resolvedConcurrency = Number.isFinite(Number(rawConcurrency))
@@ -361,10 +370,11 @@ export const Dashboard = forwardRef<any, DashboardProps>(
           setApiMonitorData((prev) => ({
             ...prev,
             url: targetUrl,
+            latencyMs: targetUrl ? prev.latencyMs : null,
             concurrency: resolvedConcurrency,
           }));
 
-          if (!probeLatency) return;
+          if (!targetUrl || !probeLatency) return;
 
           const startAt = Date.now();
           const pingRes = await window.api?.pipelineV2ApiModels?.({

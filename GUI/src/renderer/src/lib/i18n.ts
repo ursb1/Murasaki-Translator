@@ -33,7 +33,7 @@ export const translations = {
       waiting: "等待硬件数据...",
       apiWaiting: "等待API响应...",
       apiRpmLabel: "RPM",
-      apiRpmTooltip: "每分钟请求数（近窗口）",
+      apiRpmTooltip: "每分钟请求数",
       apiConcurrency: "实时请求并发",
       apiConcurrencyTooltip: "当前请求并发数",
       apiLatencyLabel: "请求延迟",
