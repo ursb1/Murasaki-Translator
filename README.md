@@ -125,7 +125,7 @@ Murasaki 模型针对术语表进行了特化训练，支持 **Prompt 级术语�
 - **在线 API**：选择已配置的 API Pipeline 后开始翻译。
 
 若使用本地模型模式，将下载的模型文件放入 `models` 目录中。(通过模型管理内置下载器下载的可以跳过这一步直接开始翻译)
-   - Windows: `解压目录\resources\middleware\models`
+   - Windows: `解压目录\app\resources\middleware\models`
    - macOS: `应用程序/Murasaki Translator.app/Contents/Resources/middleware/models`
 
 ### Linux Server 远程部署（API）

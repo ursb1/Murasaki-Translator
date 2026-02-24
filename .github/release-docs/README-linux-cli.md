@@ -1,34 +1,39 @@
-# Murasaki Translator - Linux Server Package
+# Murasaki Translator - Linux Server 包
 
-> Linux remote server package for GUI full-feature remote mode (`/api/v1/*`)  
-> and OpenAI-compatible mode (`/v1/*`).
+> 面向远程部署的无界面服务端。  
+> 同时支持 GUI 全功能远程接口（`/api/v1/*`）与 OpenAI 兼容接口（`/v1/*`）。
 
-## Requirements
+## 适用场景
 
-- Linux x64 (Ubuntu 20.04+ / Debian 11+ recommended)
+- 云服务器 / 本地 Linux 主机部署推理服务
+- Windows GUI 通过 Remote 模式接入
+- 其他应用通过 OpenAI SDK 直接接入
+
+## 环境要求
+
+- Linux x64（推荐 Ubuntu 20.04+ / Debian 11+）
 - Python 3.10+
-- GPU driver:
-  - NVIDIA (recommended): modern driver
-  - AMD/Intel: Vulkan driver
+- 可用 GPU 驱动（NVIDIA 或 Vulkan 栈）
 
-## One-Line Production Deploy (Recommended)
+## 一行部署（推荐）
 
 ```bash
 MODEL='/path/to/model.gguf'; API_KEY='replace-with-strong-key'; curl -fsSL https://github.com/soundstarrain/Murasaki-Translator/releases/latest/download/murasaki-server-linux-x64.tar.gz | tar -xz && cd murasaki-server && nohup ./start.sh --host 0.0.0.0 --port 8000 --model "$MODEL" --api-key "$API_KEY" --enable-openai-proxy --openai-port 8001 > server.log 2>&1 &
 ```
 
-After startup:
-- GUI remote URL: `http://<server-ip>:8000`
-- GUI API Key: the same `API_KEY`
-- OpenAI base URL: `http://<server-ip>:8001/v1`
+启动后默认地址：
 
-## Auth Behavior
+- GUI Remote URL：`http://<server-ip>:8000`
+- OpenAI Base URL：`http://<server-ip>:8001/v1`
+- 鉴权：`Authorization: Bearer <API_KEY>`
 
-- `GET /health`: public (for health probes)
-- `/api/v1/*`: requires `Authorization: Bearer <API_KEY>` when API key is configured
-- `/v1/*`: requires `Authorization: Bearer <API_KEY>` when API key is configured
+## 接口说明
 
-## GUI Full-Feature Remote Endpoints
+- 健康检查（公开）：`GET /health`
+- GUI Remote（鉴权）：`/api/v1/*`
+- OpenAI 兼容（鉴权）：`/v1/*`
+
+常用 GUI Remote 接口：
 
 - `POST /api/v1/translate`
 - `GET /api/v1/translate/{task_id}`
@@ -37,7 +42,7 @@ After startup:
 - `GET /api/v1/download/{task_id}`
 - `WS /api/v1/ws/{task_id}`
 
-## Quick Verification
+## 快速验证
 
 ```bash
 curl -fsS http://127.0.0.1:8000/health
@@ -45,26 +50,33 @@ curl -fsS -H "Authorization: Bearer $API_KEY" http://127.0.0.1:8000/api/v1/statu
 curl -fsS -H "Authorization: Bearer $API_KEY" http://127.0.0.1:8001/v1/models
 ```
 
-`/health` should include capabilities:
+`/health` 中应包含能力标识：
+
 - `api_v1`
 - `api_v1_full_parity`
+- `openai_v1`
 
-## Windows GUI Connection (One Page)
+## Windows GUI 连接参数
 
-In Windows GUI remote panel:
-- `Server URL`: `http://<server-ip>:8000`
-- `API Key`: same value as `API_KEY`
+- `Server URL`：`http://<server-ip>:8000`
+- `API Key`：部署时设置的 `API_KEY`
 
-Then click connect and run translation normally. The remote flow supports upload / task status / cancel / download / realtime logs.
+## 常见问题
 
-### Common Issues
+- **401 / 403**：API Key 不一致，确认请求头为 `Authorization: Bearer <API_KEY>`。
+- **连接超时**：防火墙或安全组未放行 `8000`/`8001` 端口。
+- **实时日志不更新**：反向代理缺少 WebSocket Upgrade 头。
 
-- **401/403**: API key mismatch, check `Authorization: Bearer <API_KEY>`.
-- **Connection timeout**: firewall/security group did not open port `8000`.
-- **Realtime log not updating**: reverse proxy is missing WebSocket upgrade headers.
+## 安全建议
 
-## Security Notes
+- 公网部署务必使用强 API Key
+- 仅对可信来源开放端口
+- 对外服务建议通过 HTTPS 反向代理
 
-- Use a strong API key in public networks.
-- Restrict incoming ports (`8000`, `8001`) by firewall/security group.
-- Use HTTPS via reverse proxy when exposing service publicly.
+## 协议
+
+软件代码采用 Apache-2.0 协议开源，详见包内协议文件。  
+模型权重采用 CC BY-NC-SA 4.0 协议。
+
+---
+Copyright © 2026 Murasaki Translator

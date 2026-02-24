@@ -1,5 +1,22 @@
 # Murasaki Translator - Changelog
 
+## [2.1.1] - 2026-02-24
+
+### Changed
+
+#### [GUI界面层] 下拉组件统一与交互一致性
+
+- feat: 新增通用 `Select` 组件，支持 `option/optgroup` 解析、受控/非受控值、键盘操作与 Portal 弹层渲染（`GUI/src/renderer/src/components/ui/Select.tsx`）。
+- refactor: Renderer 侧原生下拉统一迁移到通用 `Select`，覆盖 Dashboard、LibraryView、ProofreadView、AdvancedView、RuleEditor、ServiceView、ResultChecker、ApiStatsModal 与 ApiManagerView（`GUI/src/renderer/src/components/*.tsx`）。
+- test: 新增 `Select` 解析单测，覆盖 `option`、`optgroup` 与无 `value` 回退场景（`GUI/src/renderer/src/components/ui/__tests__/Select.test.ts`）。
+
+#### [GUI界面层] 仪表盘下拉样式与错位修复
+
+- fix: 首页顶部配置区选择框改为轻量尺寸与弱对比视觉，降低与背景层的突兀感（`GUI/src/renderer/src/components/Dashboard.tsx`）。
+- fix: 仪表盘配置区保持原有 `v1=3栏 / v2=2栏` 布局逻辑，移除导致卡片错位的额外占位方案（`GUI/src/renderer/src/components/Dashboard.tsx`）。
+- fix: 通用 `Select` 默认采用左对齐定位，仅为图表模式小下拉启用居中展开，避免跨页面弹层横向偏移（`GUI/src/renderer/src/components/ui/Select.tsx`、`GUI/src/renderer/src/components/Dashboard.tsx`）。
+- fix: 下拉弹层增加打开预定位、点击冒泡隔离与宽度上限控制，修复偶发错位、文本遮挡与首帧跳位问题（`GUI/src/renderer/src/components/ui/Select.tsx`）。
+
 ## [2.1.0] - 2026-02-23
 
 ### Changed
