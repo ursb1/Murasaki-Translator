@@ -97,13 +97,6 @@
 - fix: `GUI/src/main/index.ts` 读取流数据改为兼容 `string | Buffer`（Node 22+ 类型变化），保持日志与文件流解码稳定。
 - test: 依赖升级后完成 `npm run typecheck`、`npm test`、`npm run build` 全链路验证并通过。
 
-#### [性能验证] 用户侧启动与渲染实测
-
-- perf: 采用 `before/after` 交替冷启动采样（每组 `10` 轮、每轮 `8s` FPS 窗口）复测用户侧性能，降低时序漂移影响。
-- perf: `launch -> domReady` 均值由 `679.5ms` 降至 `657.1ms`（约 `-3.30%`）。
-- perf: 平均 FPS 由 `230.1` 提升至 `234.4`（约 `+1.90%`），`p95` 帧时间由 `4.51ms` 改善至 `4.40ms`。
-- note: 升级后样本中出现 1 次长帧离群点（`maxFrameMs=162.6ms`）；结合中位数与 trimmed 统计，整体趋势仍为小幅提升。
-
 ## [2.0.3] - 2026-02-23
 
 ### Changed
