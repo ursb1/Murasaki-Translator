@@ -2777,7 +2777,9 @@ ipcMain.handle(
           start: startPos,
         });
 
-        stream.on("data", (chunk: string) => chunks.push(chunk));
+        stream.on("data", (chunk: string | Buffer) =>
+          chunks.push(typeof chunk === "string" ? chunk : chunk.toString("utf-8")),
+        );
         stream.on("end", () => {
           const content = chunks.join("");
           const lines = content.split("\n").slice(1);
@@ -2833,7 +2835,9 @@ ipcMain.handle("read-server-log", async () => {
         start: startPos,
       });
 
-      stream.on("data", (chunk: string) => chunks.push(chunk));
+      stream.on("data", (chunk: string | Buffer) =>
+        chunks.push(typeof chunk === "string" ? chunk : chunk.toString("utf-8")),
+      );
       stream.on("end", () => {
         const content = chunks.join("");
         // 跳过第一行（可能是不完整行）。

@@ -90,6 +90,20 @@
 - test: 新增 `main_flow` 用例，覆盖结构性重试后术语重试链路。
 - test: 新增 `flow_v2_providers` 线程隔离用例，覆盖 OpenAI 兼容 provider 的线程局部 session 行为。
 
+#### [构建与发布层] GUI 依赖升级与兼容性收敛
+
+- chore: GUI 核心运行时与开发依赖升级到当前主线：`electron` 28 -> 40、`react/react-dom` 18 -> 19、`vite` 5 -> 7、`vitest` 1 -> 4、`electron-vite` 2 -> 5、`electron-builder` 24 -> 26。
+- chore: 同步升级配套依赖：`@types/node`、`@types/react`、`@types/react-dom`、`@vitejs/plugin-react`、`@electron-toolkit/utils`、`@xyflow/react`、`react-router-dom`、`recharts`、`lucide-react`、`tailwind-merge`、`@codemirror/view`。
+- fix: `GUI/src/main/index.ts` 读取流数据改为兼容 `string | Buffer`（Node 22+ 类型变化），保持日志与文件流解码稳定。
+- test: 依赖升级后完成 `npm run typecheck`、`npm test`、`npm run build` 全链路验证并通过。
+
+#### [性能验证] 用户侧启动与渲染实测
+
+- perf: 采用 `before/after` 交替冷启动采样（每组 `10` 轮、每轮 `8s` FPS 窗口）复测用户侧性能，降低时序漂移影响。
+- perf: `launch -> domReady` 均值由 `679.5ms` 降至 `657.1ms`（约 `-3.30%`）。
+- perf: 平均 FPS 由 `230.1` 提升至 `234.4`（约 `+1.90%`），`p95` 帧时间由 `4.51ms` 改善至 `4.40ms`。
+- note: 升级后样本中出现 1 次长帧离群点（`maxFrameMs=162.6ms`）；结合中位数与 trimmed 统计，整体趋势仍为小幅提升。
+
 ## [2.0.3] - 2026-02-23
 
 ### Changed
