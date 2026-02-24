@@ -4,6 +4,7 @@ const path = require("path");
 const { spawnSync } = require("child_process");
 
 const APP_DIR_NAME = "app";
+const LAUNCHER_ICON_SIZE = 256;
 const ROOT_README_NAME = "README.md";
 const ROOT_LICENSE_NAME = "LICENSE.txt";
 const README_CANDIDATES = [
@@ -113,14 +114,92 @@ function copyDirectoryContents(sourceDirectory, destinationDirectory) {
   }
 }
 
-function createLauncherExecutable(outputPath, runtimeRelativePath) {
+function parsePngDimensions(pngBuffer) {
+  const pngSignatureHex = "89504e470d0a1a0a";
+  if (!Buffer.isBuffer(pngBuffer) || pngBuffer.length < 24) {
+    throw new Error("[repackWinZip] Invalid PNG buffer.");
+  }
+  if (pngBuffer.subarray(0, 8).toString("hex") !== pngSignatureHex) {
+    throw new Error("[repackWinZip] PNG signature mismatch.");
+  }
+  const width = pngBuffer.readUInt32BE(16);
+  const height = pngBuffer.readUInt32BE(20);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    throw new Error("[repackWinZip] Invalid PNG dimensions.");
+  }
+  return { width, height };
+}
+
+function buildIcoFromPngBuffer(pngBuffer) {
+  const { width, height } = parsePngDimensions(pngBuffer);
+  const iconDirAndEntry = Buffer.alloc(6 + 16);
+  iconDirAndEntry.writeUInt16LE(0, 0); // ICONDIR: reserved
+  iconDirAndEntry.writeUInt16LE(1, 2); // ICONDIR: image type (1 = icon)
+  iconDirAndEntry.writeUInt16LE(1, 4); // ICONDIR: image count
+  iconDirAndEntry.writeUInt8(width >= 256 ? 0 : width, 6); // ICONDIRENTRY width
+  iconDirAndEntry.writeUInt8(height >= 256 ? 0 : height, 7); // ICONDIRENTRY height
+  iconDirAndEntry.writeUInt8(0, 8); // ICONDIRENTRY color count
+  iconDirAndEntry.writeUInt8(0, 9); // ICONDIRENTRY reserved
+  iconDirAndEntry.writeUInt16LE(1, 10); // ICONDIRENTRY planes
+  iconDirAndEntry.writeUInt16LE(32, 12); // ICONDIRENTRY bpp
+  iconDirAndEntry.writeUInt32LE(pngBuffer.length, 14); // ICONDIRENTRY bytes in resource
+  iconDirAndEntry.writeUInt32LE(iconDirAndEntry.length, 18); // ICONDIRENTRY image offset
+  return Buffer.concat([iconDirAndEntry, pngBuffer]);
+}
+
+function createLauncherIconIco(sourcePngPath, targetIcoPath) {
+  if (!fs.existsSync(sourcePngPath)) {
+    throw new Error(`[repackWinZip] Launcher icon source not found: ${sourcePngPath}`);
+  }
+
+  const resizedPngPath = `${targetIcoPath}.resized.png`;
+  try {
+    runPowerShell(`
+Add-Type -AssemblyName System.Drawing;
+$srcPath = ${toPowerShellString(sourcePngPath)};
+$dstPath = ${toPowerShellString(resizedPngPath)};
+$src = [System.Drawing.Image]::FromFile($srcPath);
+try {
+  $bmp = New-Object System.Drawing.Bitmap ${LAUNCHER_ICON_SIZE}, ${LAUNCHER_ICON_SIZE};
+  try {
+    $g = [System.Drawing.Graphics]::FromImage($bmp);
+    try {
+      $g.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality;
+      $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic;
+      $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality;
+      $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality;
+      $g.DrawImage($src, 0, 0, ${LAUNCHER_ICON_SIZE}, ${LAUNCHER_ICON_SIZE});
+    } finally {
+      $g.Dispose();
+    }
+    $bmp.Save($dstPath, [System.Drawing.Imaging.ImageFormat]::Png);
+  } finally {
+    $bmp.Dispose();
+  }
+} finally {
+  $src.Dispose();
+}
+`);
+
+    const resizedPngBuffer = fs.readFileSync(resizedPngPath);
+    const icoBuffer = buildIcoFromPngBuffer(resizedPngBuffer);
+    fs.writeFileSync(targetIcoPath, icoBuffer);
+  } finally {
+    fs.rmSync(resizedPngPath, { force: true });
+  }
+}
+
+function createLauncherExecutable(outputPath, runtimeRelativePath, launcherIconPngPath) {
   const tempProjectDir = fs.mkdtempSync(path.join(os.tmpdir(), "murasaki-launcher-"));
   try {
     const projectFilePath = path.join(tempProjectDir, "MurasakiLauncher.csproj");
     const programFilePath = path.join(tempProjectDir, "Program.cs");
+    const launcherIconIcoPath = path.join(tempProjectDir, "launcher.ico");
     const escapedRuntimePath = runtimeRelativePath
       .replace(/\\/g, "\\\\")
       .replace(/"/g, '\\"');
+
+    createLauncherIconIco(launcherIconPngPath, launcherIconIcoPath);
 
     const projectContent = `\
 <Project Sdk="Microsoft.NET.Sdk">
@@ -129,6 +208,7 @@ function createLauncherExecutable(outputPath, runtimeRelativePath) {
     <TargetFramework>net48</TargetFramework>
     <AssemblyName>MurasakiLauncher</AssemblyName>
     <RootNamespace>MurasakiLauncher</RootNamespace>
+    <ApplicationIcon>launcher.ico</ApplicationIcon>
     <Nullable>disable</Nullable>
   </PropertyGroup>
 </Project>
@@ -267,7 +347,13 @@ internal static class Program
   }
 }
 
-function repackZipArchive(zipPath, preferredExecutableName, fallbackReadmePath, fallbackLicensePath) {
+function repackZipArchive(
+  zipPath,
+  preferredExecutableName,
+  fallbackReadmePath,
+  fallbackLicensePath,
+  launcherIconPngPath,
+) {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "murasaki-repack-"));
   const extractedDirectory = path.join(tempRoot, "extracted");
   const stageDirectory = path.join(tempRoot, "stage");
@@ -315,7 +401,11 @@ function repackZipArchive(zipPath, preferredExecutableName, fallbackReadmePath, 
     }
 
     const launcherPath = path.join(stageDirectory, runtimeExecutableName);
-    createLauncherExecutable(launcherPath, path.join(APP_DIR_NAME, runtimeExecutableName));
+    createLauncherExecutable(
+      launcherPath,
+      path.join(APP_DIR_NAME, runtimeExecutableName),
+      launcherIconPngPath,
+    );
 
     fs.copyFileSync(readmeSourcePath, path.join(stageDirectory, ROOT_README_NAME));
     fs.copyFileSync(licenseSourcePath, path.join(stageDirectory, ROOT_LICENSE_NAME));
@@ -344,10 +434,14 @@ function main() {
   const distDirectory = path.join(guiDirectory, "dist");
   const fallbackReadmePath = path.join(repositoryRoot, "README.md");
   const fallbackLicensePath = path.join(repositoryRoot, "LICENSE");
+  const launcherIconPngPath = path.join(guiDirectory, "resources", "icon.png");
 
   if (!fs.existsSync(distDirectory)) {
     console.log(`[repackWinZip] Dist directory not found, skip: ${distDirectory}`);
     return;
+  }
+  if (!fs.existsSync(launcherIconPngPath)) {
+    throw new Error(`[repackWinZip] Icon source not found: ${launcherIconPngPath}`);
   }
 
   const packageJsonPath = path.join(guiDirectory, "package.json");
@@ -367,7 +461,13 @@ function main() {
   }
 
   for (const zipPath of zipFiles) {
-    repackZipArchive(zipPath, preferredExecutableName, fallbackReadmePath, fallbackLicensePath);
+    repackZipArchive(
+      zipPath,
+      preferredExecutableName,
+      fallbackReadmePath,
+      fallbackLicensePath,
+      launcherIconPngPath,
+    );
   }
 }
 
@@ -384,4 +484,6 @@ module.exports = {
   resolveAppSourceRootName,
   pickRuntimeExecutableName,
   findFirstExistingPath,
+  parsePngDimensions,
+  buildIcoFromPngBuffer,
 };

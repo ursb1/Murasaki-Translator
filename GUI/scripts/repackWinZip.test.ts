@@ -4,7 +4,9 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const {
+  buildIcoFromPngBuffer,
   findFirstExistingPath,
+  parsePngDimensions,
   pickRuntimeExecutableName,
   resolveAppSourceRootName,
 } = require("./repackWinZip.js");
@@ -68,5 +70,24 @@ describe("repackWinZip helpers", () => {
       "README.md",
     ]);
     expect(selected).toBe(path.join(root, "resources", "docs", "README.md"));
+  });
+
+  it("parses PNG dimensions and builds ICO payload from PNG", () => {
+    const oneByOnePng = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5Y2S8AAAAASUVORK5CYII=",
+      "base64",
+    );
+
+    const dimensions = parsePngDimensions(oneByOnePng);
+    expect(dimensions).toEqual({ width: 1, height: 1 });
+
+    const ico = buildIcoFromPngBuffer(oneByOnePng);
+    expect(ico.readUInt16LE(0)).toBe(0); // ICONDIR reserved
+    expect(ico.readUInt16LE(2)).toBe(1); // ICONDIR type
+    expect(ico.readUInt16LE(4)).toBe(1); // ICONDIR count
+    expect(ico.readUInt8(6)).toBe(1); // width
+    expect(ico.readUInt8(7)).toBe(1); // height
+    expect(ico.readUInt32LE(18)).toBe(22); // image offset
+    expect(ico.length).toBe(22 + oneByOnePng.length);
   });
 });
