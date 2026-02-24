@@ -66,17 +66,15 @@
       "zh_CN",
       "ja"
     ],
-    "extraFiles": [
+    "extraResources": [
       {
         "from": "../release/LICENSE.Murasaki Translator.txt",
-        "to": "LICENSE.txt"
+        "to": "docs/LICENSE.txt"
       },
       {
         "from": "../release/readme.md",
-        "to": "README.md"
-      }
-    ],
-    "extraResources": [
+        "to": "docs/README.md"
+      },
       {
         "from": "../middleware",
         "to": "middleware",
