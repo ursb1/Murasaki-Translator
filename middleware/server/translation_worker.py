@@ -190,7 +190,7 @@ class TranslationWorker:
     3. 进程使用进程组，确保 cancel 时子进程一起销毁
     """
 
-    def __init__(self, model_path: Optional[str] = None, port: int = 8080):
+    def __init__(self, model_path: Optional[str] = None, port: int = 8000):
         self.model_path = model_path or os.environ.get("MURASAKI_DEFAULT_MODEL")
         self.server_process = None
         self.server_port = port
