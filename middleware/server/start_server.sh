@@ -1,5 +1,5 @@
 #!/bin/bash
-# Murasaki Translation API Server startup script
+# Murasaki Translation API Server startup script (Modified: No Venv Mode)
 
 set -euo pipefail
 
@@ -14,74 +14,44 @@ ENABLE_OPENAI_PROXY="0"
 OPENAI_PORT="8001"
 OPENAI_PROXY_LOG="${OPENAI_PROXY_LOG:-${ROOT_DIR}/openai-proxy.log}"
 OPENAI_PROXY_TIMEOUT="${OPENAI_PROXY_TIMEOUT:-30}"
+# VENV_DIR 依然保留定义，但下文不再强制创建它
 VENV_DIR="${ROOT_DIR}/.venv"
 PYTHON_BIN="${MURASAKI_PYTHON_BIN:-python3}"
 
+# --- 1. 确认系统 Python 是否可用 ---
 if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
   if command -v python3 >/dev/null 2>&1; then
     PYTHON_BIN="python3"
   elif command -v python >/dev/null 2>&1; then
     PYTHON_BIN="python"
   else
-    echo "[ERROR] Python not found. Please install python3 or set MURASAKI_PYTHON_BIN."
+    echo "[ERROR] Python not found. Please install python3."
     exit 1
   fi
 fi
 
+# --- 2. 核心修改：直接指定 PYTHON 变量为系统 Python ---
+# 不再检查 .venv 文件夹，直接使用检测到的系统 python
+PYTHON="${PYTHON_BIN}"
+echo "[INFO] Using System Python: $("${PYTHON}" --version)"
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --model)
-      MODEL="$2"
-      shift 2
-      ;;
-    --port)
-      PORT="$2"
-      shift 2
-      ;;
-    --host)
-      HOST="$2"
-      shift 2
-      ;;
-    --api-key)
-      API_KEY="$2"
-      shift 2
-      ;;
-    --enable-openai-proxy)
-      ENABLE_OPENAI_PROXY="1"
-      shift
-      ;;
-    --openai-port)
-      OPENAI_PORT="$2"
-      shift 2
-      ;;
-    *)
-      shift
-      ;;
+    --model) MODEL="$2"; shift 2 ;;
+    --port) PORT="$2"; shift 2 ;;
+    --host) HOST="$2"; shift 2 ;;
+    --api-key) API_KEY="$2"; shift 2 ;;
+    --enable-openai-proxy) ENABLE_OPENAI_PROXY="1"; shift ;;
+    --openai-port) OPENAI_PORT="$2"; shift 2 ;;
+    *) shift ;;
   esac
 done
 
-if [[ ! -x "${VENV_DIR}/bin/python" && ! -x "${VENV_DIR}/bin/python3" ]]; then
-  echo "[INFO] Creating virtual environment: ${VENV_DIR}"
-  "${PYTHON_BIN}" -m venv "${VENV_DIR}"
-fi
+# --- 3. 核心修改：移除自动创建 venv 和自动 pip install 的逻辑 ---
+# 已删除原有的 if [[ ! -x ... ]] 块
+# 已删除原有的 if ! "${PYTHON}" -c "import fastapi..." 块
 
-if [[ -x "${VENV_DIR}/bin/python" ]]; then
-  PYTHON="${VENV_DIR}/bin/python"
-elif [[ -x "${VENV_DIR}/bin/python3" ]]; then
-  PYTHON="${VENV_DIR}/bin/python3"
-else
-  echo "[ERROR] Virtualenv python not found under ${VENV_DIR}/bin"
-  exit 1
-fi
-
-if ! "${PYTHON}" -c "import fastapi,uvicorn,httpx,requests" >/dev/null 2>&1; then
-  echo "[INFO] Installing dependencies into ${VENV_DIR}..."
-  "${PYTHON}" -m pip install --upgrade pip
-  "${PYTHON}" -m pip install -r requirements.txt
-  "${PYTHON}" -m pip install -r server/requirements.txt
-  "${PYTHON}" -m pip install -r openai_proxy/requirements.txt
-fi
-
+# --- 4. 生成 API KEY (逻辑保持不变，但使用系统环境) ---
 if [[ -z "${API_KEY}" ]]; then
   if [[ -n "${MURASAKI_API_KEY:-}" ]]; then
     API_KEY="${MURASAKI_API_KEY}"
@@ -96,28 +66,22 @@ fi
 
 export MURASAKI_API_KEY="${API_KEY}"
 
+# --- 5. 健康检查函数 (逻辑保持不变) ---
 wait_for_openai_proxy() {
   local deadline=$((SECONDS + OPENAI_PROXY_TIMEOUT))
   while [ $SECONDS -lt $deadline ]; do
     if "$PYTHON" - <<'PY' >/dev/null 2>&1
-import os
-import sys
-import urllib.request
-import urllib.error
-
+import os, sys, urllib.request
 url = os.environ.get("OPENAI_PROXY_HEALTH", "")
-if not url:
-    sys.exit(1)
+if not url: sys.exit(1)
 try:
     with urllib.request.urlopen(url, timeout=1) as resp:
         sys.exit(0 if resp.status == 200 else 1)
-except Exception:
-    sys.exit(1)
+except Exception: sys.exit(1)
 PY
     then
       return 0
     fi
-
     if [[ -n "${OPENAI_PROXY_PID:-}" ]] && ! kill -0 "$OPENAI_PROXY_PID" 2>/dev/null; then
       return 1
     fi
@@ -127,20 +91,17 @@ PY
 }
 
 API_CMD=("${PYTHON}" server/api_server.py --host "$HOST" --port "$PORT" --api-key "$API_KEY")
-if [[ -n "$MODEL" ]]; then
-  API_CMD+=(--model "$MODEL")
-fi
+[[ -n "$MODEL" ]] && API_CMD+=(--model "$MODEL")
 
 cleanup() {
-  if [[ -n "${OPENAI_PROXY_PID:-}" ]]; then
-    kill "$OPENAI_PROXY_PID" >/dev/null 2>&1 || true
-  fi
+  [[ -n "${OPENAI_PROXY_PID:-}" ]] && kill "$OPENAI_PROXY_PID" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
 
+# --- 6. 启动代理和服务器 ---
 if [[ "$ENABLE_OPENAI_PROXY" == "1" ]]; then
   if [[ ! -f "openai_proxy/server.py" ]]; then
-    echo "[ERROR] openai_proxy/server.py not found under ${ROOT_DIR}"
+    echo "[ERROR] openai_proxy/server.py not found"
     exit 1
   fi
   echo "[INFO] Starting OpenAI proxy on ${HOST}:${OPENAI_PORT}"
@@ -157,27 +118,12 @@ if [[ "$ENABLE_OPENAI_PROXY" == "1" ]]; then
   fi
   export OPENAI_PROXY_HEALTH="http://${HEALTH_HOST}:${OPENAI_PORT}/health"
   if ! wait_for_openai_proxy; then
-    echo "[ERROR] OpenAI proxy failed to start on ${HOST}:${OPENAI_PORT}"
-    if [[ -f "${OPENAI_PROXY_LOG}" ]]; then
-      echo "----- openai-proxy.log (tail) -----"
-      tail -n 200 "${OPENAI_PROXY_LOG}" || true
-      echo "-----------------------------------"
-    fi
+    echo "[ERROR] OpenAI proxy failed to start"
     exit 1
   fi
 fi
 
-if [[ "$ENABLE_OPENAI_PROXY" == "1" ]]; then
-  export MURASAKI_ENABLE_OPENAI_PROXY="1"
-else
-  export MURASAKI_ENABLE_OPENAI_PROXY="0"
-fi
+[[ "$ENABLE_OPENAI_PROXY" == "1" ]] && export MURASAKI_ENABLE_OPENAI_PROXY="1" || export MURASAKI_ENABLE_OPENAI_PROXY="0"
 
 echo "[INFO] Starting API server on ${HOST}:${PORT}"
-if [[ ${#API_KEY} -le 8 ]]; then
-  API_KEY_MASKED="********"
-else
-  API_KEY_MASKED="${API_KEY:0:4}...${API_KEY: -4}"
-fi
-echo "[INFO] API Key configured: ${API_KEY_MASKED}"
 exec "${API_CMD[@]}"
