@@ -107,7 +107,7 @@ if [[ "$ENABLE_OPENAI_PROXY" == "1" ]]; then
   echo "[INFO] Starting OpenAI proxy on ${HOST}:${OPENAI_PORT}"
   (
     cd openai_proxy
-    LLAMA_SERVER_URL="http://127.0.0.1:8080" \
+    LLAMA_SERVER_URL="http://127.0.0.1:1145" \
       "${PYTHON}" -m uvicorn server:app --host "$HOST" --port "$OPENAI_PORT"
   ) >> "${OPENAI_PROXY_LOG}" 2>&1 &
   OPENAI_PROXY_PID=$!
